@@ -7,3 +7,7 @@ UTC conversion starts on 1972-01-01. [IERS Bulletin C 72](https://datacenter.ier
 The [NAIF periodic TT/TDB approximation](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/time.html) is supported for TDB coordinates in [1900-01-01, 2100-01-01). The one-nanosecond grid describes representation precision. The periodic correction has the physical accuracy of its underlying model.
 
 The tests check civil timestamps against ERFA two-part Julian date reference cases and the IERS leap-second announcements. The periodic correction samples retain the independent numerical references from the previous project.
+
+Delta T estimates TT minus UT1. The Earth-rotation model blends published atomic offsets over 60 days around leap transitions and anchors the selected historical model at the coverage boundaries. It is an approximation. UTC conversion still applies the exact leap seconds. The selectable extrapolations are Espenak–Meeus, Morrison–Stephenson and a fixed offset.
+
+[Espenak–Meeus polynomials](https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html) · [Morrison–Stephenson 2004](https://doi.org/10.1177/002182860403500305)

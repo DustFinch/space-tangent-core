@@ -18,6 +18,8 @@ internal static class LeapSecondTable
         new(2009, 1, 1), new(2012, 7, 1), new(2015, 7, 1), new(2017, 1, 1)
     ];
 
+    internal static ReadOnlySpan<DateOnly> Transitions => EffectiveDates.AsSpan(1);
+
     internal static int TaiMinusUtc(DateOnly date)
     {
         if (date < FirstDate)

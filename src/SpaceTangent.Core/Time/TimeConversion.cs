@@ -6,7 +6,7 @@ namespace SpaceTangent.Core.Time;
 /// <summary>Post-1972 UTC, exact TAI/TT offset and the NAIF periodic TT/TDB model.</summary>
 public static class TimeConversion
 {
-    private const long TtMinusTai = 32_184_000_000;
+    internal const long TtMinusTai = 32_184_000_000;
     private const long GregorianEpochDay = 1_721_425;
     private const long HalfDay = JulianInstant.NanosecondsPerDay / 2;
     private static readonly JulianInstant TdbStart = new(2_415_020, HalfDay, TimeScale.Tdb);
