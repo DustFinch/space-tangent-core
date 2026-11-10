@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+**/__pycache__/
+**/.godot/
+**/TestResults/
+**/.stopwords
+.vs/
+*.user
