@@ -105,7 +105,10 @@
         "type": "Project"
       },
       "spacetangent.core": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "SpaceTangent.Contracts": "[1.0.0, )"
+        }
       }
     }
   }
