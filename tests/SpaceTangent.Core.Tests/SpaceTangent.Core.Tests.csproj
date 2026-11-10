@@ -13,4 +13,7 @@
     <ProjectReference Include="../../src/SpaceTangent.Core/SpaceTangent.Core.csproj" />
     <ProjectReference Include="../../src/SpaceTangent.Contracts/SpaceTangent.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="Fixtures/de440-reference.csv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
