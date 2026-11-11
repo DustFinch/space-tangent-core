@@ -92,6 +92,11 @@ public sealed class WorldGraphTests
             Assert.True(snapshot.TryOrientation(id, out var orientation));
             Assert.InRange(Math.Abs(orientation.ToWorld.X.Z - .92616579426881118), 0, 3e-8);
         });
+        var remoteEpoch = new JulianInstant(2_488_070, JulianInstant.NanosecondsPerDay / 2, TimeScale.Tdb);
+        WorldSnapshot remote = graph.Evaluate(remoteEpoch);
+        Assert.True(remote.TryState(SolarSystemSample.SunId, out _));
+        Assert.False(remote.TryState(id, out _));
+        Assert.False(remote.TryOrientation(id, out _));
     }
 
     private sealed class RealCassiniFactAttribute : FactAttribute

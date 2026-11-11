@@ -26,11 +26,14 @@ internal sealed class SpacecraftClock
             _ => throw new NotSupportedException("Unsupported spacecraft clock time scale.")
         };
         _ticksPerCount = 1;
-        foreach (double modulus in pool.GetNumbers($"SCLK01_MODULI_{id}").Skip(1))
+        double[] moduli = pool.GetNumbers($"SCLK01_MODULI_{id}");
+        for (int index = 0; index < moduli.Length; index++)
         {
+            double modulus = moduli[index];
             if (modulus <= 0 || modulus != Math.Truncate(modulus))
                 throw new InvalidDataException("Invalid spacecraft clock modulus.");
-            _ticksPerCount *= modulus;
+            if (index > 0)
+                _ticksPerCount *= modulus;
         }
         double[] start = pool.GetNumbers($"SCLK_PARTITION_START_{id}");
         double[] end = pool.GetNumbers($"SCLK_PARTITION_END_{id}");
@@ -61,7 +64,16 @@ internal sealed class SpacecraftClock
     {
         if (tdb.Scale != TimeScale.Tdb)
             throw new ArgumentException("Spacecraft clock queries require TDB.", nameof(tdb));
-        JulianInstant time = TimeConversion.Convert(tdb, _scale);
+        JulianInstant time;
+        try
+        {
+            time = TimeConversion.Convert(tdb, _scale);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            ticks = 0;
+            return false;
+        }
         double seconds = (time.Day - JulianInstant.J2000Day) * (double)JulianInstant.SecondsPerDay +
             time.NanosecondsOfDay / (double)JulianInstant.NanosecondsPerSecond;
 
