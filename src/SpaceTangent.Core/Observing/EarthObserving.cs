@@ -25,9 +25,11 @@ public static class EarthObserving
     private const double Horizon = -.833;
     private const long Step = 300 * JulianInstant.NanosecondsPerSecond;
 
-    public static HorizontalCoordinates? Horizontal(SurfaceLighting observer, Vector3d earthToTarget)
+    public static HorizontalCoordinates? Horizontal(SurfaceLighting observer, Vector3d earthToTarget) =>
+        HorizontalDirection(observer, earthToTarget - observer.PositionKilometers);
+
+    public static HorizontalCoordinates? HorizontalDirection(SurfaceLighting observer, Vector3d offset)
     {
-        Vector3d offset = earthToTarget - observer.PositionKilometers;
         double length = offset.Length;
         if (!(length > 0) || !double.IsFinite(length))
             return null;
