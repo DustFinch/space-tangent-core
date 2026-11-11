@@ -10,26 +10,37 @@ public sealed class SscHuygensTrack
 {
     private readonly SampledStateTrajectory _descent;
     private readonly Vector3d _mount, _site;
+    private readonly Basis3d _attachedRotation, _flightEquator, _landedRotation;
+    private readonly JulianInstant _spinEpoch;
+    private readonly double _spinPeriodSeconds;
     public ObjectId Id { get; }
     public ObjectId Carrier { get; }
     public static ObjectId TitanId { get; } = new("naif/606");
     public string MeshPath { get; }
+    public Basis3d MeshToBody { get; }
     public JulianInstant Start { get; }
     public JulianInstant Separation { get; }
     public JulianInstant Landing { get; }
 
-    private SscHuygensTrack(ObjectId id, ObjectId carrier, string mesh, JulianInstant start, JulianInstant separation,
-        JulianInstant landing, Vector3d mount, SampledStateTrajectory descent, Vector3d site)
+    private SscHuygensTrack(ObjectId id, ObjectId carrier, string mesh, Basis3d meshToBody, JulianInstant start, JulianInstant separation,
+        JulianInstant landing, Vector3d mount, SampledStateTrajectory descent, Vector3d site,
+        Basis3d attachedRotation, Basis3d flightEquator, Basis3d landedRotation, JulianInstant spinEpoch, double spinPeriodSeconds)
     {
         Id = id;
         Carrier = carrier;
         MeshPath = mesh;
+        MeshToBody = meshToBody;
         Start = start;
         Separation = separation;
         Landing = landing;
         _mount = mount;
         _descent = descent;
         _site = site;
+        _attachedRotation = attachedRotation;
+        _flightEquator = flightEquator;
+        _landedRotation = landedRotation;
+        _spinEpoch = spinEpoch;
+        _spinPeriodSeconds = spinPeriodSeconds;
     }
 
     public static SscHuygensTrack Load(string catalogPath, string assetRoot, SscSampledSpacecraft carrier,
@@ -78,9 +89,36 @@ public sealed class SscHuygensTrack
         if (descent.Count == 0)
             throw new InvalidDataException("The Huygens flight has no trajectory samples.");
 
+        string probePath = parent + "/" + names.Split(':')[0];
+        if (!attached.Object("BodyFrame").Object("BodyFixed").Text("Center").Equals(attachedTo, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The attached Huygens attitude requires the carrier body frame.");
+        CheckTwoVector(flight, probePath, "Sol/Saturn");
+        CheckTwoVector(landed, probePath, parent);
+        SscValue.Map spin = flight.Object("UniformRotation");
+        double spinPeriod = Number(spin.Get("Period")) * 3600;
+        if (spinPeriod <= 0 || !double.IsFinite(spinPeriod))
+            throw new InvalidDataException("The Huygens spin period must be finite and positive.");
+        JulianInstant spinEpoch = spin.Fields.TryGetValue("Epoch", out var sourceEpoch)
+            ? SscSampledCatalog.ReadDate(sourceEpoch.AsText()) : JulianInstant.FromTdbSeconds(0);
+
         string mesh = SscSampledCatalog.FindAsset(root, directory, fields.Text("Mesh"), "models");
-        return new(new("ssc/" + (parent + "/" + names.Split(':')[0]).ToLowerInvariant()), carrier.Id, mesh,
-            start, separation, landing, mount, descent, site);
+        return new(new("ssc/" + probePath.ToLowerInvariant()), carrier.Id, mesh, ReadMeshOrientation(fields),
+            start, separation, landing, mount, descent, site, Rotation(attached.Object("FixedRotation"), Math.PI),
+            Rotation(spin, Math.PI), Rotation(landed.Object("FixedRotation"), Math.PI), spinEpoch, spinPeriod);
+    }
+
+    internal Basis3d BodyToFrame(JulianInstant epoch)
+    {
+        if (epoch.CompareTo(Separation) < 0)
+            return _attachedRotation;
+        if (epoch.CompareTo(Landing) >= 0)
+            return _landedRotation;
+
+        double elapsed = (double)epoch.DifferenceNanoseconds(_spinEpoch) / JulianInstant.NanosecondsPerSecond;
+        double angle = (elapsed % _spinPeriodSeconds) / _spinPeriodSeconds * Math.Tau;
+        double sin = Math.Sin(angle), cos = Math.Cos(angle);
+        return new(_flightEquator.X * cos + _flightEquator.Y * sin,
+            _flightEquator.Y * cos - _flightEquator.X * sin, _flightEquator.Z);
     }
 
     internal bool TryLocalState(JulianInstant epoch, out ObjectId center, out ObjectId? rotatingFrame, out CartesianState state)
@@ -117,6 +155,58 @@ public sealed class SscHuygensTrack
         if (value is not SscValue.List { Items: [var x, var y, var z] })
             throw new InvalidDataException("Expected an SSC three-component vector.");
         return new(Number(x), Number(y), Number(z));
+    }
+
+    private static void CheckTwoVector(SscValue.Map phase, string probe, string target)
+    {
+        var frame = phase.Object("BodyFrame").Object("TwoVector");
+        CheckDirection(frame.Object("Primary"), "z", "RelativePosition");
+        CheckDirection(frame.Object("Secondary"), "y", "RelativeVelocity");
+        if (!frame.Text("Center").Equals(probe, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The Huygens two-vector frame must be centered on the probe.");
+
+        void CheckDirection(SscValue.Map entry, string axis, string quantity)
+        {
+            var direction = entry.Object(quantity);
+            if (!entry.Text("Axis").Equals(axis, StringComparison.OrdinalIgnoreCase) ||
+                !direction.Text("Observer").Equals(probe, StringComparison.OrdinalIgnoreCase) ||
+                !direction.Text("Target").Equals(target, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Unsupported direction in the Huygens two-vector frame.");
+        }
+    }
+
+    private static Basis3d Rotation(SscValue.Map rotation, double phase)
+    {
+        // Invert the SSC frame-to-body rotation and express it in astronomical Z-up axes.
+        return SpiceEuler.Compose([-Angle("AscendingNode"), -Angle("Inclination"), -phase - Angle("MeridianAngle")], [3, 1, 3]);
+
+        double Angle(string key) => rotation.Fields.TryGetValue(key, out var value) ? Number(value) * (Math.PI / 180) : 0;
+    }
+
+    private static Basis3d ReadMeshOrientation(SscValue.Map fields)
+    {
+        var geometry = Basis3d.Identity;
+        if (fields.Fields.TryGetValue("Orientation", out var orientation))
+        {
+            if (orientation is not SscValue.List { Items: [var angle, var x, var y, var z] })
+                throw new InvalidDataException("Expected an SSC mesh rotation angle and axis.");
+            var axis = new Vector3d(Number(x), Number(y), Number(z));
+            double length = axis.Length;
+            if (length == 0 || !double.IsFinite(length))
+                throw new InvalidDataException("Invalid SSC mesh rotation axis.");
+
+            // The SSC quaternion maps body coordinates into geometry coordinates.
+            axis /= length;
+            double radians = -Number(angle) * (Math.PI / 180);
+            double c = Math.Cos(radians), s = Math.Sin(radians);
+            geometry = new(Rotate(geometry.X), Rotate(geometry.Y), Rotate(geometry.Z));
+
+            Vector3d Rotate(Vector3d vector) => vector * c + Vector3d.Cross(axis, vector) * s +
+                axis * (Vector3d.Dot(axis, vector) * (1 - c));
+        }
+        return new(ToAstronomical(geometry.X), ToAstronomical(geometry.Y), ToAstronomical(geometry.Z));
+
+        static Vector3d ToAstronomical(Vector3d vector) => new(vector.X, -vector.Z, vector.Y);
     }
 
     private static double Number(SscValue value) =>

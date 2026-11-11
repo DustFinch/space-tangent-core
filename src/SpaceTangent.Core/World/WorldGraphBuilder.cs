@@ -157,6 +157,40 @@ public sealed class WorldGraphBuilder
                 ? WorldValue.FromState(state, center)
                 : default;
         }, RequireAll: false));
+
+        var stateKey = new WorldKey(track.Id, WorldChannel.State);
+        var carrierFrameKey = new WorldKey(track.Carrier, WorldChannel.Orientation);
+        var saturnKey = new WorldKey(NaifObject(699), WorldChannel.State);
+        var titanKey = new WorldKey(SscHuygensTrack.TitanId, WorldChannel.State);
+        Add(new(new(track.Id, WorldChannel.Orientation), [stateKey, carrierFrameKey, saturnKey, titanKey], input =>
+        {
+            var probe = input.Read(stateKey);
+            if (!probe.Available)
+                return default;
+
+            Basis3d frame;
+            if (probe.Center == track.Carrier)
+            {
+                var carrier = input.Read(carrierFrameKey);
+                if (!carrier.Available)
+                    return default;
+                frame = carrier.Orientation.ToWorld;
+            }
+            else
+            {
+                var target = input.Read(input.Epoch.CompareTo(track.Landing) < 0 ? saturnKey : titanKey);
+                if (!target.Available)
+                    return default;
+                var relative = target.State - probe.State;
+                if (!TwoVectorBasis.TryCreate(new(2, 1), relative.PositionKilometers,
+                    new(1, 1), relative.VelocityKilometersPerSecond, out frame))
+                    return default;
+            }
+
+            var rotation = track.BodyToFrame(input.Epoch);
+            return WorldValue.FromOrientation(new(new(frame.Transform(rotation.X),
+                frame.Transform(rotation.Y), frame.Transform(rotation.Z)), null));
+        }, RequireAll: false));
     }
 
     private static bool TransformLocal(EvaluationInput input, ObjectId id, CartesianState local, out CartesianState relative)
