@@ -140,6 +140,63 @@ public sealed class WorldGraphBuilder
         return id;
     }
 
+    public void AddHuygens(SscHuygensTrack track)
+    {
+        ArgumentNullException.ThrowIfNull(track);
+        WorldKey[] dependencies = [new(track.Carrier, WorldChannel.State), new(track.Carrier, WorldChannel.Orientation),
+            new(SscHuygensTrack.TitanId, WorldChannel.State), new(SscHuygensTrack.TitanId, WorldChannel.Orientation)];
+        Add(new(new(track.Id, WorldChannel.State), dependencies, input =>
+        {
+            if (!track.TryLocalState(input.Epoch, out ObjectId center, out ObjectId? rotating, out var local))
+                return default;
+            WorldValue parent = input.Read(new(center, WorldChannel.State));
+            if (!parent.Available || (rotating is { } frame && !TransformLocal(input, frame, local, out local)))
+                return default;
+            CartesianState state = parent.State + local;
+            return state.PositionKilometers.IsFinite && state.VelocityKilometersPerSecond.IsFinite
+                ? WorldValue.FromState(state, center)
+                : default;
+        }, RequireAll: false));
+    }
+
+    private static bool TransformLocal(EvaluationInput input, ObjectId id, CartesianState local, out CartesianState relative)
+    {
+        var frameKey = new WorldKey(id, WorldChannel.Orientation);
+        WorldValue frame = input.Read(frameKey);
+        relative = default;
+        if (!frame.Available)
+            return false;
+        if (frame.Orientation.AngularVelocityRadiansPerSecond is not null)
+            return frame.Orientation.TryTransform(local, out relative);
+
+        // The sampled carrier supplies an orientation without rates. Differentiate the mount offset only,
+        // keeping the carrier's ephemeris velocity and never crossing a carrier phase center transition.
+        const double StepSeconds = .25;
+        Vector3d offset = frame.Orientation.ToWorld.Transform(local.PositionKilometers);
+        var centerKey = new WorldKey(id, WorldChannel.State);
+        ObjectId? center = input.Read(centerKey).Center;
+        bool earlier = OffsetAt(-StepSeconds, out var before);
+        bool later = OffsetAt(StepSeconds, out var after);
+        if (!earlier && !later)
+            return false;
+        if (!earlier)
+            before = offset;
+        if (!later)
+            after = offset;
+        relative = new(offset, frame.Orientation.ToWorld.Transform(local.VelocityKilometersPerSecond) +
+            (after - before) / (earlier && later ? 2 * StepSeconds : StepSeconds));
+        return true;
+
+        bool OffsetAt(double seconds, out Vector3d value)
+        {
+            EvaluationInput other = input.At(input.Epoch.AddSeconds(seconds));
+            WorldValue otherCenter = other.Read(centerKey);
+            WorldValue otherFrame = other.Read(frameKey);
+            value = otherFrame.Orientation.ToWorld.Transform(local.PositionKilometers);
+            return otherCenter.Available && otherCenter.Center == center && otherFrame.Available;
+        }
+    }
+
     public WorldGraph Build()
     {
         var dependencies = new Dictionary<WorldKey, int>();

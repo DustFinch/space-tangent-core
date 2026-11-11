@@ -70,7 +70,7 @@ public sealed class SscSampledSpacecraft
 
     internal static SampledStateTrajectory ReadCurve(string path) => SampledStateTrajectory.ReadXyzv(path, EclipticFrame);
 
-    private static Vector3d ToEquatorial(Vector3d value) =>
+    internal static Vector3d ToEquatorial(Vector3d value) =>
         new(value.X, CosObliquity * value.Y - SinObliquity * value.Z,
             SinObliquity * value.Y + CosObliquity * value.Z);
 }
@@ -84,18 +84,7 @@ public static class SscSampledCatalog
     public static SscSampledSpacecraft Load(string catalogPath, string assetRoot, string objectPath,
         CancellationToken cancellation = default)
     {
-        string root = Path.GetFullPath(assetRoot);
-        string catalog = LocalAddonFiles.Resolve(root, root, catalogPath);
-        string directory = Path.GetDirectoryName(catalog)!;
-        using FileStream file = File.OpenRead(catalog);
-        if (file.Length > MaximumCatalogBytes)
-            throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
-        using var reader = new StreamReader(file, new System.Text.UTF8Encoding(false, true));
-        var definitions = new SscReader(reader.ReadToEnd()).ReadDefinitions()
-            .Where(item => item.Name.Split(':').Any(alias => SamePath(item.Parent + "/" + alias, objectPath))).ToArray();
-        if (definitions.Length != 1)
-            throw new InvalidDataException($"Expected one SSC definition for {objectPath}.");
-        var (names, parent, fields) = definitions[0];
+        var (root, directory, names, parent, fields) = ReadDefinition(catalogPath, assetRoot, objectPath);
         if (fields.Text("Class") != "spacecraft")
             throw new NotSupportedException("The sampled SSC track must be a spacecraft.");
 
@@ -165,6 +154,23 @@ public static class SscSampledCatalog
         return new(name, id, mesh, radius, phases, result.PrimaryAxis, result.Primary, result.SecondaryAxis, result.Secondary);
     }
 
+    internal static (string Root, string Directory, string Names, string Parent, SscValue.Map Fields) ReadDefinition(
+        string catalogPath, string assetRoot, string objectPath)
+    {
+        string root = Path.GetFullPath(assetRoot);
+        string catalog = LocalAddonFiles.Resolve(root, root, catalogPath);
+        using FileStream file = File.OpenRead(catalog);
+        if (file.Length > MaximumCatalogBytes)
+            throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
+        using var reader = new StreamReader(file, new System.Text.UTF8Encoding(false, true));
+        var definitions = new SscReader(reader.ReadToEnd()).ReadDefinitions()
+            .Where(item => item.Name.Split(':').Any(alias => SamePath(item.Parent + "/" + alias, objectPath))).ToArray();
+        if (definitions.Length != 1)
+            throw new InvalidDataException($"Expected one SSC definition for {objectPath}.");
+        var (names, parent, fields) = definitions[0];
+        return (root, Path.GetDirectoryName(catalog)!, names, parent, fields);
+    }
+
     private static (FrameAxis, RelativeDirection) ReadDirection(SscValue.Map vector, string parent, string names, ObjectId self)
     {
         SignedAxis axis = SignedAxis.Parse(vector.Text("Axis"));
@@ -192,7 +198,7 @@ public static class SscSampledCatalog
 
     private static bool SamePath(string left, string right) => left.Equals(right, StringComparison.OrdinalIgnoreCase);
 
-    private static JulianInstant ReadDate(string value)
+    internal static JulianInstant ReadDate(string value)
     {
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double day) && double.IsFinite(day))
             return JulianInstant.FromJulianDate(day, TimeScale.Tdb);
@@ -202,7 +208,7 @@ public static class SscSampledCatalog
         return UnixEpoch.AddNanoseconds((Int128)(date.Ticks - DateTime.UnixEpoch.Ticks) * 100);
     }
 
-    private static string FindAsset(string root, string directory, string relative, params string[] fallbacks)
+    internal static string FindAsset(string root, string directory, string relative, params string[] fallbacks)
     {
         try
         {

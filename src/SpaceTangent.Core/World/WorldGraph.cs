@@ -13,13 +13,16 @@ internal readonly record struct WorldValue(bool Available, CartesianState State,
     internal static WorldValue FromOrientation(FrameKinematics frame) => new(true, default, frame, null);
 }
 
-internal sealed record WorldRule(WorldKey Key, WorldKey[] Dependencies, Func<EvaluationInput, WorldValue> Read);
+internal sealed record WorldRule(WorldKey Key, WorldKey[] Dependencies, Func<EvaluationInput, WorldValue> Read,
+    bool RequireAll = true);
 
 internal readonly record struct EvaluationInput(JulianInstant Epoch, SolarSystemSample? Solar,
-    IReadOnlyDictionary<WorldKey, int> Indices, WorldValue[] Values)
+    IReadOnlyDictionary<WorldKey, int> Indices, WorldValue[] Values, WorldGraph Graph, int RuleIndex = 0)
 {
     internal CartesianState State(ObjectId id) => Values[Indices[new(id, WorldChannel.State)]].State;
     internal FrameKinematics Orientation(ObjectId id) => Values[Indices[new(id, WorldChannel.Orientation)]].Orientation;
+    internal WorldValue Read(WorldKey key) => Values[Indices[key]];
+    internal EvaluationInput At(JulianInstant epoch) => Graph.EvaluatePrefix(epoch, RuleIndex);
 }
 
 public sealed class WorldSnapshot
@@ -96,20 +99,29 @@ public sealed class WorldGraph
     {
         if (tdb.Scale != TimeScale.Tdb)
             throw new ArgumentException("World graph evaluation requires TDB.", nameof(tdb));
+        EvaluationInput input = EvaluatePrefix(tdb, _nodes.Length);
+        return new(tdb, input.Solar, _indices, input.Values);
+    }
+
+    internal EvaluationInput EvaluatePrefix(JulianInstant tdb, int count)
+    {
         SolarSystemSample? solar = _solar is { } ephemeris && tdb.CompareTo(ephemeris.Start) >= 0 &&
             tdb.CompareTo(ephemeris.End) <= 0 ? ephemeris.Sample(tdb) : null;
 
-        var values = new WorldValue[_nodes.Length];
-        var input = new EvaluationInput(tdb, solar, _indices, values);
-        for (int index = 0; index < _nodes.Length; index++)
+        var values = new WorldValue[count];
+        var input = new EvaluationInput(tdb, solar, _indices, values, this);
+        for (int index = 0; index < count; index++)
         {
             Node node = _nodes[index];
             bool ready = true;
-            foreach (int dependency in node.Dependencies)
-                ready &= values[dependency].Available;
+            if (node.Rule.RequireAll)
+            {
+                foreach (int dependency in node.Dependencies)
+                    ready &= values[dependency].Available;
+            }
             if (ready)
-                values[index] = node.Rule.Read(input);
+                values[index] = node.Rule.Read(input with { RuleIndex = index });
         }
-        return new(tdb, solar, _indices, values);
+        return input;
     }
 }
