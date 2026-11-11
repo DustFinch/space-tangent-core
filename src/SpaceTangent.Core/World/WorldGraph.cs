@@ -4,8 +4,11 @@ using SpaceTangent.Core.Ephemerides;
 
 namespace SpaceTangent.Core.World;
 
-internal enum WorldChannel { State, Orientation }
-internal readonly record struct WorldKey(ObjectId Id, WorldChannel Channel);
+internal enum WorldChannel { State, Orientation, ReferenceFrame }
+internal readonly record struct WorldKey(ObjectId Id, WorldChannel Channel)
+{
+    internal static WorldKey Frame(FrameId id) => new(new(id.Value), WorldChannel.ReferenceFrame);
+}
 
 internal readonly record struct WorldValue(bool Available, CartesianState State, FrameKinematics Orientation, ObjectId? Center)
 {
@@ -20,7 +23,6 @@ internal readonly record struct EvaluationInput(JulianInstant Epoch, SolarSystem
     IReadOnlyDictionary<WorldKey, int> Indices, WorldValue[] Values, WorldGraph Graph, int RuleIndex = 0)
 {
     internal CartesianState State(ObjectId id) => Values[Indices[new(id, WorldChannel.State)]].State;
-    internal FrameKinematics Orientation(ObjectId id) => Values[Indices[new(id, WorldChannel.Orientation)]].Orientation;
     internal WorldValue Read(WorldKey key) => Values[Indices[key]];
     internal EvaluationInput At(JulianInstant epoch) => Graph.EvaluatePrefix(epoch, RuleIndex);
 }
@@ -52,6 +54,13 @@ public sealed class WorldSnapshot
     public bool TryOrientation(ObjectId id, out FrameKinematics orientation)
     {
         bool available = TryValue(new(id, WorldChannel.Orientation), out var value);
+        orientation = value.Orientation;
+        return available;
+    }
+
+    public bool TryFrame(FrameId id, out FrameKinematics orientation)
+    {
+        bool available = TryValue(WorldKey.Frame(id), out var value);
         orientation = value.Orientation;
         return available;
     }

@@ -34,20 +34,28 @@ public sealed class WorldGraphBuilder
     }
 
     public void AddTrajectory(ObjectId id, Func<JulianInstant, CartesianState?> sample,
-        ObjectId? center = null, ObjectId? orientation = null)
+        ObjectId? center = null, ObjectId? orientation = null) =>
+        AddTrajectoryCore(id, sample, center, orientation is { } body ? new(body, WorldChannel.Orientation) : null);
+
+    public void AddTrajectoryInFrame(ObjectId id, Func<JulianInstant, CartesianState?> sample,
+        FrameId frame, ObjectId? center = null) =>
+        AddTrajectoryCore(id, sample, center, WorldKey.Frame(frame));
+
+    private void AddTrajectoryCore(ObjectId id, Func<JulianInstant, CartesianState?> sample,
+        ObjectId? center, WorldKey? orientation)
     {
         ArgumentNullException.ThrowIfNull(sample);
         var dependencies = new List<WorldKey>(2);
         if (center is { } centerId)
             dependencies.Add(new(centerId, WorldChannel.State));
-        if (orientation is { } orientationId)
-            dependencies.Add(new(orientationId, WorldChannel.Orientation));
+        if (orientation is { } orientationKey)
+            dependencies.Add(orientationKey);
 
         Add(new(new(id, WorldChannel.State), [.. dependencies], input =>
         {
             if (sample(input.Epoch) is not { } state)
                 return default;
-            if (orientation is { } frame && !input.Orientation(frame).TryTransform(state, out state))
+            if (orientation is { } frame && !input.Read(frame).Orientation.TryTransform(state, out state))
                 return default;
             if (center is { } parent)
                 state += input.State(parent);
@@ -57,12 +65,27 @@ public sealed class WorldGraphBuilder
         }));
     }
 
-    public void AddOrientation(ObjectId id, Func<JulianInstant, FrameKinematics?> sample)
+    public void AddOrientation(ObjectId id, Func<JulianInstant, FrameKinematics?> sample) =>
+        AddOrientation(new WorldKey(id, WorldChannel.Orientation), sample);
+
+    private void AddOrientation(WorldKey key, Func<JulianInstant, FrameKinematics?> sample)
     {
         ArgumentNullException.ThrowIfNull(sample);
-        Add(new(new(id, WorldChannel.Orientation), [], input => sample(input.Epoch) is { } rotation
+        Add(new(key, [], input => sample(input.Epoch) is { } rotation
             ? WorldValue.FromOrientation(rotation)
             : default));
+    }
+
+    public void AddMeanEquator(FrameId id, SpicePolynomialBodyFrame model, JulianInstant? freeze = null)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        if (freeze is { } epoch)
+        {
+            Basis3d fixedBasis = model.SampleMeanEquator(epoch).ToWorld;
+            AddOrientation(WorldKey.Frame(id), _ => new(fixedBasis, default(Vector3d)));
+        }
+        else
+            AddOrientation(WorldKey.Frame(id), epoch => model.SampleMeanEquator(epoch));
     }
 
     public void AddTwoVectorOrientation(ObjectId id, FrameAxis primaryAxis, RelativeDirection primary,

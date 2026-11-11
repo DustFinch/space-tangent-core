@@ -64,7 +64,12 @@ public sealed class SpicePolynomialBodyFrame
         }
     }
 
-    public FrameKinematics Sample(JulianInstant tdb)
+    public FrameKinematics Sample(JulianInstant tdb) => Sample(tdb, includeMeridian: true);
+
+    /// <summary>Returns the moving equator of date with the pole motion retained and prime meridian rotation removed.</summary>
+    public FrameKinematics SampleMeanEquator(JulianInstant tdb) => Sample(tdb, includeMeridian: false);
+
+    private FrameKinematics Sample(JulianInstant tdb, bool includeMeridian)
     {
         if (tdb.Scale != TimeScale.Tdb)
             throw new ArgumentException("PCK rotation requires TDB.", nameof(tdb));
@@ -74,9 +79,11 @@ public sealed class SpicePolynomialBodyFrame
         double centuries = days / DaysPerCentury;
         var (ra, raRate) = Evaluate(_rightAscension, centuries);
         var (dec, decRate) = Evaluate(_declination, centuries);
-        var (pm, pmRate) = Evaluate(_meridian, days);
+        var (pm, pmRate) = includeMeridian ? Evaluate(_meridian, days) : (0d, 0d);
         pmRate *= DaysPerCentury;
-        int termCount = Math.Max(_rightAscensionTerms.Length, Math.Max(_declinationTerms.Length, _meridianTerms.Length));
+        int termCount = Math.Max(_rightAscensionTerms.Length, _declinationTerms.Length);
+        if (includeMeridian)
+            termCount = Math.Max(termCount, _meridianTerms.Length);
         for (int i = 0; i < termCount; i++)
         {
             var (angle, rate) = Evaluate(_phases.AsSpan(i * _phaseStride, _phaseStride), centuries);
@@ -93,7 +100,7 @@ public sealed class SpicePolynomialBodyFrame
                 dec += _declinationTerms[i] * cos;
                 decRate -= _declinationTerms[i] * sin * rateRadiansPerCentury;
             }
-            if (i < _meridianTerms.Length)
+            if (includeMeridian && i < _meridianTerms.Length)
             {
                 pm += _meridianTerms[i] * sin;
                 pmRate += _meridianTerms[i] * cos * rateRadiansPerCentury;
