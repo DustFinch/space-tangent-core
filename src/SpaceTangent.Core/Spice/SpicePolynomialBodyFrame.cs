@@ -5,12 +5,14 @@ using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Spice;
 
-/// <summary>IAU body orientation and radii from a J2000 polynomial text PCK model.</summary>
+/// <summary>IAU body orientation and radii from a J2000 text PCK, including periodic pole and meridian corrections.</summary>
 public sealed class SpicePolynomialBodyFrame
 {
     private const double Radians = Math.PI / 180;
     private const double DaysPerCentury = 36525;
     private readonly double[] _rightAscension, _declination, _meridian;
+    private readonly double[] _rightAscensionTerms, _declinationTerms, _meridianTerms, _phases;
+    private readonly int _phaseStride;
     public int BodyId { get; }
     public Vector3d RadiiKilometers { get; }
 
@@ -23,19 +25,43 @@ public sealed class SpicePolynomialBodyFrame
         string system = "BODY" + (bodyId / 100).ToString(CultureInfo.InvariantCulture);
         var pool = new SpiceTextKernel();
         pool.Furnish(pck);
-        if (new[] { "_NUT_PREC_RA", "_NUT_PREC_DEC", "_NUT_PREC_PM" }.Any(key =>
-                pool.Contains(prefix + key) && pool.GetNumbers(prefix + key).Any(value => value != 0)) ||
-            new[] { "_CONSTANTS_REF_FRAME", "_CONSTANTS_JED_EPOCH" }.Any(key =>
+        if (new[] { "_CONSTANTS_REF_FRAME", "_CONSTANTS_JED_EPOCH" }.Any(key =>
                 pool.Contains(prefix + key) || pool.Contains(system + key)))
-            throw new NotSupportedException("This body frame requires the standard J2000 polynomial PCK model.");
+            throw new NotSupportedException("This body frame requires the standard J2000 text PCK model.");
 
         _rightAscension = Triple(pool, prefix + "_POLE_RA");
         _declination = Triple(pool, prefix + "_POLE_DEC");
         _meridian = Triple(pool, prefix + "_PM");
+        _rightAscensionTerms = Terms("_NUT_PREC_RA");
+        _declinationTerms = Terms("_NUT_PREC_DEC");
+        _meridianTerms = Terms("_NUT_PREC_PM");
+        int termCount = Math.Max(_rightAscensionTerms.Length, Math.Max(_declinationTerms.Length, _meridianTerms.Length));
+        _phases = [];
+        if (termCount > 0)
+        {
+            string degreeKey = system + "_MAX_PHASE_DEGREE";
+            int degree = pool.Contains(degreeKey) ? pool.GetInteger(degreeKey) : 1;
+            if (degree is < 1 or > 3)
+                throw new InvalidDataException("Expected linear, quadratic or cubic PCK phase angles.");
+            _phaseStride = degree + 1;
+            _phases = pool.GetNumbers(system + "_NUT_PREC_ANGLES");
+            if (_phases.Length % _phaseStride != 0 || _phases.Length / _phaseStride < termCount)
+                throw new InvalidDataException("PCK nutation coefficients do not match the phase angles.");
+        }
         double[] radii = Triple(pool, prefix + "_RADII");
         if (radii.Any(radius => radius <= 0))
             throw new InvalidDataException("PCK body radii must be positive.");
         RadiiKilometers = new(radii[0], radii[1], radii[2]);
+
+        double[] Terms(string suffix)
+        {
+            string key = prefix + suffix;
+            if (!pool.Contains(key))
+                return [];
+            double[] values = pool.GetNumbers(key);
+            int last = Array.FindLastIndex(values, value => value != 0);
+            return values[..(last + 1)];
+        }
     }
 
     public FrameKinematics Sample(JulianInstant tdb)
@@ -46,15 +72,42 @@ public sealed class SpicePolynomialBodyFrame
         double days = (tdb.Day - JulianInstant.J2000Day) +
             tdb.NanosecondsOfDay / (double)JulianInstant.NanosecondsPerDay;
         double centuries = days / DaysPerCentury;
-        double meridian = Math.IEEERemainder(Polynomial(_meridian, days), 360) * Radians;
-        double tilt = (90 - Polynomial(_declination, centuries)) * Radians;
-        double node = (90 + Polynomial(_rightAscension, centuries)) * Radians;
-        Basis3d toWorld = SpiceEuler.Compose([meridian, tilt, node], [3, 1, 3]).Transpose();
+        var (ra, raRate) = Evaluate(_rightAscension, centuries);
+        var (dec, decRate) = Evaluate(_declination, centuries);
+        var (pm, pmRate) = Evaluate(_meridian, days);
+        pmRate *= DaysPerCentury;
+        int termCount = Math.Max(_rightAscensionTerms.Length, Math.Max(_declinationTerms.Length, _meridianTerms.Length));
+        for (int i = 0; i < termCount; i++)
+        {
+            var (angle, rate) = Evaluate(_phases.AsSpan(i * _phaseStride, _phaseStride), centuries);
+            double radians = Math.IEEERemainder(angle, 360) * Radians;
+            var (sin, cos) = Math.SinCos(radians);
+            double rateRadiansPerCentury = rate * Radians;
+            if (i < _rightAscensionTerms.Length)
+            {
+                ra += _rightAscensionTerms[i] * sin;
+                raRate += _rightAscensionTerms[i] * cos * rateRadiansPerCentury;
+            }
+            if (i < _declinationTerms.Length)
+            {
+                dec += _declinationTerms[i] * cos;
+                decRate -= _declinationTerms[i] * sin * rateRadiansPerCentury;
+            }
+            if (i < _meridianTerms.Length)
+            {
+                pm += _meridianTerms[i] * sin;
+                pmRate += _meridianTerms[i] * cos * rateRadiansPerCentury;
+            }
+        }
 
-        const double DegreesPerDayToRadiansPerSecond = Radians / JulianInstant.SecondsPerDay;
-        double spinRate = Derivative(_meridian, days) * DegreesPerDayToRadiansPerSecond;
-        double tiltRate = -Derivative(_declination, centuries) * (DegreesPerDayToRadiansPerSecond / DaysPerCentury);
-        double nodeRate = Derivative(_rightAscension, centuries) * (DegreesPerDayToRadiansPerSecond / DaysPerCentury);
+        double meridian = Math.IEEERemainder(pm, 360) * Radians;
+        double tilt = (90 - dec) * Radians;
+        double node = (90 + ra) * Radians;
+        Basis3d toWorld = SpiceEuler.Compose([meridian, tilt, node], [3, 1, 3]).Transpose();
+        const double DegreesPerCenturyToRadiansPerSecond = Radians / (JulianInstant.SecondsPerDay * DaysPerCentury);
+        double spinRate = pmRate * DegreesPerCenturyToRadiansPerSecond;
+        double tiltRate = -decRate * DegreesPerCenturyToRadiansPerSecond;
+        double nodeRate = raRate * DegreesPerCenturyToRadiansPerSecond;
         Vector3d angularVelocity = toWorld.Z * spinRate + new Vector3d(Math.Cos(node), Math.Sin(node), 0) * tiltRate +
             new Vector3d(0, 0, nodeRate);
         return new(toWorld, angularVelocity);
@@ -66,6 +119,14 @@ public sealed class SpicePolynomialBodyFrame
         return values.Length == 3 ? values : throw new InvalidDataException($"Expected three values in {field}.");
     }
 
-    private static double Polynomial(double[] values, double time) => (values[2] * time + values[1]) * time + values[0];
-    private static double Derivative(double[] values, double time) => 2 * values[2] * time + values[1];
+    private static (double Value, double Derivative) Evaluate(ReadOnlySpan<double> coefficients, double time)
+    {
+        double value = coefficients[^1], derivative = 0;
+        for (int i = coefficients.Length - 2; i >= 0; i--)
+        {
+            derivative = derivative * time + value;
+            value = value * time + coefficients[i];
+        }
+        return (value, derivative);
+    }
 }
