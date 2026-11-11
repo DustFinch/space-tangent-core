@@ -3,5 +3,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <NuGetLockFilePath Condition="'$(Configuration)' == 'ExportDebug' Or '$(Configuration)' == 'ExportRelease'">$(MSBuildProjectDirectory)/packages.export.lock.json</NuGetLockFilePath>
   </PropertyGroup>
 </Project>
