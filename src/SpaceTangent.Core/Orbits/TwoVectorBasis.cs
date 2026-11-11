@@ -39,12 +39,9 @@ internal static class TwoVectorBasis
         columns[primary.Index] = first;
         columns[secondary.Index] = second;
         int permutationSign = (primary.Index + 1) % 3 == secondary.Index ? 1 : -1;
-        columns[3 - primary.Index - secondary.Index] = Cross(first, second) * permutationSign;
+        columns[3 - primary.Index - secondary.Index] = Vector3d.Cross(first, second) * permutationSign;
         basis = new(columns[0], columns[1], columns[2]);
         return true;
     }
 
-    private static Vector3d Cross(Vector3d left, Vector3d right) =>
-        new(left.Y * right.Z - left.Z * right.Y, left.Z * right.X - left.X * right.Z,
-            left.X * right.Y - left.Y * right.X);
 }

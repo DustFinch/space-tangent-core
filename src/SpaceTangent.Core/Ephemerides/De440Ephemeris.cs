@@ -21,6 +21,7 @@ public sealed class De440Ephemeris
     private readonly Series _earthMoonBarycenter;
     private readonly Series _moonRelativeToEarth;
     private readonly Series _sun;
+    private readonly Series _saturnBarycenter;
     private readonly double _earthShare;
     private readonly int _dataRecords;
 
@@ -34,6 +35,7 @@ public sealed class De440Ephemeris
         _earthMoonBarycenter = ReadSeries(records, 2);
         _moonRelativeToEarth = ReadSeries(records, 9);
         _sun = ReadSeries(records, 10);
+        _saturnBarycenter = ReadSeries(records, 5);
     }
 
     public JulianInstant Start { get; }
@@ -72,7 +74,8 @@ public sealed class De440Ephemeris
         CartesianState emb = Evaluate(record, withinRecord, _earthMoonBarycenter);
         CartesianState lunarOffset = Evaluate(record, withinRecord, _moonRelativeToEarth);
         CartesianState earth = emb - lunarOffset * _earthShare;
-        return new(tdb, Evaluate(record, withinRecord, _sun), earth, earth + lunarOffset);
+        return new(tdb, Evaluate(record, withinRecord, _sun), earth, earth + lunarOffset,
+            Evaluate(record, withinRecord, _saturnBarycenter));
     }
 
     private static CartesianState Evaluate(ReadOnlySpan<byte> record, long withinRecord, Series series)
