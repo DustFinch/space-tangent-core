@@ -43,6 +43,30 @@ public readonly record struct JulianInstant : IComparable<JulianInstant>
         return new(day + nanos / NanosecondsPerDay, nanos % NanosecondsPerDay, scale);
     }
 
+    /// <summary>Converts an ephemeris offset in TDB seconds from JD 2451545.0.</summary>
+    public static JulianInstant FromTdbSeconds(double seconds)
+    {
+        if (!double.IsFinite(seconds) || seconds < -J2000Day * (double)SecondsPerDay ||
+            seconds >= (MaximumDay + 1 - J2000Day) * (double)SecondsPerDay)
+            throw new ArgumentOutOfRangeException(nameof(seconds));
+
+        long whole = (long)seconds;
+        long dayOffset = Math.DivRem(whole, SecondsPerDay, out long remainder);
+        long fraction = (long)Math.Round((seconds - whole) * NanosecondsPerSecond, MidpointRounding.ToEven);
+        long nanos = remainder * NanosecondsPerSecond + fraction;
+        if (nanos < 0)
+        {
+            dayOffset--;
+            nanos += NanosecondsPerDay;
+        }
+        else if (nanos >= NanosecondsPerDay)
+        {
+            dayOffset++;
+            nanos -= NanosecondsPerDay;
+        }
+        return new(J2000Day + dayOffset, nanos, TimeScale.Tdb);
+    }
+
     /// <summary>A lossy scalar projection for interoperability and display.</summary>
     public double ToJulianDate() => Day + NanosecondsOfDay / (double)NanosecondsPerDay;
 

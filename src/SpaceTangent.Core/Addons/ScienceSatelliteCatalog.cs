@@ -13,7 +13,7 @@ public static class ScienceSatelliteCatalog
     public static IReadOnlyList<ScienceSatellite> Load(string catalogPath, string assetRoot)
     {
         string root = Path.GetFullPath(assetRoot);
-        string fullCatalogPath = ResolveLocalFile(root, root, catalogPath);
+        string fullCatalogPath = LocalAddonFiles.Resolve(root, root, catalogPath);
         byte[] bytes;
         using (FileStream input = File.OpenRead(fullCatalogPath))
         {
@@ -72,7 +72,7 @@ public static class ScienceSatelliteCatalog
         string source = ReadString(mesh, "source");
         if (Path.IsPathRooted(source))
             throw new FormatException("Mesh source must be a relative path.");
-        string meshPath = ResolveLocalFile(root, directory, source);
+        string meshPath = LocalAddonFiles.Resolve(root, directory, source);
         if (!Path.GetExtension(meshPath).Equals(".obj", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("Expected a local OBJ mesh.");
         double size = mesh.GetProperty("size").GetDouble();
@@ -122,24 +122,6 @@ public static class ScienceSatelliteCatalog
     {
         string? value = element.GetProperty(property).GetString();
         return string.IsNullOrWhiteSpace(value) ? throw new FormatException($"Missing {property}.") : value;
-    }
-
-    private static string ResolveLocalFile(string root, string directory, string path)
-    {
-        string candidate = Path.GetFullPath(path, directory);
-        string relative = Path.GetRelativePath(root, candidate);
-        if (Path.IsPathRooted(relative) || relative == ".." ||
-            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            throw new InvalidDataException("Catalogue asset is outside the declared add-on root.");
-        if (!File.Exists(candidate))
-            throw new FileNotFoundException("Catalogue asset is missing.", candidate);
-        for (string cursor = candidate; ; cursor = Path.GetDirectoryName(cursor)!)
-        {
-            if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
-                throw new InvalidDataException("Catalogue assets must not use symbolic links.");
-            if (Path.GetRelativePath(root, cursor) == ".")
-                return candidate;
-        }
     }
 
     private static bool HasUtf8Bom(ReadOnlySpan<byte> bytes) => bytes.StartsWith("\uFEFF"u8);
