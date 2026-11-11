@@ -3,6 +3,8 @@ using System.Text;
 
 namespace SpaceTangent.Core.Addons;
 
+internal enum SscDisposition { Add, Modify, Replace }
+
 internal abstract record SscValue
 {
     internal sealed record Atom(string Text) : SscValue;
@@ -24,15 +26,31 @@ internal sealed class SscReader(string input)
     private int _offset;
     private int _line = 1;
 
-    internal IEnumerable<(string Name, string Parent, SscValue.Map Properties)> ReadDefinitions()
+    internal IEnumerable<(SscDisposition Disposition, string Kind, string Name, string Parent, SscValue.Map Properties)> ReadDefinitions()
     {
         while (SkipSpace())
         {
+            var disposition = SscDisposition.Add;
+            string kind = "Body";
+            if (input[_offset] != '"')
+            {
+                string prefix = ReadText();
+                if (prefix is "Add" or "Modify" or "Replace")
+                {
+                    disposition = Enum.Parse<SscDisposition>(prefix);
+                    if (SkipSpace() && input[_offset] != '"')
+                        kind = ReadText();
+                }
+                else
+                    kind = prefix;
+            }
+            if (kind is not ("Body" or "ReferencePoint" or "SurfaceObject" or "AltSurface" or "Location"))
+                throw Error($"Unknown SSC object kind {kind}.");
             string name = ReadText();
             string parent = ReadText();
             if (!SkipSpace() || input[_offset] != '{')
                 throw Error("Expected object properties.");
-            yield return (name, parent, ReadObject(0));
+            yield return (disposition, kind, name, parent, ReadObject(0));
         }
     }
 

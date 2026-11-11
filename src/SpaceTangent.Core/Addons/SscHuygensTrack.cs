@@ -45,11 +45,16 @@ public sealed class SscHuygensTrack
 
     public static SscHuygensTrack Load(string catalogPath, string assetRoot, SscSampledSpacecraft carrier,
         SpicePolynomialBodyFrame titan)
+        => Load([catalogPath], assetRoot, carrier, titan);
+
+    public static SscHuygensTrack Load(IEnumerable<string> catalogPaths, string assetRoot, SscSampledSpacecraft carrier,
+        SpicePolynomialBodyFrame titan, CancellationToken cancellation = default)
     {
         if (titan.BodyId != 606)
             throw new ArgumentException("The landing frame must describe Titan.", nameof(titan));
-        var (root, directory, names, parent, fields) = SscSampledCatalog.ReadDefinition(catalogPath, assetRoot,
-            "Sol/Saturn/Titan/Huygens");
+        var (root, definition) = SscSampledCatalog.ReadDefinition(catalogPaths, assetRoot,
+            "Sol/Saturn/Titan/Huygens", cancellation);
+        var (names, parent, fields, _) = definition;
         if (fields.Text("Class") != "spacecraft" ||
             fields.Get("Timeline") is not SscValue.List { Items: [SscValue.Map attached, SscValue.Map flight, SscValue.Map landed] })
             throw new InvalidDataException("Huygens requires an attached, a flight and a landed phase.");
@@ -81,7 +86,7 @@ public sealed class SscHuygensTrack
         SscValue.Map source = flight.Object("SampledTrajectory");
         if (source.Text("Interpolation") != "cubic" || source.Text("DoublePrecision") != "true")
             throw new NotSupportedException("The Huygens flight requires cubic double-precision samples.");
-        string sourcePath = SscSampledCatalog.FindAsset(root, directory, source.Text("Source"),
+        string sourcePath = SscSampledCatalog.FindAsset(root, definition.DirectoryFor("Timeline"), source.Text("Source"),
             Path.Combine("models", "trajectories"), "data");
         if (!Path.GetExtension(sourcePath).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("The Huygens flight requires XYZV samples.");
@@ -101,7 +106,7 @@ public sealed class SscHuygensTrack
         JulianInstant spinEpoch = spin.Fields.TryGetValue("Epoch", out var sourceEpoch)
             ? SscSampledCatalog.ReadDate(sourceEpoch.AsText()) : JulianInstant.FromTdbSeconds(0);
 
-        string mesh = SscSampledCatalog.FindAsset(root, directory, fields.Text("Mesh"), "models");
+        string mesh = SscSampledCatalog.FindAsset(root, definition.DirectoryFor("Mesh"), fields.Text("Mesh"), "models");
         return new(new("ssc/" + probePath.ToLowerInvariant()), carrier.Id, mesh, ReadMeshOrientation(fields),
             start, separation, landing, mount, descent, site, Rotation(attached.Object("FixedRotation"), Math.PI),
             Rotation(spin, Math.PI), Rotation(landed.Object("FixedRotation"), Math.PI), spinEpoch, spinPeriod);

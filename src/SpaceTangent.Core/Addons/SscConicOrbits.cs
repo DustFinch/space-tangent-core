@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Globalization;
-using System.Text;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Orbits;
 
@@ -13,21 +12,22 @@ public sealed record SscConicOrbit(string Name, string Parent, JulianInstant Ele
 public static class SscConicOrbits
 {
     public static IReadOnlyList<SscConicOrbit> Read(string path, Func<string, SscOrbitContext> resolveParent)
+        => Read([path], resolveParent);
+
+    public static IReadOnlyList<SscConicOrbit> Read(IEnumerable<string> catalogPaths, Func<string, SscOrbitContext> resolveParent)
     {
+        ArgumentNullException.ThrowIfNull(catalogPaths);
         ArgumentNullException.ThrowIfNull(resolveParent);
-        using FileStream file = File.OpenRead(path);
-        if (file.Length > 1024 * 1024)
-            throw new InvalidDataException("SSC orbit catalogue exceeds 1 MiB.");
-        using var reader = new StreamReader(file, new UTF8Encoding(false, true));
         var result = new List<SscConicOrbit>();
-        foreach (var (name, parent, body) in new SscReader(reader.ReadToEnd()).ReadDefinitions())
+        foreach (var entry in SscDefinitions.Load(catalogPaths, root: null))
         {
-            if (!body.Fields.TryGetValue("EllipticalOrbit", out var block))
+            if (entry.Properties.Fields.ContainsKey("Timeline") ||
+                !entry.Properties.Fields.TryGetValue("EllipticalOrbit", out var block))
                 continue;
             if (block is not SscValue.Map orbit)
                 throw new InvalidDataException("Expected an SSC EllipticalOrbit object.");
 
-            SscOrbitContext context = resolveParent(parent);
+            SscOrbitContext context = resolveParent(entry.Parent);
             double a = Number(orbit, "SemiMajorAxis") * context.KilometersPerDistanceUnit;
             double period = Number(orbit, "Period") * context.SecondsPerPeriodUnit;
             double e = Number(orbit, "Eccentricity", 0);
@@ -44,7 +44,7 @@ public static class SscConicOrbits
                 : Number(orbit, "ArgOfPeriapsis", 0);
             var elements = new ConicElements(a * (1 - e), e, Number(orbit, "Inclination", 0) * radians,
                 Number(orbit, "AscendingNode", 0) * radians, argument * radians, periapsis, mu, context.Frame);
-            result.Add(new(name, parent, epoch, new ConicOrbit(elements)));
+            result.Add(new(entry.Names, entry.Parent, epoch, new ConicOrbit(elements)));
         }
         return result.AsReadOnly();
     }

@@ -77,26 +77,31 @@ public sealed class SscSampledSpacecraft
 
 public static class SscSampledCatalog
 {
-    private const int MaximumCatalogBytes = 1024 * 1024;
     private static readonly string[] DateFormats = ["yyyy M d H:mm:ss.FFFFFFF", "yyyy M d H:mm:ss", "yyyy M d"];
     private static readonly JulianInstant UnixEpoch = JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb);
 
     public static SscSampledSpacecraft Load(string catalogPath, string assetRoot, string objectPath,
         CancellationToken cancellation = default)
+        => Load([catalogPath], assetRoot, objectPath, cancellation);
+
+    public static SscSampledSpacecraft Load(IEnumerable<string> catalogPaths, string assetRoot, string objectPath,
+        CancellationToken cancellation = default)
     {
-        var (root, directory, names, parent, fields) = ReadDefinition(catalogPath, assetRoot, objectPath);
+        var (root, definition) = ReadDefinition(catalogPaths, assetRoot, objectPath, cancellation);
+        var (names, parent, fields, _) = definition;
         if (fields.Text("Class") != "spacecraft")
             throw new NotSupportedException("The sampled SSC track must be a spacecraft.");
 
         string name = names.Split(':')[0];
         string primaryPath = parent + "/" + name;
         var id = new ObjectId("ssc/" + primaryPath.ToLowerInvariant());
-        string mesh = FindAsset(root, directory, fields.Text("Mesh"), "models");
+        string mesh = FindAsset(root, definition.DirectoryFor("Mesh"), fields.Text("Mesh"), "models");
         if (!double.TryParse(fields.Text("Radius"), NumberStyles.Float, CultureInfo.InvariantCulture, out double radius) ||
             !double.IsFinite(radius) || radius <= 0)
             throw new InvalidDataException("SSC radius must be finite and positive.");
         if (fields.Get("Timeline") is not SscValue.List { Items.Length: >= 1 and <= 128 } timeline)
             throw new InvalidDataException("SSC Timeline must contain one to 128 phases.");
+        string directory = definition.DirectoryFor("Timeline");
 
         var phases = new SscSampledSpacecraft.Phase[timeline.Items.Length];
         var curves = new Dictionary<string, SampledStateTrajectory>(OperatingSystem.IsWindows()
@@ -154,21 +159,14 @@ public static class SscSampledCatalog
         return new(name, id, mesh, radius, phases, result.PrimaryAxis, result.Primary, result.SecondaryAxis, result.Secondary);
     }
 
-    internal static (string Root, string Directory, string Names, string Parent, SscValue.Map Fields) ReadDefinition(
-        string catalogPath, string assetRoot, string objectPath)
+    internal static (string Root, SscDefinition Definition) ReadDefinition(
+        IEnumerable<string> catalogPaths, string assetRoot, string objectPath, CancellationToken cancellation)
     {
+        ArgumentNullException.ThrowIfNull(catalogPaths);
         string root = Path.GetFullPath(assetRoot);
-        string catalog = LocalAddonFiles.Resolve(root, root, catalogPath);
-        using FileStream file = File.OpenRead(catalog);
-        if (file.Length > MaximumCatalogBytes)
-            throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
-        using var reader = new StreamReader(file, new System.Text.UTF8Encoding(false, true));
-        var definitions = new SscReader(reader.ReadToEnd()).ReadDefinitions()
-            .Where(item => item.Name.Split(':').Any(alias => SamePath(item.Parent + "/" + alias, objectPath))).ToArray();
-        if (definitions.Length != 1)
-            throw new InvalidDataException($"Expected one SSC definition for {objectPath}.");
-        var (names, parent, fields) = definitions[0];
-        return (root, Path.GetDirectoryName(catalog)!, names, parent, fields);
+        var definition = SscDefinitions.Load(catalogPaths, root, cancellation)
+            .FirstOrDefault(item => item.Names.Split(':').Any(alias => SamePath(item.Parent + "/" + alias, objectPath)));
+        return (root, definition ?? throw new InvalidDataException($"Expected an SSC definition for {objectPath}."));
     }
 
     private static (FrameAxis, RelativeDirection) ReadDirection(SscValue.Map vector, string parent, string names, ObjectId self)
@@ -216,16 +214,20 @@ public static class SscSampledCatalog
         }
         catch (FileNotFoundException)
         {
+            string[] directories = SamePath(root, directory) ? [root] : [directory, root];
             foreach (string folder in fallbacks)
             {
                 string candidate = Path.Combine(folder, relative);
-                try
+                foreach (string baseDirectory in directories)
                 {
-                    return LocalAddonFiles.ResolveRelative(root, root, candidate);
-                }
-                catch (FileNotFoundException)
-                {
-                    // Try the next conventional catalogue resource directory.
+                    try
+                    {
+                        return LocalAddonFiles.ResolveRelative(root, baseDirectory, candidate);
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        // Try the next conventional catalogue resource directory.
+                    }
                 }
             }
             throw;

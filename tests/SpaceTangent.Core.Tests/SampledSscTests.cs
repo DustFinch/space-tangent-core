@@ -69,6 +69,43 @@ public sealed class SampledSscTests
         Assert.InRange((actual.VelocityKilometersPerSecond - new Vector3d(data[3], data[4], data[5])).Length, 0, 2e-7);
     }
 
+    [TimelineFact]
+    public void RadiusPatchByAliasPreservesTheOriginalCassiniTimelineAndMesh()
+    {
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_SSC_WORLD_ROOT")!;
+        DirectoryInfo root = Directory.CreateTempSubdirectory("space-tangent-timeline-");
+        try
+        {
+            DirectoryInfo catalog = root.CreateSubdirectory("ssc");
+            DirectoryInfo models = root.CreateSubdirectory("models");
+            DirectoryInfo curves = models.CreateSubdirectory("trajectories");
+            DirectoryInfo overlays = root.CreateSubdirectory("overlays");
+            string originalPath = Path.Combine(catalog.FullName, "cassini.ssc");
+            File.Copy(Path.Combine(source, "ssc", "cassini.ssc"), originalPath);
+            string originalMesh = Path.Combine(models.FullName, "cassini.3ds");
+            File.Copy(Path.Combine(source, "models", "cassini.3ds"), originalMesh);
+            foreach (string curve in Directory.EnumerateFiles(Path.Combine(source, "models", "trajectories"), "cassini*.xyzv"))
+                File.Copy(curve, Path.Combine(curves.FullName, Path.GetFileName(curve)));
+            string patch = Path.Combine(overlays.FullName, "patch.ssc");
+            File.WriteAllText(patch, """Modify "1997-061A" "Sol/Saturn" { Radius 0.01 }""");
+            SscSampledSpacecraft original = SscSampledCatalog.Load(originalPath, root.FullName, "Sol/Saturn/Cassini");
+            SscSampledSpacecraft changed = SscSampledCatalog.Load([originalPath, patch], root.FullName, "Sol/Saturn/1997-061A");
+            Assert.Equal(original.Id, changed.Id);
+            Assert.Equal(originalMesh, changed.MeshPath);
+            Assert.Equal(0.01, changed.RadiusKilometers);
+            Assert.Equal(original.PhaseCount, changed.PhaseCount);
+            var join = JulianInstant.FromJulianDate(2453167.5, TimeScale.Tdb);
+            Assert.True(original.TrySampleRelative(join, out var center, out var expected));
+            Assert.True(changed.TrySampleRelative(join, out var actualCenter, out var actual));
+            Assert.Equal(center, actualCenter);
+            Assert.Equal(expected, actual);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     private sealed class TimelineFactAttribute : FactAttribute
     {
         public TimelineFactAttribute()

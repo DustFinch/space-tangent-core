@@ -59,6 +59,49 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [CassiniFact]
+    public void PatchOfOriginalSpiceSscResolvesResourcesFromEachDeclaration()
+    {
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        DirectoryInfo root = Directory.CreateTempSubdirectory("space-tangent-cassini-");
+        try
+        {
+            DirectoryInfo original = root.CreateSubdirectory("original");
+            DirectoryInfo overlays = root.CreateSubdirectory("overlays");
+            foreach (string file in Directory.EnumerateFiles(source))
+                File.Copy(file, Path.Combine(original.FullName, Path.GetFileName(file)));
+            const string PointingFile = "04182_04183pa_soi_itl.bc";
+            File.Copy(Path.Combine(source, PointingFile), Path.Combine(overlays.FullName, PointingFile));
+            string originalPath = Path.Combine(original.FullName, "cassini.ssc");
+            string overlayPath = Path.Combine(overlays.FullName, "patch.ssc");
+            string patchedMesh = Path.Combine(overlays.FullName, "local-cassini.3ds");
+            File.Copy(Path.Combine(source, "cassini.3ds"), patchedMesh);
+            File.WriteAllText(overlayPath, """
+                Modify "Cassini-SSC" "Sol/Saturn" {
+                    Radius 0.009
+                    Mesh "local-cassini.3ds"
+                    SpiceRotation { Kernel "04182_04183pa_soi_itl.bc" Frame "CASSINI_SC_COORD" BaseFrame "J2000" }
+                }
+                """);
+            SpiceSpacecraft unmodified = Assert.Single(SscSpiceCatalog.Load(originalPath, root.FullName));
+            SpiceSpacecraft patched = Assert.Single(SscSpiceCatalog.Load([originalPath, overlayPath], root.FullName));
+            Assert.Equal(unmodified.Name, patched.Name);
+            Assert.Equal(0.009, patched.RadiusKilometers);
+            Assert.Equal(patchedMesh, patched.MeshPath);
+            var epoch = JulianInstant.FromTdbSeconds(141911269.46157101);
+            Assert.True(unmodified.TrySample(epoch, out var state));
+            Assert.True(patched.TrySample(epoch, out var patchedState));
+            Assert.Equal(state, patchedState);
+            Assert.True(unmodified.TryAttitude(epoch, out var attitude));
+            Assert.True(patched.TryAttitude(epoch, out var patchedAttitude));
+            Assert.Equal(attitude, patchedAttitude);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [CassiniJsonFact]
     public void OriginalJsonAndItsMetakernelProduceTheSameCassiniTrajectoryAndAttitude()
     {

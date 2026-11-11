@@ -10,12 +10,15 @@ internal sealed class SpiceResources
     internal IReadOnlyList<string> Files { get; }
 
     internal SpiceResources(string root, string directory, IEnumerable<string> names)
+        : this(root, names.Select(name => (directory, name))) { }
+
+    internal SpiceResources(string root, IEnumerable<(string Directory, string Name)> sources)
     {
         StringComparer comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var active = new HashSet<string>(comparer);
         var files = new List<string>();
         int visits = 0;
-        foreach (string name in names)
+        foreach (var (directory, name) in sources)
             Expand(root, directory, name, active, files, ref visits, 0);
         Files = files.AsReadOnly();
         _spk = new Dictionary<string, SpkKernel>(comparer);

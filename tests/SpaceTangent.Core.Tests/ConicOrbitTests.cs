@@ -56,6 +56,47 @@ public sealed class ConicOrbitTests
         Assert.InRange(state.VelocityKilometersPerSecond.Length, 7.65, 7.67);
     }
 
+    [Fact]
+    public void CatalogPatchesApplyInOrderWithoutReplacingTheTargetIdentity()
+    {
+        DirectoryInfo root = Directory.CreateTempSubdirectory("space-tangent-ssc-");
+        try
+        {
+            string basis = Path.Combine(root.FullName, "base.ssc");
+            string patch = Path.Combine(root.FullName, "patch.ssc");
+            string replace = Path.Combine(root.FullName, "replace.ssc");
+            File.WriteAllText(basis, """
+                Add Body "Primary:Alias" "Sol/Earth" {
+                  EllipticalOrbit { SemiMajorAxis 7000 Period 0.07 Eccentricity 0.1 }
+                }
+                "Child" "Sol/Earth/Alias" { EllipticalOrbit { SemiMajorAxis 20 Period 0.01 } }
+                Location "Primary" "Sol/Earth" { LongLat [ 1 2 3 ] }
+                """);
+            File.WriteAllText(patch, """
+                Modify "Alias" "sol/earth" { Radius 1 }
+                Modify "New" "Sol/Earth" { EllipticalOrbit { SemiMajorAxis 8000 Period 0.08 } }
+                """);
+            File.WriteAllText(replace, """
+                Replace "Alias" "Sol/Earth" { EllipticalOrbit { SemiMajorAxis 7500 Period 0.075 } }
+                Modify "New" "Sol/Earth" { FixedPosition [ 1 2 3 ] }
+                """);
+            SscOrbitContext Resolve(string _) => new(Reference, 1, JulianInstant.SecondsPerDay);
+            var modified = SscConicOrbits.Read([basis, patch], Resolve);
+            Assert.Equal(new[] { "Primary:Alias", "Child", "New" }, modified.Select(item => item.Name));
+            Assert.Equal("Sol/Earth/Primary", modified[1].Parent);
+            Assert.Equal(6300, modified[0].Orbit.Evaluate(Periapsis).PositionKilometers.Length, 9);
+
+            var replaced = SscConicOrbits.Read([basis, patch, replace], Resolve);
+            Assert.Equal(new[] { "Primary:Alias", "Child" }, replaced.Select(item => item.Name));
+            Assert.Equal(7500, replaced[0].Orbit.Evaluate(Periapsis).PositionKilometers.Length, 9);
+            Assert.Throws<InvalidDataException>(() => SscConicOrbits.Read([basis, basis], Resolve));
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     private sealed class RealIssFactAttribute : FactAttribute
     {
         public RealIssFactAttribute()
