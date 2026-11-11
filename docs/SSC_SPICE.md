@@ -1,6 +1,6 @@
 # SSC spacecraft trajectories
 
-The SSC reader loads spacecraft definitions with `SpiceOrbit`, local kernel paths, a mesh and a radius. It resolves the name or numeric ID of the SPK target and centre. The DAF reader accepts IEEE little- and big-endian kernels. The SPK evaluator supports geometric J2000 states with type 1 modified difference arrays and type 2 Chebyshev position coefficients. Type 2 velocity is the analytic derivative in kilometers per second. Each direct trajectory reports its own coverage. Later matching kernels and segments have priority.
+The SSC reader loads spacecraft definitions with `SpiceOrbit`, local kernel paths, a mesh and a radius. It resolves the name or numeric ID of the SPK target and centre. The DAF reader accepts IEEE little- and big-endian kernels. The SPK evaluator supports geometric J2000 states with type 1 modified difference arrays and types 2 and 3 Chebyshev coefficients. Type 2 differentiates position to obtain velocity. Type 3 reads the separate velocity polynomials. Each direct trajectory reports its own coverage. Later matching kernels and segments have priority.
 
 The Cassini regression uses the original `cassini.ssc` fixture and the NASA Cassini kernel `040615AP_SK_04167_04186.bsp`. Set `SPACETANGENT_CASSINI_SSC_ROOT` to the directory with the SSC, mesh and companion kernels. The expected positions and velocities come from CSPICE N0067 at five epochs, including both coverage endpoints. They can be regenerated with `tools/reference/generate_cassini_reference.py`.
 
@@ -19,5 +19,9 @@ For geometric camera intercepts, Saturn's physical center comes from SAT480 and 
 The sampled SSC adapter selects a named spacecraft from a multi-object catalogue. It evaluates cubic double-precision XYZV phases in their declared J2000 ecliptic frames, with the centers and two-vector attitude resolved through the same world graph. Calendar phase times are TDB. The beginning is inclusive and the ending is exclusive, so an exact join selects the next phase.
 
 Set `SPACETANGENT_SSC_WORLD_ROOT` to the original world data root to check all 15 Cassini phases in `ssc/cassini.ssc`. The 45 reference states combine an independent Hermite calculation from the original XYZV files with the CSPICE J2000 rotation and DE440 center states. The adapter loads the named Cassini entry. Huygens' body-fixed and landed phases need separate trajectory support.
+
+The world graph can register a body from a local SPK with an IAU polynomial PCK frame. It evaluates orientation and analytic angular velocity from the same TDB epoch, including the transport velocity of a point fixed to that body. The regression uses Titan from `sat083.bsp` and Saturn from `sat164.bsp` to exercise both Chebyshev representations. Set `SPACETANGENT_SAT083`, `SPACETANGENT_SAT164` and `SPACETANGENT_SATURN_PCK` to the original files. The fixture compares centers, orientation and orientation derivatives with CSPICE at Huygens mission epochs and coverage endpoints.
+
+[NAIF Cassini kernels](https://naif.jpl.nasa.gov/pub/naif/CASSINI/kernels/spk/)
 
 [NAIF field of view definitions](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/getfov_c.html) · [NAIF reference frames](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/frames.html)

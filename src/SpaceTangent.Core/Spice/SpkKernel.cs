@@ -4,7 +4,7 @@ using SpaceTangent.Core.Ephemerides;
 
 namespace SpaceTangent.Core.Spice;
 
-/// <summary>Reads primitive J2000 states from SPK types 1 and 2 without a native runtime.</summary>
+/// <summary>Reads primitive J2000 states from SPK types 1, 2 and 3 without a native runtime.</summary>
 public sealed class SpkKernel
 {
     private readonly record struct Segment(DafSegment Descriptor, JulianInstant Start, JulianInstant End,
@@ -40,7 +40,7 @@ public sealed class SpkKernel
             state = descriptor.FourthId switch
             {
                 1 => SampleTypeOne(segment, evaluationTime),
-                2 => SampleTypeTwo(segment, evaluationTime),
+                2 or 3 => SampleChebyshev(segment, evaluationTime),
                 _ => throw new NotSupportedException($"Unsupported SPK record type {descriptor.FourthId}.")
             };
             return true;
@@ -53,8 +53,8 @@ public sealed class SpkKernel
     {
         JulianInstant start = JulianInstant.FromTdbSeconds(descriptor.Begin);
         JulianInstant end = JulianInstant.FromTdbSeconds(descriptor.End);
-        if (descriptor.FourthId == 2)
-            return PrepareTypeTwo(descriptor, start, end);
+        if (descriptor.FourthId is 2 or 3)
+            return PrepareChebyshev(descriptor, start, end);
         if (descriptor.FourthId != 1)
             return new(descriptor, start, end);
 
@@ -76,23 +76,28 @@ public sealed class SpkKernel
         return new(descriptor, start, end, epochs, count);
     }
 
-    private Segment PrepareTypeTwo(DafSegment descriptor, JulianInstant start, JulianInstant end)
+    private Segment PrepareChebyshev(DafSegment descriptor, JulianInstant start, JulianInstant end)
     {
         int words = descriptor.LastWord - descriptor.FirstWord + 1;
-        const int DirectoryWords = 4, MinimumRecordWords = 5;
-        if (words < DirectoryWords + MinimumRecordWords)
-            throw new InvalidDataException("SPK type 2 directory or record is incomplete.");
+        const int DirectoryWords = 4;
+        int components = descriptor.FourthId == 2 ? 3 : 6;
+        int minimumRecordWords = components + 2;
+        if (words < DirectoryWords + minimumRecordWords)
+            throw new InvalidDataException("SPK Chebyshev directory or record is incomplete.");
         int last = descriptor.LastWord;
         double initial = _file.Word(last - 3), interval = _file.Word(last - 2);
-        int recordWords = DafFile.ExactInteger(_file.Word(last - 1), MinimumRecordWords, words - DirectoryWords,
-            "SPK type 2 record size");
+        int recordWords = DafFile.ExactInteger(_file.Word(last - 1), minimumRecordWords, words - DirectoryWords,
+            "SPK Chebyshev record size");
         int count = DafFile.ExactInteger(_file.Word(last), 1, (words - DirectoryWords) / recordWords,
-            "SPK type 2 record count");
+            "SPK Chebyshev record count");
         double final = initial + interval * count;
-        if ((recordWords - 2) % 3 != 0 || (long)recordWords * count + DirectoryWords != words ||
+        // Some kernels accumulate record times separately from the rounded directory interval.
+        double timeTolerance = interval * 5e-9;
+        if ((recordWords - 2) % components != 0 || (long)recordWords * count + DirectoryWords != words ||
             !double.IsFinite(initial) || !double.IsFinite(interval) || !double.IsFinite(final) || interval <= 0 ||
-            descriptor.Begin < Math.BitDecrement(initial) || descriptor.End > Math.BitIncrement(final))
-            throw new InvalidDataException("Invalid SPK type 2 directory.");
+            descriptor.Begin < Math.BitDecrement(initial - timeTolerance) ||
+            descriptor.End > Math.BitIncrement(final + timeTolerance))
+            throw new InvalidDataException("Invalid SPK Chebyshev directory.");
         return new(descriptor, start, end, RecordCount: count, RecordWords: recordWords, InitialEpoch: initial, Interval: interval);
     }
 
@@ -110,23 +115,29 @@ public sealed class SpkKernel
         return EvaluateTypeOne(segment.Descriptor.FirstWord + lower * TypeOneWords, et);
     }
 
-    private CartesianState SampleTypeTwo(Segment segment, double et)
+    private CartesianState SampleChebyshev(Segment segment, double et)
     {
         int index = (int)Math.Clamp(Math.Floor((et - segment.InitialEpoch) / segment.Interval), 0, segment.RecordCount - 1);
         int record = segment.Descriptor.FirstWord + index * segment.RecordWords;
         double midpoint = _file.Word(record), radius = _file.Word(record + 1);
         double u = (et - midpoint) / radius;
         if (!double.IsFinite(radius) || radius <= 0 || !double.IsFinite(u) || Math.Abs(u) > 1 + 1e-8)
-            throw new InvalidDataException("Invalid SPK type 2 time interval.");
+            throw new InvalidDataException("Invalid SPK Chebyshev time interval.");
 
-        int count = (segment.RecordWords - 2) / 3;
-        var (x, vx) = Chebyshev.Evaluate(_file.WordBytes(record + 2, count), u, _file.LittleEndian);
-        var (y, vy) = Chebyshev.Evaluate(_file.WordBytes(record + 2 + count, count), u, _file.LittleEndian);
-        var (z, vz) = Chebyshev.Evaluate(_file.WordBytes(record + 2 + 2 * count, count), u, _file.LittleEndian);
-        var state = new CartesianState(new(x, y, z), new(vx / radius, vy / radius, vz / radius));
+        bool storedVelocity = segment.Descriptor.FourthId == 3;
+        int count = (segment.RecordWords - 2) / (storedVelocity ? 6 : 3);
+        var (x, vx) = Axis(0);
+        var (y, vy) = Axis(1);
+        var (z, vz) = Axis(2);
+        Vector3d velocity = storedVelocity ? new(Axis(3).Value, Axis(4).Value, Axis(5).Value)
+            : new(vx / radius, vy / radius, vz / radius);
+        var state = new CartesianState(new(x, y, z), velocity);
         if (!state.PositionKilometers.IsFinite || !state.VelocityKilometersPerSecond.IsFinite)
-            throw new InvalidDataException("SPK type 2 record produced a nonfinite state.");
+            throw new InvalidDataException("SPK Chebyshev record produced a nonfinite state.");
         return state;
+
+        (double Value, double Derivative) Axis(int axis) =>
+            Chebyshev.Evaluate(_file.WordBytes(record + 2 + axis * count, count), u, _file.LittleEndian);
     }
 
     // NAIF SPKE01 modified divided differences. Each recurrence uses 1-based local indices.

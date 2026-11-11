@@ -7,26 +7,13 @@ namespace SpaceTangent.Core.Spice;
 public sealed class SaturnSurface
 {
     private readonly SpkKernel _centers;
-    private readonly double[] _rightAscension, _declination, _meridian;
-    public Vector3d RadiiKilometers { get; }
+    private readonly SpicePolynomialBodyFrame _frame;
+    public Vector3d RadiiKilometers => _frame.RadiiKilometers;
 
     public SaturnSurface(string centers, string pck)
     {
         _centers = new SpkKernel(centers);
-        var pool = new SpiceTextKernel();
-        pool.Furnish(pck);
-        if (pool.Contains("BODY699_NUT_PREC_RA") || pool.Contains("BODY699_NUT_PREC_DEC") ||
-            pool.Contains("BODY699_NUT_PREC_PM") || pool.Contains("BODY6_CONSTANTS_REF_FRAME") ||
-            pool.Contains("BODY699_CONSTANTS_REF_FRAME") || pool.Contains("BODY6_CONSTANTS_JED_EPOCH") ||
-            pool.Contains("BODY699_CONSTANTS_JED_EPOCH"))
-            throw new NotSupportedException("Saturn requires the standard J2000 polynomial PCK model.");
-        _rightAscension = Triple(pool, "BODY699_POLE_RA");
-        _declination = Triple(pool, "BODY699_POLE_DEC");
-        _meridian = Triple(pool, "BODY699_PM");
-        double[] radii = Triple(pool, "BODY699_RADII");
-        if (radii.Any(radius => radius <= 0))
-            throw new InvalidDataException("Saturn radii must be positive.");
-        RadiiKilometers = new(radii[0], radii[1], radii[2]);
+        _frame = new(pck, 699);
     }
 
     /// <summary>Returns a pose relative to the Saturn system barycenter in J2000 axes.</summary>
@@ -37,26 +24,9 @@ public sealed class SaturnSurface
             pose = default;
             return false;
         }
-        double days = (tdb.Day - JulianInstant.J2000Day) +
-            tdb.NanosecondsOfDay / (double)JulianInstant.NanosecondsPerDay;
-        double centuries = days / 36525;
-        const double Radians = Math.PI / 180;
-        double meridian = Math.IEEERemainder(Polynomial(_meridian, days), 360);
-        double declination = Polynomial(_declination, centuries);
-        double rightAscension = Polynomial(_rightAscension, centuries);
-        Basis3d toFixed = SpiceEuler.Compose(
-            [meridian * Radians, (90 - declination) * Radians, (90 + rightAscension) * Radians], [3, 1, 3]);
-        pose = new(center.PositionKilometers, toFixed, RadiiKilometers);
+        pose = new(center.PositionKilometers, _frame.Sample(tdb).ToWorld.Transpose(), RadiiKilometers);
         return true;
     }
-
-    private static double[] Triple(SpiceTextKernel pool, string field)
-    {
-        double[] values = pool.GetNumbers(field);
-        return values.Length == 3 ? values : throw new InvalidDataException($"Expected three values in {field}.");
-    }
-
-    private static double Polynomial(double[] values, double time) => (values[2] * time + values[1]) * time + values[0];
 }
 
 public readonly struct SaturnSurfacePose

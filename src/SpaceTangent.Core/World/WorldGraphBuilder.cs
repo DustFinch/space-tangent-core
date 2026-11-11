@@ -4,6 +4,7 @@ using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.World;
 
@@ -125,6 +126,18 @@ public sealed class WorldGraphBuilder
         }));
         AddTwoVectorOrientation(spacecraft.Id, spacecraft.PrimaryAxis, spacecraft.Primary,
             spacecraft.SecondaryAxis, spacecraft.Secondary);
+    }
+
+    public ObjectId AddSpkBody(SpkKernel kernel, int target, int center, SpicePolynomialBodyFrame? bodyFrame = null)
+    {
+        ArgumentNullException.ThrowIfNull(kernel);
+        if (bodyFrame is not null && bodyFrame.BodyId != target)
+            throw new ArgumentException("The PCK body must match the SPK target.", nameof(bodyFrame));
+        ObjectId id = NaifObject(target);
+        AddTrajectory(id, epoch => kernel.TryState(target, center, epoch, out var state) ? state : null, NaifObject(center));
+        if (bodyFrame is not null)
+            AddOrientation(id, epoch => bodyFrame.Sample(epoch));
+        return id;
     }
 
     public WorldGraph Build()
