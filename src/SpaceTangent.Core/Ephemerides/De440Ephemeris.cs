@@ -85,26 +85,11 @@ public sealed class De440Ephemeris
         double u = 2 * ((withinRecord - granule * granuleLength) / (double)granuleLength) - 1;
         int axisBytes = series.Coefficients * sizeof(double);
         int offset = series.ByteOffset + granule * 3 * axisBytes;
-        var (x, vx) = EvaluateAxis(record.Slice(offset, axisBytes), u);
-        var (y, vy) = EvaluateAxis(record.Slice(offset + axisBytes, axisBytes), u);
-        var (z, vz) = EvaluateAxis(record.Slice(offset + 2 * axisBytes, axisBytes), u);
+        var (x, vx) = Chebyshev.Evaluate(record.Slice(offset, axisBytes), u, littleEndian: true);
+        var (y, vy) = Chebyshev.Evaluate(record.Slice(offset + axisBytes, axisBytes), u, littleEndian: true);
+        var (z, vz) = Chebyshev.Evaluate(record.Slice(offset + 2 * axisBytes, axisBytes), u, littleEndian: true);
         double rate = 2d * JulianInstant.NanosecondsPerSecond / granuleLength;
         return new(new(x, y, z), new(vx * rate, vy * rate, vz * rate));
-    }
-
-    private static (double Position, double Derivative) EvaluateAxis(ReadOnlySpan<byte> coefficients, double u)
-    {
-        // Clenshaw recurrence and its analytic derivative on the normalized interval.
-        double next = 0, second = 0, dNext = 0, dSecond = 0;
-        for (int offset = coefficients.Length - sizeof(double); offset > 0; offset -= sizeof(double))
-        {
-            double current = ReadDouble(coefficients, offset) + 2 * u * next - second;
-            double dCurrent = 2 * next + 2 * u * dNext - dSecond;
-            (next, second) = (current, next);
-            (dNext, dSecond) = (dCurrent, dNext);
-        }
-
-        return (ReadDouble(coefficients, 0) + u * next - second, next + u * dNext - dSecond);
     }
 
     private static Series ReadSeries(ReadOnlySpan<byte> data, int index)

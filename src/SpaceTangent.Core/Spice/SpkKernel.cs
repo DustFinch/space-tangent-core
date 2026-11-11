@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Ephemerides;
 
 namespace SpaceTangent.Core.Spice;
 
-/// <summary>Reads primitive J2000 states in SPK type 1 without a native runtime.</summary>
+/// <summary>Reads primitive J2000 states from SPK types 1 and 2 without a native runtime.</summary>
 public sealed class SpkKernel
 {
     private readonly record struct Segment(DafSegment Descriptor, JulianInstant Start, JulianInstant End,
-        int EpochAddress, int RecordCount);
+        int EpochAddress = 0, int RecordCount = 0, int RecordWords = 0, double InitialEpoch = 0, double Interval = 0);
     private const int TypeOneWords = 71;
     private readonly DafFile _file;
     private readonly Segment[] _segments;
@@ -32,20 +33,16 @@ public sealed class SpkKernel
             if (descriptor.FirstId != target || descriptor.SecondId != center ||
                 tdb.CompareTo(segment.Start) < 0 || tdb.CompareTo(segment.End) > 0)
                 continue;
-            if (descriptor.ThirdId != 1 || descriptor.FourthId != 1)
-                throw new NotSupportedException("The selected SPK segment requires J2000 frame and type 1 records.");
+            if (descriptor.ThirdId != 1)
+                throw new NotSupportedException("The selected SPK segment requires the J2000 frame.");
 
             double evaluationTime = Math.Clamp(et, descriptor.Begin, descriptor.End);
-            int lower = 0, upper = segment.RecordCount - 1;
-            while (lower < upper)
+            state = descriptor.FourthId switch
             {
-                int middle = lower + (upper - lower) / 2;
-                if (_file.Word(segment.EpochAddress + middle) < evaluationTime)
-                    lower = middle + 1;
-                else
-                    upper = middle;
-            }
-            state = EvaluateTypeOne(descriptor.FirstWord + lower * TypeOneWords, evaluationTime);
+                1 => SampleTypeOne(segment, evaluationTime),
+                2 => SampleTypeTwo(segment, evaluationTime),
+                _ => throw new NotSupportedException($"Unsupported SPK record type {descriptor.FourthId}.")
+            };
             return true;
         }
         state = default;
@@ -56,8 +53,10 @@ public sealed class SpkKernel
     {
         JulianInstant start = JulianInstant.FromTdbSeconds(descriptor.Begin);
         JulianInstant end = JulianInstant.FromTdbSeconds(descriptor.End);
+        if (descriptor.FourthId == 2)
+            return PrepareTypeTwo(descriptor, start, end);
         if (descriptor.FourthId != 1)
-            return new(descriptor, start, end, 0, 0);
+            return new(descriptor, start, end);
 
         int words = descriptor.LastWord - descriptor.FirstWord + 1;
         int count = DafFile.ExactInteger(_file.Word(descriptor.LastWord), 1, words / TypeOneWords, "SPK record count");
@@ -75,6 +74,59 @@ public sealed class SpkKernel
         if (previous < descriptor.End)
             throw new InvalidDataException("SPK type 1 records do not reach segment end.");
         return new(descriptor, start, end, epochs, count);
+    }
+
+    private Segment PrepareTypeTwo(DafSegment descriptor, JulianInstant start, JulianInstant end)
+    {
+        int words = descriptor.LastWord - descriptor.FirstWord + 1;
+        const int DirectoryWords = 4, MinimumRecordWords = 5;
+        if (words < DirectoryWords + MinimumRecordWords)
+            throw new InvalidDataException("SPK type 2 directory or record is incomplete.");
+        int last = descriptor.LastWord;
+        double initial = _file.Word(last - 3), interval = _file.Word(last - 2);
+        int recordWords = DafFile.ExactInteger(_file.Word(last - 1), MinimumRecordWords, words - DirectoryWords,
+            "SPK type 2 record size");
+        int count = DafFile.ExactInteger(_file.Word(last), 1, (words - DirectoryWords) / recordWords,
+            "SPK type 2 record count");
+        double final = initial + interval * count;
+        if ((recordWords - 2) % 3 != 0 || (long)recordWords * count + DirectoryWords != words ||
+            !double.IsFinite(initial) || !double.IsFinite(interval) || !double.IsFinite(final) || interval <= 0 ||
+            descriptor.Begin < Math.BitDecrement(initial) || descriptor.End > Math.BitIncrement(final))
+            throw new InvalidDataException("Invalid SPK type 2 directory.");
+        return new(descriptor, start, end, RecordCount: count, RecordWords: recordWords, InitialEpoch: initial, Interval: interval);
+    }
+
+    private CartesianState SampleTypeOne(Segment segment, double et)
+    {
+        int lower = 0, upper = segment.RecordCount - 1;
+        while (lower < upper)
+        {
+            int middle = lower + (upper - lower) / 2;
+            if (_file.Word(segment.EpochAddress + middle) < et)
+                lower = middle + 1;
+            else
+                upper = middle;
+        }
+        return EvaluateTypeOne(segment.Descriptor.FirstWord + lower * TypeOneWords, et);
+    }
+
+    private CartesianState SampleTypeTwo(Segment segment, double et)
+    {
+        int index = (int)Math.Clamp(Math.Floor((et - segment.InitialEpoch) / segment.Interval), 0, segment.RecordCount - 1);
+        int record = segment.Descriptor.FirstWord + index * segment.RecordWords;
+        double midpoint = _file.Word(record), radius = _file.Word(record + 1);
+        double u = (et - midpoint) / radius;
+        if (!double.IsFinite(radius) || radius <= 0 || !double.IsFinite(u) || Math.Abs(u) > 1 + 1e-8)
+            throw new InvalidDataException("Invalid SPK type 2 time interval.");
+
+        int count = (segment.RecordWords - 2) / 3;
+        var (x, vx) = Chebyshev.Evaluate(_file.WordBytes(record + 2, count), u, _file.LittleEndian);
+        var (y, vy) = Chebyshev.Evaluate(_file.WordBytes(record + 2 + count, count), u, _file.LittleEndian);
+        var (z, vz) = Chebyshev.Evaluate(_file.WordBytes(record + 2 + 2 * count, count), u, _file.LittleEndian);
+        var state = new CartesianState(new(x, y, z), new(vx / radius, vy / radius, vz / radius));
+        if (!state.PositionKilometers.IsFinite || !state.VelocityKilometersPerSecond.IsFinite)
+            throw new InvalidDataException("SPK type 2 record produced a nonfinite state.");
+        return state;
     }
 
     // NAIF SPKE01 modified divided differences. Each recurrence uses 1-based local indices.

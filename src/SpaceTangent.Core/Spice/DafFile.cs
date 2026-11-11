@@ -69,6 +69,9 @@ internal sealed class DafFile
     }
 
     internal double Word(int oneBasedIndex) => DoubleAt((oneBasedIndex - 1) * sizeof(double));
+    internal bool LittleEndian => _littleEndian;
+    internal ReadOnlySpan<byte> WordBytes(int oneBasedIndex, int count) =>
+        _bytes.AsSpan((oneBasedIndex - 1) * sizeof(double), count * sizeof(double));
 
     internal static int ExactInteger(double value, int minimum, int maximum, string field)
     {
