@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Text.Json;
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Orbits;
 
 namespace SpaceTangent.Core.Addons;
@@ -97,12 +98,7 @@ public static class ScienceSatelliteCatalog
             throw new FormatException("Fixed rotation coefficients must be finite.");
 
         // Source files use the raw WXYZ matrix expression. Keep it distinct from the rigid two-vector basis.
-        var basis = new Basis3d(new(1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)),
-            new(2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)),
-            new(2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)));
-        if (!(basis.X.IsFinite && basis.Y.IsFinite && basis.Z.IsFinite))
-            throw new FormatException("Fixed rotation coefficients exceed the supported range.");
-        return basis;
+        return QuaternionBasis.FromRaw(w, x, y, z);
     }
 
     private static void ReadDirection(JsonElement element, string type, string name)

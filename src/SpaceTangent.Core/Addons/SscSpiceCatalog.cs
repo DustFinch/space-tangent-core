@@ -9,9 +9,10 @@ namespace SpaceTangent.Core.Addons;
 public sealed class SscSpiceObject
 {
     private readonly SpkKernel[] _kernels;
+    private readonly SpiceAttitude? _attitude;
 
     internal SscSpiceObject(string name, string parent, int target, int center, string meshPath, double radius,
-        string? attitudeFrame, string? attitudeBaseFrame, SpkKernel[] kernels)
+        string? attitudeFrame, string? attitudeBaseFrame, SpkKernel[] kernels, SpiceAttitude? attitude)
     {
         Name = name;
         Parent = parent;
@@ -22,6 +23,7 @@ public sealed class SscSpiceObject
         AttitudeFrame = attitudeFrame;
         AttitudeBaseFrame = attitudeBaseFrame;
         _kernels = kernels;
+        _attitude = attitude;
     }
 
     public string Name { get; }
@@ -42,6 +44,14 @@ public sealed class SscSpiceObject
                 return true;
         }
         state = default;
+        return false;
+    }
+
+    public bool TryAttitude(JulianInstant tdb, out Basis3d bodyToReference)
+    {
+        if (_attitude is { } attitude)
+            return attitude.TrySample(tdb, out bodyToReference);
+        bodyToReference = default;
         return false;
     }
 }
@@ -81,9 +91,11 @@ public static class SscSpiceCatalog
             SscValue entry = orbit.Get("Kernel");
             SscValue[] entries = entry is SscValue.List list ? list.Items : [entry];
             var spk = new List<SpkKernel>();
+            var files = new List<string>();
             foreach (SscValue source in entries)
             {
                 string path = ResolveRelative(root, directory, source.AsText());
+                files.Add(path);
                 if (!Path.GetExtension(path).Equals(".bsp", StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (!kernels.TryGetValue(path, out var kernel))
@@ -94,14 +106,16 @@ public static class SscSpiceCatalog
                 throw new InvalidDataException("SSC SpiceOrbit has no SPK file.");
 
             string? attitude = null, baseFrame = null;
+            SpiceAttitude? rotationModel = null;
             if (fields.Fields.TryGetValue("SpiceRotation", out var rotation))
             {
                 if (rotation is not SscValue.Map definition)
                     throw new InvalidDataException("SSC SpiceRotation must be an object.");
                 attitude = definition.Text("Frame");
                 baseFrame = definition.Text("BaseFrame");
+                rotationModel = new SpiceAttitude(attitude, baseFrame, files);
             }
-            result.Add(new(name, parent, target, center, mesh, radius, attitude, baseFrame, [.. spk]));
+            result.Add(new(name, parent, target, center, mesh, radius, attitude, baseFrame, [.. spk], rotationModel));
         }
         return result.AsReadOnly();
     }

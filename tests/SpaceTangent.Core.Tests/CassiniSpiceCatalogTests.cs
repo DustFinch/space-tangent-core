@@ -40,6 +40,25 @@ public sealed class CassiniSpiceCatalogTests
         Assert.False(cassini.TrySample(JulianInstant.FromTdbSeconds(141955264.18408903).AddNanoseconds(1), out _));
     }
 
+    [CassiniFact]
+    public void ReadsCassiniCkAndLeavesPointingGapsUnfilled()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        SscSpiceObject cassini = Assert.Single(SscSpiceCatalog.Load(Path.Combine(root, "cassini.ssc"), root));
+        string path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "cassini-ck-reference.csv");
+        foreach (string line in File.ReadLines(path).Where(line => !line.StartsWith('#')))
+        {
+            double[] data = line.Split(',').Select(value => double.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+            bool found = cassini.TryAttitude(JulianInstant.FromTdbSeconds(data[0]), out var body);
+            Assert.Equal(data[1] == 1, found);
+            if (!found)
+                continue;
+            Assert.InRange((body.X - new Vector3d(data[2], data[3], data[4])).Length, 0, 3e-8);
+            Assert.InRange((body.Y - new Vector3d(data[5], data[6], data[7])).Length, 0, 3e-8);
+            Assert.InRange((body.Z - new Vector3d(data[8], data[9], data[10])).Length, 0, 3e-8);
+        }
+    }
+
     [Fact]
     public void RejectsInvalidBinaryKernelAndMalformedCatalog()
     {
