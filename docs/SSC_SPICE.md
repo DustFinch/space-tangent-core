@@ -6,6 +6,6 @@ The Cassini regression uses the original `cassini.ssc` fixture and the NASA Cass
 
 The reader evaluates `SpiceRotation` for J2000 CK type 3 frames. It reads the frame ID and clock link from FK, converts TDB to encoded clock ticks using SCLK type 1, and interpolates only inside CK pointing intervals. The second regression compares five attitudes and one pointing gap with CSPICE using the original Cassini kernels. It can be reproduced with `tools/reference/generate_cassini_attitude.py`.
 
-Metakernel expansion and script definitions require additional adapters. The application currently displays the science satellites from the JSON adapter.
+The version 1.0 SPICE JSON adapter shares the same trajectory and attitude readers. It expands ordered local metakernels, including relative path symbols, within the supplied add-on root. The original Cassini SOI JSON regression is enabled by setting `SPACETANGENT_CASSINI_JSON_ROOT` to its directory. It loads the spacecraft and reports the two sensor entries. Sensor geometry, scripts and application rendering for this spacecraft are subsequent steps.
 
 [NAIF SPK format and interpolation types](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/spk.html)

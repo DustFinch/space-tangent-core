@@ -3,6 +3,13 @@ namespace SpaceTangent.Core.Addons;
 
 internal static class LocalAddonFiles
 {
+    internal static string ResolveRelative(string root, string directory, string path)
+    {
+        if (Path.IsPathRooted(path))
+            throw new InvalidDataException("Add-on resources must use relative paths.");
+        return Resolve(root, directory, path);
+    }
+
     internal static string Resolve(string root, string directory, string path)
     {
         string candidate = Path.GetFullPath(path, directory);

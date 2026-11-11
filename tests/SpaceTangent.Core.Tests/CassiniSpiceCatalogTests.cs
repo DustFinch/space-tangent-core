@@ -17,7 +17,7 @@ public sealed class CassiniSpiceCatalogTests
         string path = Path.Combine(directory, "cassini.ssc");
         Assert.Equal("14DE7A143DB435FB862D8C7FD34CDF923595F13B717EFCC29603C4A5E06F5A83",
             Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
-        SscSpiceObject cassini = Assert.Single(SscSpiceCatalog.Load(path, directory));
+        SpiceSpacecraft cassini = Assert.Single(SscSpiceCatalog.Load(path, directory));
         Assert.Equal("Cassini-SSC", cassini.Name);
         Assert.Equal("Sol/Saturn", cassini.Parent);
         Assert.Equal(-82, cassini.Target);
@@ -44,7 +44,7 @@ public sealed class CassiniSpiceCatalogTests
     public void ReadsCassiniCkAndLeavesPointingGapsUnfilled()
     {
         string root = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
-        SscSpiceObject cassini = Assert.Single(SscSpiceCatalog.Load(Path.Combine(root, "cassini.ssc"), root));
+        SpiceSpacecraft cassini = Assert.Single(SscSpiceCatalog.Load(Path.Combine(root, "cassini.ssc"), root));
         string path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "cassini-ck-reference.csv");
         foreach (string line in File.ReadLines(path).Where(line => !line.StartsWith('#')))
         {
@@ -56,6 +56,59 @@ public sealed class CassiniSpiceCatalogTests
             Assert.InRange((body.X - new Vector3d(data[2], data[3], data[4])).Length, 0, 3e-8);
             Assert.InRange((body.Y - new Vector3d(data[5], data[6], data[7])).Length, 0, 3e-8);
             Assert.InRange((body.Z - new Vector3d(data[8], data[9], data[10])).Length, 0, 3e-8);
+        }
+    }
+
+    [CassiniJsonFact]
+    public void OriginalJsonAndItsMetakernelProduceTheSameCassiniTrajectoryAndAttitude()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        string path = Path.Combine(root, "cassini.json");
+        Assert.Equal("2E47BFDDEC3733EAB034D607FCE853A8AE2655F2A7B0E4C6C23EB1B26BFA7D12",
+            Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
+        SpiceCatalogResult catalog = SpiceJsonCatalog.Load(path, root);
+        Assert.Equal(2, catalog.SensorCount);
+        SpiceSpacecraft cassini = Assert.Single(catalog.Spacecraft);
+        Assert.Equal("Cassini SOI", cassini.Name);
+        Assert.Equal("CASSINI_SC_COORD", cassini.AttitudeFrame);
+        Assert.True(cassini.TrySample(JulianInstant.FromTdbSeconds(140556964.18453318), out var state));
+        Assert.InRange(Math.Abs(state.PositionKilometers.X + 7408933.280912078), 0, 1e-6);
+        Assert.True(cassini.TryAttitude(JulianInstant.FromTdbSeconds(141911269.46157101), out var body));
+        Assert.InRange(Math.Abs(body.X.Z - .92616579426881118), 0, 3e-8);
+    }
+
+    [Fact]
+    public void MetakernelSymbolsCannotFormACircularLoad()
+    {
+        DirectoryInfo root = Directory.CreateTempSubdirectory("SpaceTangent-meta-");
+        string catalog = Path.Combine(root.FullName, "catalog.json");
+        string meta = Path.Combine(root.FullName, "catalog.tm");
+        string nested = Path.Combine(root.CreateSubdirectory("kernels").FullName, "nested.tm");
+        try
+        {
+            File.WriteAllText(catalog, """{"version":"1.0","spiceKernels":["catalog.tm"],"items":[]}""");
+            File.WriteAllText(meta, """
+                KPL/MK
+                \begindata
+                PATH_SYMBOLS = ( 'K' )
+                PATH_VALUES = ( 'kernels' )
+                KERNELS_TO_LOAD = ( '$K/nested.tm' )
+                """);
+            File.WriteAllText(nested, """
+                KPL/MK
+                \begindata
+                KERNELS_TO_LOAD = ( '../catalog.tm' )
+                """);
+            Assert.Contains("cycle", Assert.Throws<InvalidDataException>(() =>
+                SpiceJsonCatalog.Load(catalog, root.FullName)).Message);
+        }
+        finally
+        {
+            File.Delete(catalog);
+            File.Delete(meta);
+            File.Delete(nested);
+            Directory.Delete(Path.GetDirectoryName(nested)!);
+            root.Delete();
         }
     }
 
@@ -86,6 +139,15 @@ public sealed class CassiniSpiceCatalogTests
         {
             if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")))
                 Skip = "Set SPACETANGENT_CASSINI_SSC_ROOT to the Cassini SSC and kernel directory.";
+        }
+    }
+
+    private sealed class CassiniJsonFactAttribute : FactAttribute
+    {
+        public CassiniJsonFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")))
+                Skip = "Set SPACETANGENT_CASSINI_JSON_ROOT to the original Cassini SOI add-on.";
         }
     }
 }
