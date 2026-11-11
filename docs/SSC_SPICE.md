@@ -16,4 +16,8 @@ For geometric camera intercepts, Saturn's physical center comes from SAT480 and 
 
 [NAIF PCK rotation models](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/pck.html) · [NAIF ellipsoid ray intercept](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/surfpt_c.html)
 
+The sampled SSC adapter selects a named spacecraft from a multi-object catalogue. It evaluates cubic double-precision XYZV phases in their declared J2000 ecliptic frames, with the centers and two-vector attitude resolved through the same world graph. Calendar phase times are TDB. The beginning is inclusive and the ending is exclusive, so an exact join selects the next phase.
+
+Set `SPACETANGENT_SSC_WORLD_ROOT` to the original world data root to check all 15 Cassini phases in `ssc/cassini.ssc`. The 45 reference states combine an independent Hermite calculation from the original XYZV files with the CSPICE J2000 rotation and DE440 center states. The adapter loads the named Cassini entry. Huygens' body-fixed and landed phases need separate trajectory support.
+
 [NAIF field of view definitions](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/getfov_c.html) · [NAIF reference frames](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/frames.html)

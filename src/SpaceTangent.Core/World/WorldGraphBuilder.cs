@@ -110,6 +110,18 @@ public sealed class WorldGraphBuilder
             new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Velocity));
     }
 
+    public void AddSampledSpacecraft(SscSampledSpacecraft spacecraft)
+    {
+        ArgumentNullException.ThrowIfNull(spacecraft);
+        WorldKey[] centers = spacecraft.Centers.Select(id => new WorldKey(id, WorldChannel.State)).ToArray();
+        Add(new(new(spacecraft.Id, WorldChannel.State), centers, input =>
+            spacecraft.TrySampleRelative(input.Epoch, out ObjectId center, out CartesianState local)
+                ? WorldValue.FromState(input.State(center) + local)
+                : default));
+        AddTwoVectorOrientation(spacecraft.Id, spacecraft.PrimaryAxis, spacecraft.Primary,
+            spacecraft.SecondaryAxis, spacecraft.Secondary);
+    }
+
     public WorldGraph Build()
     {
         var dependencies = new Dictionary<WorldKey, int>();
