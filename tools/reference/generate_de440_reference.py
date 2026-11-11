@@ -8,7 +8,7 @@ from pathlib import Path
 
 KERNEL_SHA256 = "c1c7feeab882263fc493a9d5a5b2ddd71b54826cdf65d8d17a76126b260a49f2"
 EPOCHS = (2414992.5, 2415024.5, 2451545.0, 2457754.5, 2460409.25, 2488080.5)
-BODIES = ((10, 0), (399, 10), (301, 399))
+BODIES = ((10, 0), (399, 10), (301, 399), *((target, 0) for target in range(1, 10)))
 
 
 def generate(library, kernel):

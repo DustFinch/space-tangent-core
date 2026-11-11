@@ -143,6 +143,15 @@ public sealed class De440EphemerisTests
     private static ObjectId Object(int id) => id switch
     {
         0 => SolarSystemSample.BarycenterId,
+        1 => SolarSystemSample.MercuryId,
+        2 => SolarSystemSample.VenusId,
+        3 => SolarSystemSample.EarthMoonBarycenterId,
+        4 => SolarSystemSample.MarsBarycenterId,
+        5 => SolarSystemSample.JupiterBarycenterId,
+        6 => SolarSystemSample.SaturnBarycenterId,
+        7 => SolarSystemSample.UranusBarycenterId,
+        8 => SolarSystemSample.NeptuneBarycenterId,
+        9 => SolarSystemSample.PlutoBarycenterId,
         10 => SolarSystemSample.SunId,
         399 => SolarSystemSample.EarthId,
         301 => SolarSystemSample.MoonId,

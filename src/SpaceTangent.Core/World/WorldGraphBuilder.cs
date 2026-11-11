@@ -19,8 +19,7 @@ public sealed class WorldGraphBuilder
         if (_solar is not null)
             throw new InvalidOperationException("A solar-system ephemeris was already added.");
 
-        ObjectId[] ids = [SolarSystemSample.BarycenterId, SolarSystemSample.SunId, SolarSystemSample.EarthId,
-            SolarSystemSample.MoonId, SolarSystemSample.SaturnBarycenterId];
+        var ids = SolarSystemSample.StateIds;
         if (ids.Any(id => _rules.ContainsKey(new(id, WorldChannel.State))))
             throw new InvalidOperationException("A solar-system object already has a trajectory.");
 

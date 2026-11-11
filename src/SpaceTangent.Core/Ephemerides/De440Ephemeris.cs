@@ -6,7 +6,7 @@ using SpaceTangent.Contracts;
 namespace SpaceTangent.Core.Ephemerides;
 
 /// <summary>
-/// Evaluates Sun, Earth and Moon from the published little-endian classic DE440
+/// Evaluates the Sun, Moon and planetary systems from the published little-endian classic DE440
 /// file or the pinned 1900–2100 subset of that file. No network or native runtime is required.
 /// </summary>
 public sealed class De440Ephemeris
@@ -21,7 +21,8 @@ public sealed class De440Ephemeris
     private readonly Series _earthMoonBarycenter;
     private readonly Series _moonRelativeToEarth;
     private readonly Series _sun;
-    private readonly Series _saturnBarycenter;
+    private readonly Series _mercury, _venus, _marsBarycenter, _jupiterBarycenter, _saturnBarycenter,
+        _uranusBarycenter, _neptuneBarycenter, _plutoBarycenter;
     private readonly double _earthShare;
     private readonly int _dataRecords;
 
@@ -32,10 +33,17 @@ public sealed class De440Ephemeris
         Start = JulianInstant.FromJulianDate(ReadDouble(records, 2652), TimeScale.Tdb);
         End = JulianInstant.FromJulianDate(ReadDouble(records, 2660), TimeScale.Tdb);
         _earthShare = 1 / (1 + ReadDouble(records, 2688));
+        _mercury = ReadSeries(records, 0);
+        _venus = ReadSeries(records, 1);
         _earthMoonBarycenter = ReadSeries(records, 2);
+        _marsBarycenter = ReadSeries(records, 3);
+        _jupiterBarycenter = ReadSeries(records, 4);
+        _saturnBarycenter = ReadSeries(records, 5);
+        _uranusBarycenter = ReadSeries(records, 6);
+        _neptuneBarycenter = ReadSeries(records, 7);
+        _plutoBarycenter = ReadSeries(records, 8);
         _moonRelativeToEarth = ReadSeries(records, 9);
         _sun = ReadSeries(records, 10);
-        _saturnBarycenter = ReadSeries(records, 5);
     }
 
     public JulianInstant Start { get; }
@@ -75,7 +83,17 @@ public sealed class De440Ephemeris
         CartesianState lunarOffset = Evaluate(record, withinRecord, _moonRelativeToEarth);
         CartesianState earth = emb - lunarOffset * _earthShare;
         return new(tdb, Evaluate(record, withinRecord, _sun), earth, earth + lunarOffset,
-            Evaluate(record, withinRecord, _saturnBarycenter));
+            Evaluate(record, withinRecord, _saturnBarycenter))
+        {
+            Mercury = Evaluate(record, withinRecord, _mercury),
+            Venus = Evaluate(record, withinRecord, _venus),
+            EarthMoonBarycenter = emb,
+            MarsBarycenter = Evaluate(record, withinRecord, _marsBarycenter),
+            JupiterBarycenter = Evaluate(record, withinRecord, _jupiterBarycenter),
+            UranusBarycenter = Evaluate(record, withinRecord, _uranusBarycenter),
+            NeptuneBarycenter = Evaluate(record, withinRecord, _neptuneBarycenter),
+            PlutoBarycenter = Evaluate(record, withinRecord, _plutoBarycenter)
+        };
     }
 
     private static CartesianState Evaluate(ReadOnlySpan<byte> record, long withinRecord, Series series)
