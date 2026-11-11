@@ -53,7 +53,7 @@ public static class SscConicOrbits
         });
     }
 
-    private static SscConicReference ReadReference(SscDefinition entry)
+    internal static SscConicReference ReadReference(SscDefinition entry)
     {
         if (!entry.Properties.Fields.TryGetValue("OrbitFrame", out var field))
             return new(SscConicAxes.ParentDefault, entry.Parent, null, null);
@@ -79,7 +79,7 @@ public static class SscConicOrbits
         return new(axes, center, pole, freeze);
     }
 
-    private static SscConicOrbit ReadOrbit(SscDefinition entry, SscValue block, SscOrbitContext context)
+    internal static SscConicOrbit ReadOrbit(SscDefinition entry, SscValue block, SscOrbitContext context)
     {
         if (block is not SscValue.Map orbit)
             throw new InvalidDataException("Expected an SSC EllipticalOrbit object.");

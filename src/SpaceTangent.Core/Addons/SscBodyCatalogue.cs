@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+using System.Globalization;
+using SpaceTangent.Contracts;
+using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.World;
+
+namespace SpaceTangent.Core.Addons;
+
+public sealed record SscBodyAxis(FrameAxis Axis, string Observer, string Target, DirectionQuantity Quantity);
+public sealed record SscBodyOrientation(SscBodyAxis Primary, SscBodyAxis Secondary);
+
+public sealed record SscBodyDefinition(string Names, string Parent, string Center, string Class,
+    double RadiusKilometers, Vector3d Color, string? Mesh, Vector3d MeshCenter, Basis3d MeshRotation,
+    SscBodyOrientation? Orientation, Func<JulianInstant, CartesianState?> Sample)
+{
+    public string Name => Names.Split(':')[0];
+}
+
+/// <summary>Local SSC bodies with conic or cubic XYZV orbits and static or two-vector attitudes.</summary>
+public static class SscBodyCatalogue
+{
+    private const double AuKilometers = 149_597_870.7;
+    private static readonly FrameId Icrs = new("icrf3");
+    private static readonly Basis3d Ecliptic = Rotation(new(1, 0, 0), 23.4392911);
+
+    public static IReadOnlyList<SscBodyDefinition> Load(string root, CancellationToken cancellation = default)
+    {
+        root = Path.GetFullPath(root);
+        if (!AddonDependencies.DirectoryExists(root))
+            return [];
+        string data = Path.Combine(root, "data");
+        var paths = AddonDependencies.ListFiles(root, "*.ssc").AsEnumerable();
+        if (AddonDependencies.DirectoryExists(data))
+            paths = paths.Concat(AddonDependencies.ListFiles(data, "*.ssc"));
+        string[] files = paths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (files.Length > 64)
+            throw new InvalidDataException("A body catalogue source contains more than 64 SSC files.");
+        var result = new List<SscBodyDefinition>();
+        foreach (SscDefinition item in SscDefinitions.Load(files, root, cancellation))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (result.Count >= 512)
+                throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
+            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root)));
+        }
+        return result.AsReadOnly();
+    }
+
+    public static string ResolveTexture(string root, string mesh, string relative) =>
+        SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
+            Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
+
+    private static SscBodyDefinition ReadBody(SscDefinition item, string root)
+    {
+        SscValue.Map fields = item.Properties;
+        var reference = SscConicOrbits.ReadReference(item);
+        bool heliocentric = reference.Center.Equals("Sol", StringComparison.OrdinalIgnoreCase);
+        bool ecliptic = reference.Axes switch
+        {
+            SscConicAxes.EclipticJ2000 => true,
+            SscConicAxes.EquatorJ2000 => false,
+            SscConicAxes.ParentDefault => heliocentric,
+            _ => throw new NotSupportedException($"The SSC orbital frame {reference.Axes} is unavailable.")
+        };
+        JulianInstant? beginning = Text("Beginning") is { } begin ? SscSampledCatalog.ReadDate(begin) : null;
+        JulianInstant? ending = Text("Ending") is { } end ? SscSampledCatalog.ReadDate(end) : null;
+        if (beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
+            throw new InvalidDataException("SSC ending must follow its beginning.");
+        Func<JulianInstant, CartesianState?> raw;
+        if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
+        {
+            var context = new SscOrbitContext(Icrs, heliocentric ? AuKilometers : 1,
+                heliocentric ? 31_557_600 : 86_400);
+            var curve = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
+            raw = epoch => curve.Evaluate(epoch);
+        }
+        else
+        {
+            string key = fields.Fields.ContainsKey("SampledTrajectory") ? "SampledTrajectory" : "SampledOrbit";
+            SscValue data = fields.Get(key);
+            string name;
+            if (data is SscValue.Map sample)
+            {
+                if (sample.Fields.TryGetValue("Interpolation", out SscValue? interpolation) && interpolation.AsText() != "cubic")
+                    throw new NotSupportedException("Only cubic sampled trajectory interpolation is available.");
+                name = sample.Text("Source");
+            }
+            else
+                name = data.AsText();
+            string file = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root, item.DirectoryFor(key), name,
+                Path.Combine("models", "trajectories"), "data");
+            if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
+            var curve = SampledStateTrajectory.ReadXyzv(file, Icrs);
+            if (curve.Count == 0)
+                throw new InvalidDataException("The SSC trajectory contains no samples.");
+            raw = epoch => epoch.CompareTo(curve.Start!.Value) >= 0 && epoch.CompareTo(curve.End!.Value) <= 0 &&
+                curve.TrySample(epoch, out CartesianState state) ? state : null;
+        }
+
+        double radius = Number(fields.Get("Radius"));
+        if (radius is <= 0 or > 2_000_000)
+            throw new InvalidDataException("SSC body radius is out of range.");
+        string? mesh = Text("Mesh") is { } fileName
+            ? SscSampledCatalog.FindAsset(AddonStage.Mesh, root, item.DirectoryFor("Mesh"), fileName, "models") : null;
+        Vector3d color = fields.Fields.TryGetValue("Color", out var colorValue) ? ReadVector(colorValue) : new(.8, .8, .8);
+        if (color.X is < 0 or > 1 || color.Y is < 0 or > 1 || color.Z is < 0 or > 1)
+            throw new InvalidDataException("SSC color components must be between zero and one.");
+        var meshCenter = fields.Fields.TryGetValue("MeshCenter", out var centerValue) ? ReadVector(centerValue) : default;
+        Basis3d meshRotation = Basis3d.Identity;
+        if (fields.Fields.TryGetValue("Orientation", out var rotationValue))
+        {
+            double[] rotation = Numbers(rotationValue, 4);
+            meshRotation = Rotation(new(rotation[1], rotation[2], rotation[3]), rotation[0]);
+        }
+        SscBodyOrientation? orientation = null;
+        if (fields.Fields.ContainsKey("BodyFrame"))
+        {
+            SscValue.Map frame = fields.Object("BodyFrame").Object("TwoVector");
+            orientation = new(ReadAxis(frame.Object("Primary")), ReadAxis(frame.Object("Secondary")));
+        }
+        if (fields.Fields.TryGetValue("FixedRotation", out var fixedRotation) &&
+            fixedRotation is not SscValue.Map { Fields.Count: 0 })
+            throw new NotSupportedException("Only an identity fixed rotation is available for SSC body frames.");
+        if (fields.Fields.Keys.Any(key => key is "UniformRotation" or "CustomRotation" or "ScriptedRotation" or
+                "SpiceRotation" or "SampledOrientation"))
+            throw new NotSupportedException("This body catalogue needs a different rotation model.");
+
+        return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
+            mesh, meshCenter, meshRotation, orientation, Sample);
+
+        string? Text(string field) => fields.Fields.TryGetValue(field, out SscValue? value) ? value.AsText() : null;
+
+        CartesianState? Sample(JulianInstant epoch)
+        {
+            if ((beginning is { } start && epoch.CompareTo(start) < 0) ||
+                (ending is { } stop && epoch.CompareTo(stop) > 0) ||
+                raw(epoch) is not { } state)
+                return null;
+            return ecliptic ? new(Ecliptic.Transform(state.PositionKilometers),
+                Ecliptic.Transform(state.VelocityKilometersPerSecond)) : state;
+        }
+    }
+
+    private static SscBodyAxis ReadAxis(SscValue.Map frame)
+    {
+        FrameAxis axis = frame.Text("Axis") switch
+        {
+            "x" => FrameAxis.X, "-x" => FrameAxis.NegativeX, "y" => FrameAxis.Y,
+            "-y" => FrameAxis.NegativeY, "z" => FrameAxis.Z, "-z" => FrameAxis.NegativeZ,
+            _ => throw new InvalidDataException("Unknown SSC body-frame axis.")
+        };
+        bool velocity = frame.Fields.ContainsKey("RelativeVelocity");
+        var direction = frame.Object(velocity ? "RelativeVelocity" : "RelativePosition");
+        return new(axis, direction.Text("Observer"), direction.Text("Target"),
+            velocity ? DirectionQuantity.Velocity : DirectionQuantity.Position);
+    }
+
+    private static double Number(SscValue value) =>
+        double.TryParse(value.AsText(), NumberStyles.Float, CultureInfo.InvariantCulture, out double number) && double.IsFinite(number)
+            ? number : throw new InvalidDataException("Invalid SSC number.");
+
+    private static double[] Numbers(SscValue value, int count) =>
+        value is SscValue.List list && list.Items.Length == count ? list.Items.Select(Number).ToArray() :
+            throw new InvalidDataException("Invalid SSC vector.");
+
+    private static Vector3d ReadVector(SscValue value)
+    {
+        double[] vector = Numbers(value, 3);
+        return new(vector[0], vector[1], vector[2]);
+    }
+
+    private static Basis3d Rotation(Vector3d axis, double degrees)
+    {
+        if (axis.Length <= 0 || !axis.IsFinite)
+            throw new InvalidDataException("An SSC rotation needs a finite axis.");
+        axis /= axis.Length;
+        var (sin, cos) = Math.SinCos(degrees * Math.PI / 180);
+        return new(Apply(new(1, 0, 0)), Apply(new(0, 1, 0)), Apply(new(0, 0, 1)));
+        Vector3d Apply(Vector3d value) => value * cos + Vector3d.Cross(axis, value) * sin +
+            axis * (Vector3d.Dot(axis, value) * (1 - cos));
+    }
+}
