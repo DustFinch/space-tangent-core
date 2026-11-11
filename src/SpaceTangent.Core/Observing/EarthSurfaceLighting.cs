@@ -6,7 +6,11 @@ using SpaceTangent.Core.Time;
 
 namespace SpaceTangent.Core.Observing;
 
-public readonly record struct EarthSite(double LatitudeDegrees, double LongitudeDegrees, double HeightKilometers);
+public readonly record struct EarthSite(double LatitudeDegrees, double LongitudeDegrees, double HeightKilometers)
+{
+    public bool IsValid() => LatitudeDegrees is >= -90 and <= 90 && LongitudeDegrees is >= -180 and <= 180 &&
+        double.IsFinite(HeightKilometers) && HeightKilometers >= 0;
+}
 
 public readonly record struct SurfaceLighting(Vector3d PositionKilometers, Basis3d EastNorthUp,
     double EarthRotationRadians, Vector3d EarthToSun, Vector3d EarthToMoon, double RelativeLunarFlux)
@@ -28,9 +32,7 @@ public static class EarthSurfaceLighting
     /// <summary>Mean sidereal rotation on a spherical Earth, with ICRF axes used as the mean equator approximation.</summary>
     public static SurfaceLighting Sample(SolarSystemSample system, EarthSite site, DeltaTModel deltaT)
     {
-        if (!double.IsFinite(site.LatitudeDegrees) || Math.Abs(site.LatitudeDegrees) > 90 ||
-            !double.IsFinite(site.LongitudeDegrees) || Math.Abs(site.LongitudeDegrees) > 180 ||
-            !double.IsFinite(site.HeightKilometers) || site.HeightKilometers < 0)
+        if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));
 
         JulianInstant tt = TimeConversion.Convert(system.Epoch, TimeScale.Tt);
