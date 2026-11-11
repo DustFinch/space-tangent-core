@@ -103,4 +103,39 @@ public sealed class WorldGraphTests
                 Skip = "The world composition check requires DE440 and the original Cassini SSC files.";
         }
     }
+
+    [RealScienceFact]
+    public void ScienceSatellitesShareTheSameSolarSnapshotAndTwoVectorEvaluation()
+    {
+        var builder = new WorldGraphBuilder();
+        builder.AddSolarSystem(De440Ephemeris.Load(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")!));
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_SCIENCE_ROOT")!;
+        var tracks = ScienceSatelliteCatalog.Load(Path.Combine(root, "catalog", "sciencesat.json"), root);
+        foreach (ScienceSatellite track in tracks)
+            builder.AddScienceSatellite(track);
+        WorldGraph world = builder.Build();
+        foreach (ScienceSatellite track in tracks)
+        {
+            WorldSnapshot snapshot = world.Evaluate(track.Epoch.AddSeconds(3600));
+            Assert.NotNull(snapshot.SolarSystem);
+            Assert.True(snapshot.TryState(track.Id, out var state));
+            Assert.True(snapshot.TryState(SolarSystemSample.EarthId, out var earth));
+            Assert.True(snapshot.TryOrientation(track.Id, out var frame));
+            Assert.True(track.TrySample(snapshot.Epoch, out var expected));
+            Assert.InRange((state.PositionKilometers - earth.PositionKilometers -
+                expected.EarthRelativeState.PositionKilometers).Length, 0, 3e-8);
+            Assert.InRange((frame.ToWorld.X - expected.BodyToTrajectory.X).Length, 0, 1e-11);
+            Assert.InRange((frame.ToWorld.Y - expected.BodyToTrajectory.Y).Length, 0, 1e-11);
+        }
+    }
+
+    private sealed class RealScienceFactAttribute : FactAttribute
+    {
+        public RealScienceFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_SCIENCE_ROOT")))
+                Skip = "The world composition check requires DE440 and the original science satellites.";
+        }
+    }
 }

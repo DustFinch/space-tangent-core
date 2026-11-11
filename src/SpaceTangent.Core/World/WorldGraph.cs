@@ -27,14 +27,17 @@ public sealed class WorldSnapshot
     private readonly IReadOnlyDictionary<WorldKey, int> _indices;
     private readonly WorldValue[] _values;
 
-    internal WorldSnapshot(JulianInstant epoch, IReadOnlyDictionary<WorldKey, int> indices, WorldValue[] values)
+    internal WorldSnapshot(JulianInstant epoch, SolarSystemSample? solar, IReadOnlyDictionary<WorldKey, int> indices,
+        WorldValue[] values)
     {
         Epoch = epoch;
+        SolarSystem = solar;
         _indices = indices;
         _values = values;
     }
 
     public JulianInstant Epoch { get; }
+    public SolarSystemSample? SolarSystem { get; }
 
     public bool TryState(ObjectId id, out CartesianState state)
     {
@@ -95,6 +98,6 @@ public sealed class WorldGraph
             if (ready)
                 values[index] = node.Rule.Read(input);
         }
-        return new(tdb, _indices, values);
+        return new(tdb, solar, _indices, values);
     }
 }

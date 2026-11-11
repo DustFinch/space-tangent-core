@@ -100,6 +100,16 @@ public sealed class WorldGraphBuilder
         return id;
     }
 
+    public void AddScienceSatellite(ScienceSatellite satellite)
+    {
+        ArgumentNullException.ThrowIfNull(satellite);
+        AddTrajectory(satellite.Id, satellite.TryOrbit, SolarSystemSample.EarthId);
+        AddTwoVectorOrientation(satellite.Id, ToAxis(satellite.NadirAxis),
+            new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Position),
+            ToAxis(satellite.RelativeVelocityAxis),
+            new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Velocity));
+    }
+
     public WorldGraph Build()
     {
         var dependencies = new Dictionary<WorldKey, int>();
@@ -158,6 +168,8 @@ public sealed class WorldGraphBuilder
         int index = (int)axis;
         return new(index / 2, index % 2 == 0 ? 1 : -1);
     }
+
+    private static FrameAxis ToAxis(SignedAxis axis) => (FrameAxis)(axis.Index * 2 + (axis.Sign < 0 ? 1 : 0));
 
     private static ObjectId NaifObject(int id) => id switch
     {

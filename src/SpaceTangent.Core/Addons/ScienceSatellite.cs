@@ -31,7 +31,13 @@ public sealed class ScienceSatellite
     public string Name { get; }
     public string MeshPath { get; }
     public double SizeKilometers { get; }
+    public Basis3d MeshToBody => _meshToBody;
     public JulianInstant Epoch => _orbit.Epoch;
+    internal SignedAxis NadirAxis => _nadir;
+    internal SignedAxis RelativeVelocityAxis => _relativeVelocity;
+
+    internal CartesianState? TryOrbit(JulianInstant epoch) =>
+        _orbit.TrySample(epoch, out var state) ? state : null;
 
     /// <summary>The original catalogue interprets the raw SGP4 state in its declared frame.</summary>
     public static FrameId TrajectoryFrame { get; } = new("compatibility/equator-j2000");
