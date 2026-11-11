@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Buffers.Binary;
+using SpaceTangent.Core.Addons;
 using System.Runtime.InteropServices;
 
 namespace SpaceTangent.Core.Surfaces;
@@ -47,7 +48,7 @@ public sealed class ElevationMap
 
     public static ElevationMap Load(string path, CancellationToken cancellation = default)
     {
-        using var file = File.OpenRead(path);
+        using var file = AddonDependencies.OpenRead(path, HeaderBytes + 2 * MaximumSamples);
         Span<byte> header = stackalloc byte[HeaderBytes];
         if (file.Length < HeaderBytes)
             throw new InvalidDataException("The terrain header is truncated.");

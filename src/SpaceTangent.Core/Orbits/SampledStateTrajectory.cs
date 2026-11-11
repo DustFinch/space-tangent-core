@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Globalization;
+using SpaceTangent.Core.Addons;
 using System.Text;
 using SpaceTangent.Contracts;
 
@@ -64,7 +65,7 @@ public sealed class SampledStateTrajectory
 
     public static SampledStateTrajectory ReadXyzv(string path, FrameId frame)
     {
-        using FileStream file = File.OpenRead(path);
+        using FileStream file = AddonDependencies.OpenRead(path, 64L * 1024 * 1024);
         if (file.Length > 64L * 1024 * 1024)
             throw new InvalidDataException("XYZV file exceeds 64 MiB.");
         using var reader = new StreamReader(file, new UTF8Encoding(false, true));

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Buffers.Binary;
+using SpaceTangent.Core.Addons;
 using System.Text;
 
 namespace SpaceTangent.Core.Spice;
@@ -16,7 +17,7 @@ internal sealed class DafFile
 
     internal DafFile(string path, string expectedType)
     {
-        using FileStream stream = File.OpenRead(path);
+        using FileStream stream = AddonDependencies.OpenRead(path, MaximumKernelBytes);
         if (stream.Length < RecordBytes || stream.Length > MaximumKernelBytes || stream.Length % RecordBytes != 0)
             throw new InvalidDataException("Invalid DAF file length.");
         _bytes = GC.AllocateUninitializedArray<byte>((int)stream.Length);

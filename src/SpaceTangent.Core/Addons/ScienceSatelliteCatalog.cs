@@ -16,7 +16,7 @@ public static class ScienceSatelliteCatalog
         string root = Path.GetFullPath(assetRoot);
         string fullCatalogPath = LocalAddonFiles.Resolve(root, root, catalogPath);
         byte[] bytes;
-        using (FileStream input = File.OpenRead(fullCatalogPath))
+        using (FileStream input = AddonDependencies.OpenRead(fullCatalogPath, MaximumCatalogBytes))
         {
             if (input.Length > MaximumCatalogBytes)
                 throw new InvalidDataException("Satellite catalogue exceeds 1 MiB.");

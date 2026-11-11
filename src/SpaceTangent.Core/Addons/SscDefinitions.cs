@@ -31,7 +31,7 @@ internal static class SscDefinitions
             cancellation.ThrowIfCancellationRequested();
             string file = root is null ? Path.GetFullPath(path) : LocalAddonFiles.Resolve(root, root, path);
             string directory = Path.GetDirectoryName(file)!;
-            using FileStream stream = File.OpenRead(file);
+            using FileStream stream = AddonDependencies.OpenRead(file, MaximumCatalogBytes);
             if (stream.Length > MaximumCatalogBytes)
                 throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
             using var reader = new StreamReader(stream, new UTF8Encoding(false, true));

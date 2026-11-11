@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Globalization;
+using SpaceTangent.Core.Addons;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -17,7 +18,7 @@ internal sealed class SpiceTextKernel
 
     internal void Furnish(string path)
     {
-        using FileStream file = File.OpenRead(path);
+        using FileStream file = AddonDependencies.OpenRead(path, 2 * 1024 * 1024);
         if (file.Length > 2 * 1024 * 1024)
             throw new InvalidDataException("SPICE text kernel exceeds 2 MiB.");
         using var reader = new StreamReader(file, new UTF8Encoding(false, true));

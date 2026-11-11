@@ -17,7 +17,7 @@ public static class SpiceJsonCatalog
         string root = Path.GetFullPath(assetRoot);
         string path = LocalAddonFiles.Resolve(root, root, catalogPath);
         string directory = Path.GetDirectoryName(path)!;
-        using FileStream stream = File.OpenRead(path);
+        using FileStream stream = AddonDependencies.OpenRead(path, 1024 * 1024);
         if (stream.Length > 1024 * 1024)
             throw new InvalidDataException("SPICE JSON catalogue exceeds 1 MiB.");
         using JsonDocument json = JsonDocument.Parse(stream);

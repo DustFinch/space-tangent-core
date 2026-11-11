@@ -17,12 +17,12 @@ internal static class LocalAddonFiles
         if (Path.IsPathRooted(relative) || relative == ".." ||
             relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new InvalidDataException("Catalogue asset is outside the declared add-on root.");
-        if (!File.Exists(candidate))
+        if (!AddonDependencies.FileExists(candidate))
             throw new FileNotFoundException("Catalogue asset is missing.", candidate);
 
         for (string cursor = candidate; ; cursor = Path.GetDirectoryName(cursor)!)
         {
-            if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
+            if ((AddonDependencies.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Catalogue assets must not use symbolic links.");
             if (Path.GetRelativePath(root, cursor) == ".")
                 return candidate;
