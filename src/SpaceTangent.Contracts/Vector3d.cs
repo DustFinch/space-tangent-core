@@ -20,6 +20,8 @@ public readonly record struct Vector3d(double X, double Y, double Z)
         }
     }
 
+    public static double Dot(Vector3d left, Vector3d right) => left.X * right.X + left.Y * right.Y + left.Z * right.Z;
+
     public static Vector3d operator +(Vector3d left, Vector3d right) =>
         new(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
 

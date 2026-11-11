@@ -29,7 +29,7 @@ internal static class TwoVectorBasis
 
         Vector3d first = direction / length * primary.Sign;
         guide /= guideLength;
-        Vector3d second = guide - first * Dot(first, guide);
+        Vector3d second = guide - first * Vector3d.Dot(first, guide);
         double secondLength = second.Length;
         if (secondLength < 1e-12)
             return false;
@@ -43,8 +43,6 @@ internal static class TwoVectorBasis
         basis = new(columns[0], columns[1], columns[2]);
         return true;
     }
-
-    private static double Dot(Vector3d left, Vector3d right) => left.X * right.X + left.Y * right.Y + left.Z * right.Z;
 
     private static Vector3d Cross(Vector3d left, Vector3d right) =>
         new(left.Y * right.Z - left.Z * right.Y, left.Z * right.X - left.X * right.Z,

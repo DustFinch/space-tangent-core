@@ -2,6 +2,8 @@
 using System.Globalization;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.Observing;
+using SpaceTangent.Core.Time;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -65,6 +67,23 @@ public sealed class De440EphemerisTests
         {
             File.Delete(file);
         }
+    }
+
+    [De440Fact]
+    public void MoscowFullMoonAndDayControlMatchIndependentDirections()
+    {
+        var site = new EarthSite(55.7558, 37.6173, 0);
+        var night = JulianInstant.FromJulianDate(2460600.5008, TimeScale.Tdb);
+        var moon = EarthSurfaceLighting.Sample(Ephemeris.Value.Sample(night), site, DeltaTModel.MorrisonStephenson2004);
+        var day = EarthSurfaceLighting.Sample(Ephemeris.Value.Sample(night.AddSeconds(43200)), site,
+            DeltaTModel.MorrisonStephenson2004);
+        double degrees = 180 / Math.PI;
+
+        Assert.InRange(moon.SolarAltitudeRadians * degrees, -33.25, -33.19);
+        Assert.InRange(moon.LunarAltitudeRadians * degrees, 27.74, 27.81);
+        Assert.InRange(day.SolarAltitudeRadians * degrees, 16.21, 16.28);
+        Assert.InRange(day.LunarAltitudeRadians * degrees, -15.62, -15.55);
+        Assert.InRange(moon.RelativeLunarFlux * .12, .10, .16);
     }
 
     private static ObjectId Object(int id) => id switch
