@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Text.Json;
+using SpaceTangent.Contracts;
 using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.Addons;
 
-public sealed record SpiceCatalogResult(IReadOnlyList<SpiceSpacecraft> Spacecraft, int SensorCount);
+public sealed record SpiceCatalogResult(IReadOnlyList<SpiceSpacecraft> Spacecraft, IReadOnlyList<SpiceSensor> Sensors)
+{
+    public int SensorCount => Sensors.Count;
+}
 
 public static class SpiceJsonCatalog
 {
@@ -23,13 +27,13 @@ public static class SpiceJsonCatalog
             catalog.GetProperty("spiceKernels").EnumerateArray().Select(item => Text(item)));
 
         var tracks = new List<SpiceSpacecraft>();
-        int sensors = 0;
+        var sensorItems = new List<JsonElement>();
         foreach (JsonElement item in catalog.GetProperty("items").EnumerateArray())
         {
             string kind = Text(item.GetProperty("class"));
             if (kind == "sensor")
             {
-                sensors++;
+                sensorItems.Add(item);
                 continue;
             }
             if (kind != "spacecraft")
@@ -50,7 +54,57 @@ public static class SpiceJsonCatalog
                 NaifIds.Resolve(Text(trajectory.GetProperty("target"))), NaifIds.Resolve(Text(trajectory.GetProperty("center"))),
                 mesh, size, Text(bodyFrame.GetProperty("name")), "J2000", resources));
         }
-        return new(tracks.AsReadOnly(), sensors);
+        var sensors = new List<SpiceSensor>(sensorItems.Count);
+        if (sensorItems.Count > 0)
+        {
+            var pool = new SpiceTextKernel();
+            foreach (string file in resources.Files)
+            {
+                string extension = Path.GetExtension(file);
+                if (extension.Equals(".tf", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".ti", StringComparison.OrdinalIgnoreCase))
+                    pool.Furnish(file);
+            }
+            foreach (JsonElement sensor in sensorItems)
+                sensors.Add(ReadSensor(sensor, tracks, pool));
+        }
+        return new(tracks.AsReadOnly(), sensors.AsReadOnly());
+    }
+
+    private static SpiceSensor ReadSensor(JsonElement item, List<SpiceSpacecraft> tracks, SpiceTextKernel pool)
+    {
+        string parent = Text(item.GetProperty("parent"));
+        if (Text(item.GetProperty("center")) != parent)
+            throw new NotSupportedException("An instrument must be centered on its parent spacecraft.");
+        SpiceSpacecraft[] matches = tracks.Where(track => track.Name == parent).ToArray();
+        if (matches.Length != 1 || matches[0].AttitudeFrame is not { } bodyFrame)
+            throw new InvalidDataException($"SPICE sensor parent {parent} needs a unique spacecraft attitude.");
+        JsonElement geometry = item.GetProperty("geometry");
+        Require(geometry, "type", "Spice");
+        string instrument = Text(geometry.GetProperty("instrName"));
+        double range = geometry.GetProperty("range").GetDouble();
+        if (!double.IsFinite(range) || range <= 0)
+            throw new InvalidDataException("SPICE sensor range must be finite and positive.");
+        Vector3d color = new(1, 1, 1);
+        if (geometry.TryGetProperty("frustumColor", out JsonElement colorValue))
+        {
+            if (colorValue.GetArrayLength() != 3)
+                throw new InvalidDataException("SPICE sensor color requires three components.");
+            color = new(UnitInterval(colorValue[0]), UnitInterval(colorValue[1]), UnitInterval(colorValue[2]));
+        }
+        return new(Text(item.GetProperty("name")), matches[0], instrument, Text(geometry.GetProperty("target")), range,
+            color, Opacity(geometry, "frustumOpacity", .3), Opacity(geometry, "footprintOpacity", 1),
+            SpiceFieldOfView.Load(pool, instrument, bodyFrame));
+    }
+
+    private static double Opacity(JsonElement geometry, string key, double fallback) =>
+        geometry.TryGetProperty(key, out JsonElement value) ? UnitInterval(value) : fallback;
+
+    private static double UnitInterval(JsonElement value)
+    {
+        double number = value.GetDouble();
+        return double.IsFinite(number) && number is >= 0 and <= 1 ? number
+            : throw new InvalidDataException("SPICE sensor color and opacity must be between zero and one.");
     }
 
     private static string Text(JsonElement element)

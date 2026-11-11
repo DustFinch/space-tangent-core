@@ -77,6 +77,48 @@ public sealed class CassiniSpiceCatalogTests
         Assert.InRange(Math.Abs(body.X.Z - .92616579426881118), 0, 3e-8);
     }
 
+    [CassiniJsonFact]
+    public void OriginalCameraRaysMatchCspiceAtTwoPointingEpochs()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        SpiceCatalogResult catalog = SpiceJsonCatalog.Load(Path.Combine(root, "cassini.json"), root);
+        Assert.Collection(catalog.Sensors, narrow =>
+        {
+            Assert.Equal("ISS NAC", narrow.Name);
+            Assert.Equal(new Vector3d(0, 1, 1), narrow.Color);
+            Assert.Equal(.8, narrow.FootprintOpacity);
+        }, wide =>
+        {
+            Assert.Equal("ISS WAC", wide.Name);
+            Assert.Equal(new Vector3d(1, .8, .2), wide.Color);
+            Assert.Equal(.6, wide.FootprintOpacity);
+        });
+
+        string path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "cassini-fov-reference.csv");
+        foreach (string line in File.ReadLines(path).Where(line => !line.StartsWith('#')))
+        {
+            double[] data = line.Split(',').Select(value => double.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+            SpiceSensor sensor = Assert.Single(catalog.Sensors, sensor => sensor.InstrumentId == data[0]);
+            Assert.Same(catalog.Spacecraft[0], sensor.Spacecraft);
+            Assert.Equal("Saturn", sensor.Target);
+            Assert.Equal(200_000, sensor.RangeKilometers);
+            Assert.Equal(.3, sensor.FrustumOpacity);
+            Assert.True(sensor.Spacecraft.TryAttitude(JulianInstant.FromTdbSeconds(data[1]), out Basis3d body));
+            Assert.InRange((body.Transform(sensor.BoresightInBody) - Ray(2)).Length, 0, 3e-8);
+            var actual = sensor.CornersInBody.Select(body.Transform).ToList();
+            for (int index = 5; index < data.Length; index += 3)
+            {
+                Vector3d expected = Ray(index);
+                int match = actual.FindIndex(ray => (ray - expected).Length <= 3e-8);
+                Assert.True(match >= 0, $"Missing CSPICE corner at {data[1]} for {sensor.Instrument}.");
+                actual.RemoveAt(match);
+            }
+            Assert.Empty(actual);
+
+            Vector3d Ray(int index) => new(data[index], data[index + 1], data[index + 2]);
+        }
+    }
+
     [Fact]
     public void MetakernelSymbolsCannotFormACircularLoad()
     {
