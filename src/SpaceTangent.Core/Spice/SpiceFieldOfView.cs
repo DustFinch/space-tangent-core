@@ -79,21 +79,7 @@ internal sealed record SpiceFieldOfView(int InstrumentId, Vector3d Boresight, Ve
 
         double unit = AngleUnit(Text(pool, key + "_UNITS"));
         double[] angles = Numbers(pool, key + "_ANGLES", 3), axes = Numbers(pool, key + "_AXES", 3);
-        var result = Basis3d.Identity;
-        for (int index = 2; index >= 0; index--)
-        {
-            double angle = angles[index] * unit;
-            double sin = Math.Sin(angle), cos = Math.Cos(angle);
-            Basis3d rotation = axes[index] switch
-            {
-                1 => new(new(1, 0, 0), new(0, cos, -sin), new(0, sin, cos)),
-                2 => new(new(cos, 0, sin), new(0, 1, 0), new(-sin, 0, cos)),
-                3 => new(new(cos, -sin, 0), new(sin, cos, 0), new(0, 0, 1)),
-                _ => throw new InvalidDataException("Invalid SPICE Euler rotation axis.")
-            };
-            result = new(rotation.Transform(result.X), rotation.Transform(result.Y), rotation.Transform(result.Z));
-        }
-        return result;
+        return SpiceEuler.Compose([angles[0] * unit, angles[1] * unit, angles[2] * unit], axes);
     }
 
     private static double AngleUnit(string unit) => unit switch

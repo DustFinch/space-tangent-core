@@ -12,4 +12,8 @@ The SAT480 regression uses Saturn's physical center (699) relative to the system
 
 [NAIF SPK format and interpolation types](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/spk.html) · [SAT480 data and provenance](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/satellites/sat480.cmt)
 
+For geometric camera intercepts, Saturn's physical center comes from SAT480 and its orientation and radii come from the standard IAU polynomial model in `pck00011.tpc`. Set `SPACETANGENT_SATURN_PCK` to that original file, SHA-256 `3DFF7B1DBECEAA01F25467767D3FA25816051C85D162D1EDF04ACB310EE28BB1`. The ray and target share one TDB epoch. The closest forward intercept must lie within the catalogue range. The independent fixture includes both cameras' boresights and corners with hits and misses.
+
+[NAIF PCK rotation models](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/pck.html) · [NAIF ellipsoid ray intercept](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/surfpt_c.html)
+
 [NAIF field of view definitions](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/getfov_c.html) · [NAIF reference frames](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/frames.html)
