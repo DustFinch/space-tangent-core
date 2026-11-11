@@ -51,7 +51,7 @@ public sealed class WorldGraphBuilder
             if (center is { } parent)
                 state += input.State(parent);
             return state.PositionKilometers.IsFinite && state.VelocityKilometersPerSecond.IsFinite
-                ? WorldValue.FromState(state)
+                ? WorldValue.FromState(state, center)
                 : default;
         }));
     }
@@ -115,9 +115,14 @@ public sealed class WorldGraphBuilder
         ArgumentNullException.ThrowIfNull(spacecraft);
         WorldKey[] centers = spacecraft.Centers.Select(id => new WorldKey(id, WorldChannel.State)).ToArray();
         Add(new(new(spacecraft.Id, WorldChannel.State), centers, input =>
-            spacecraft.TrySampleRelative(input.Epoch, out ObjectId center, out CartesianState local)
-                ? WorldValue.FromState(input.State(center) + local)
-                : default));
+        {
+            if (!spacecraft.TrySampleRelative(input.Epoch, out ObjectId center, out CartesianState local))
+                return default;
+            CartesianState state = input.State(center) + local;
+            return state.PositionKilometers.IsFinite && state.VelocityKilometersPerSecond.IsFinite
+                ? WorldValue.FromState(state, center)
+                : default;
+        }));
         AddTwoVectorOrientation(spacecraft.Id, spacecraft.PrimaryAxis, spacecraft.Primary,
             spacecraft.SecondaryAxis, spacecraft.Secondary);
     }

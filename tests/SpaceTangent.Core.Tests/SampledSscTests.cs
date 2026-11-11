@@ -42,6 +42,8 @@ public sealed class SampledSscTests
             Assert.Equal(data[1] == 10 ? SolarSystemSample.SunId : SolarSystemSample.SaturnBarycenterId, center);
             Compare(relative, data.AsSpan(2));
             WorldSnapshot snapshot = graph.Evaluate(epoch);
+            Assert.True(snapshot.TryStateCenter(cassini.Id, out ObjectId snapshotCenter));
+            Assert.Equal(center, snapshotCenter);
             Assert.True(snapshot.TryState(cassini.Id, out var absolute));
             Compare(absolute, data.AsSpan(8));
             Assert.True(snapshot.TryOrientation(cassini.Id, out var attitude));
@@ -57,6 +59,7 @@ public sealed class SampledSscTests
         Assert.Equal(SolarSystemSample.SaturnBarycenterId, newCenter);
         WorldSnapshot after = graph.Evaluate(cassini.End);
         Assert.False(after.TryState(cassini.Id, out _));
+        Assert.False(after.TryStateCenter(cassini.Id, out _));
         Assert.False(after.TryOrientation(cassini.Id, out _));
     }
 

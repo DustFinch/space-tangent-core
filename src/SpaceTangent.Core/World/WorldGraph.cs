@@ -7,10 +7,10 @@ namespace SpaceTangent.Core.World;
 internal enum WorldChannel { State, Orientation }
 internal readonly record struct WorldKey(ObjectId Id, WorldChannel Channel);
 
-internal readonly record struct WorldValue(bool Available, CartesianState State, FrameKinematics Orientation)
+internal readonly record struct WorldValue(bool Available, CartesianState State, FrameKinematics Orientation, ObjectId? Center)
 {
-    internal static WorldValue FromState(CartesianState state) => new(true, state, default);
-    internal static WorldValue FromOrientation(FrameKinematics frame) => new(true, default, frame);
+    internal static WorldValue FromState(CartesianState state, ObjectId? center = null) => new(true, state, default, center);
+    internal static WorldValue FromOrientation(FrameKinematics frame) => new(true, default, frame, null);
 }
 
 internal sealed record WorldRule(WorldKey Key, WorldKey[] Dependencies, Func<EvaluationInput, WorldValue> Read);
@@ -51,6 +51,18 @@ public sealed class WorldSnapshot
         bool available = TryValue(new(id, WorldChannel.Orientation), out var value);
         orientation = value.Orientation;
         return available;
+    }
+
+    /// <summary>Returns the origin used to evaluate an available body's local trajectory.</summary>
+    public bool TryStateCenter(ObjectId id, out ObjectId center)
+    {
+        if (TryValue(new(id, WorldChannel.State), out var value) && value.Center is { } origin)
+        {
+            center = origin;
+            return true;
+        }
+        center = default;
+        return false;
     }
 
     private bool TryValue(WorldKey key, out WorldValue value)
