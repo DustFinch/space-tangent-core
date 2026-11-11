@@ -12,7 +12,11 @@ public sealed record SpiceCatalogResult(IReadOnlyList<SpiceSpacecraft> Spacecraf
 
 public static class SpiceJsonCatalog
 {
-    public static SpiceCatalogResult Load(string catalogPath, string assetRoot)
+    public static SpiceCatalogResult Load(string catalogPath, string assetRoot) =>
+        AddonDiagnostics.Read(AddonStage.Catalog, Path.GetFullPath(catalogPath, Path.GetFullPath(assetRoot)),
+            () => LoadCore(catalogPath, assetRoot));
+
+    private static SpiceCatalogResult LoadCore(string catalogPath, string assetRoot)
     {
         string root = Path.GetFullPath(assetRoot);
         string path = LocalAddonFiles.Resolve(root, root, catalogPath);

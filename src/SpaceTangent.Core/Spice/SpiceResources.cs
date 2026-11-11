@@ -43,35 +43,43 @@ internal sealed class SpiceResources
     private static void Expand(string root, string directory, string name, HashSet<string> active, List<string> result,
         ref int visits, int depth)
     {
-        if (++visits > MaximumLoads || depth > MaximumDepth)
-            throw new InvalidDataException("SPICE metakernel load limit exceeded.");
-        string file = LocalAddonFiles.ResolveRelative(root, directory, name);
-        if (!Path.GetExtension(file).Equals(".tm", StringComparison.OrdinalIgnoreCase))
+        string file = Path.Combine(directory, name);
+        try
         {
-            result.Add(file);
-            return;
-        }
-        if (!active.Add(file))
-            throw new InvalidDataException("SPICE metakernel load cycle.");
-
-        var text = new SpiceTextKernel();
-        text.Furnish(file);
-        var symbols = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (text.Contains("PATH_SYMBOLS") || text.Contains("PATH_VALUES"))
-        {
-            string[] labels = text.Get("PATH_SYMBOLS"), values = text.Get("PATH_VALUES");
-            if (labels.Length != values.Length)
-                throw new InvalidDataException("SPICE metakernel path labels and values must match.");
-            for (int i = 0; i < labels.Length; i++)
+            if (++visits > MaximumLoads || depth > MaximumDepth)
+                throw new InvalidDataException("SPICE metakernel load limit exceeded.");
+            file = LocalAddonFiles.ResolveRelative(root, directory, name);
+            if (!Path.GetExtension(file).Equals(".tm", StringComparison.OrdinalIgnoreCase))
             {
-                if (!symbols.TryAdd(labels[i], values[i]))
-                    throw new InvalidDataException("Duplicate SPICE metakernel path symbol.");
+                result.Add(file);
+                return;
             }
-        }
+            if (!active.Add(file))
+                throw new InvalidDataException("SPICE metakernel load cycle.");
 
-        foreach (string item in text.Get("KERNELS_TO_LOAD"))
-            Expand(root, Path.GetDirectoryName(file)!, Substitute(item, symbols), active, result, ref visits, depth + 1);
-        active.Remove(file);
+            var text = new SpiceTextKernel();
+            text.Furnish(file);
+            var symbols = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (text.Contains("PATH_SYMBOLS") || text.Contains("PATH_VALUES"))
+            {
+                string[] labels = text.Get("PATH_SYMBOLS"), values = text.Get("PATH_VALUES");
+                if (labels.Length != values.Length)
+                    throw new InvalidDataException("SPICE metakernel path labels and values must match.");
+                for (int i = 0; i < labels.Length; i++)
+                {
+                    if (!symbols.TryAdd(labels[i], values[i]))
+                        throw new InvalidDataException("Duplicate SPICE metakernel path symbol.");
+                }
+            }
+
+            foreach (string item in text.Get("KERNELS_TO_LOAD"))
+                Expand(root, Path.GetDirectoryName(file)!, Substitute(item, symbols), active, result, ref visits, depth + 1);
+            active.Remove(file);
+        }
+        catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, file))
+        {
+            throw;
+        }
     }
 
     private static string Substitute(string item, Dictionary<string, string> symbols)

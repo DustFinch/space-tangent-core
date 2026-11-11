@@ -21,7 +21,7 @@ internal abstract record SscValue
     internal string AsText() => this is Atom value ? value.Text : throw new InvalidDataException("Expected SSC text.");
 }
 
-internal sealed class SscReader(string input)
+internal sealed class SscReader(string input, string path)
 {
     private int _offset;
     private int _line = 1;
@@ -147,5 +147,10 @@ internal sealed class SscReader(string input)
             throw Error($"Expected {expected}.");
     }
 
-    private InvalidDataException Error(string message) => new($"SSC line {_line}. {message}");
+    private InvalidDataException Error(string message)
+    {
+        var error = new InvalidDataException($"SSC line {_line}. {message}");
+        AddonDiagnostics.Annotate(error, AddonStage.Catalog, path, _line);
+        return error;
+    }
 }

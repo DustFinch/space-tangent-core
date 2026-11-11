@@ -18,20 +18,27 @@ internal sealed class SpiceTextKernel
 
     internal void Furnish(string path)
     {
-        using FileStream file = AddonDependencies.OpenRead(path, 2 * 1024 * 1024);
-        if (file.Length > 2 * 1024 * 1024)
-            throw new InvalidDataException("SPICE text kernel exceeds 2 MiB.");
-        using var reader = new StreamReader(file, new UTF8Encoding(false, true));
-        foreach (Match section in DataSections.Matches(reader.ReadToEnd()))
-        foreach (Match assignment in Assignments.Matches(section.Groups[1].Value))
+        try
         {
-            string name = assignment.Groups[1].Value;
-            string[] values = Values.Matches(assignment.Groups[3].Value)
-                .Select(match => match.Value.StartsWith('\'') ? match.Value[1..^1].Replace("''", "'") : match.Value)
-                .ToArray();
-            if (assignment.Groups[2].Value == "+=" && _values.TryGetValue(name, out var previous))
-                values = [.. previous, .. values];
-            _values[name] = values;
+            using FileStream file = AddonDependencies.OpenRead(path, 2 * 1024 * 1024);
+            if (file.Length > 2 * 1024 * 1024)
+                throw new InvalidDataException("SPICE text kernel exceeds 2 MiB.");
+            using var reader = new StreamReader(file, new UTF8Encoding(false, true));
+            foreach (Match section in DataSections.Matches(reader.ReadToEnd()))
+            foreach (Match assignment in Assignments.Matches(section.Groups[1].Value))
+            {
+                string name = assignment.Groups[1].Value;
+                string[] values = Values.Matches(assignment.Groups[3].Value)
+                    .Select(match => match.Value.StartsWith('\'') ? match.Value[1..^1].Replace("''", "'") : match.Value)
+                    .ToArray();
+                if (assignment.Groups[2].Value == "+=" && _values.TryGetValue(name, out var previous))
+                    values = [.. previous, .. values];
+                _values[name] = values;
+            }
+        }
+        catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, path))
+        {
+            throw;
         }
     }
 

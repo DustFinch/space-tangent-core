@@ -11,7 +11,11 @@ public static class ScienceSatelliteCatalog
     private const int MaximumCatalogBytes = 1024 * 1024;
 
     /// <summary>Reads the version 1 science-satellite catalogue inside an explicitly provided asset root.</summary>
-    public static IReadOnlyList<ScienceSatellite> Load(string catalogPath, string assetRoot)
+    public static IReadOnlyList<ScienceSatellite> Load(string catalogPath, string assetRoot) =>
+        AddonDiagnostics.Read(AddonStage.Catalog, Path.GetFullPath(catalogPath, Path.GetFullPath(assetRoot)),
+            () => LoadCore(catalogPath, assetRoot));
+
+    private static IReadOnlyList<ScienceSatellite> LoadCore(string catalogPath, string assetRoot)
     {
         string root = Path.GetFullPath(assetRoot);
         string fullCatalogPath = LocalAddonFiles.Resolve(root, root, catalogPath);
@@ -43,7 +47,9 @@ public static class ScienceSatelliteCatalog
             catch (Exception error) when (error is FormatException or JsonException or KeyNotFoundException
                        or InvalidOperationException or IOException or InvalidDataException or ArgumentException or NotSupportedException)
             {
-                throw new InvalidDataException($"Invalid satellite catalogue item {satellites.Count}: {error.Message}", error);
+                var invalid = new InvalidDataException($"Invalid satellite catalogue item {satellites.Count}: {error.Message}", error);
+                AddonDiagnostics.Annotate(invalid, AddonStage.Catalog, fullCatalogPath, item: $"items[{satellites.Count}]");
+                throw invalid;
             }
         }
         return satellites.AsReadOnly();
@@ -73,7 +79,8 @@ public static class ScienceSatelliteCatalog
         string source = ReadString(mesh, "source");
         if (Path.IsPathRooted(source))
             throw new FormatException("Mesh source must be a relative path.");
-        string meshPath = LocalAddonFiles.Resolve(root, directory, source);
+        string meshPath = AddonDiagnostics.Read(AddonStage.Mesh, Path.Combine(directory, source),
+            () => LocalAddonFiles.Resolve(root, directory, source));
         if (!Path.GetExtension(meshPath).Equals(".obj", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("Expected a local OBJ mesh.");
         double size = mesh.GetProperty("size").GetDouble();

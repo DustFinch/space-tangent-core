@@ -63,7 +63,10 @@ public sealed class SampledStateTrajectory
     public JulianInstant? Start => _samples.Length == 0 ? null : _samples[0].Epoch;
     public JulianInstant? End => _samples.Length == 0 ? null : _samples[^1].Epoch;
 
-    public static SampledStateTrajectory ReadXyzv(string path, FrameId frame)
+    public static SampledStateTrajectory ReadXyzv(string path, FrameId frame) =>
+        AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadXyzvCore(path, frame));
+
+    private static SampledStateTrajectory ReadXyzvCore(string path, FrameId frame)
     {
         using FileStream file = AddonDependencies.OpenRead(path, 64L * 1024 * 1024);
         if (file.Length > 64L * 1024 * 1024)

@@ -4,7 +4,7 @@ using System.Text;
 namespace SpaceTangent.Core.Addons;
 
 internal sealed record SscDefinition(string Names, string Parent, SscValue.Map Properties,
-    IReadOnlyDictionary<string, string> FieldDirectories)
+    IReadOnlyDictionary<string, string> FieldDirectories, string SourceFile)
 {
     internal string Name => Names.Split(':')[0];
 
@@ -29,13 +29,28 @@ internal static class SscDefinitions
         foreach (string path in paths)
         {
             cancellation.ThrowIfCancellationRequested();
-            string file = root is null ? Path.GetFullPath(path) : LocalAddonFiles.Resolve(root, root, path);
+            string file = root is null ? Path.GetFullPath(path) : Path.GetFullPath(path, root);
+            try
+            {
+                LoadFile(file);
+            }
+            catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog, file))
+            {
+                throw;
+            }
+        }
+        return bodies.AsReadOnly();
+
+        void LoadFile(string file)
+        {
+            if (root is not null)
+                file = LocalAddonFiles.Resolve(root, root, file);
             string directory = Path.GetDirectoryName(file)!;
             using FileStream stream = AddonDependencies.OpenRead(file, MaximumCatalogBytes);
             if (stream.Length > MaximumCatalogBytes)
                 throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
             using var reader = new StreamReader(stream, new UTF8Encoding(false, true));
-            foreach (var (disposition, kind, nameList, parentPath, properties) in new SscReader(reader.ReadToEnd()).ReadDefinitions())
+            foreach (var (disposition, kind, nameList, parentPath, properties) in new SscReader(reader.ReadToEnd(), file).ReadDefinitions())
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (kind is "Location" or "AltSurface")
@@ -52,9 +67,10 @@ internal static class SscDefinitions
                     if (disposition == SscDisposition.Add)
                         throw new InvalidDataException($"Duplicate SSC body {primaryPath}.");
                     SscDefinition previous = bodies[index];
-                    bodies[index] = disposition == SscDisposition.Modify
+                    var effective = disposition == SscDisposition.Modify
                         ? Modify(previous, properties, directories)
                         : previous with { Properties = properties, FieldDirectories = directories };
+                    bodies[index] = effective with { SourceFile = file };
                     continue;
                 }
 
@@ -65,11 +81,9 @@ internal static class SscDefinitions
                         throw new InvalidDataException($"Duplicate SSC body alias {parent}/{name}.");
                     longestAliasPath = Math.Max(longestAliasPath, aliasPath.Length);
                 }
-                bodies.Add(new(string.Join(':', names), parent, properties, directories));
+                bodies.Add(new(string.Join(':', names), parent, properties, directories, file));
             }
         }
-        return bodies.AsReadOnly();
-
         string ResolveParent(string path)
         {
             if (aliases.TryGetValue(path, out int index))

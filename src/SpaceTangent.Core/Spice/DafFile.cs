@@ -17,23 +17,30 @@ internal sealed class DafFile
 
     internal DafFile(string path, string expectedType)
     {
-        using FileStream stream = AddonDependencies.OpenRead(path, MaximumKernelBytes);
-        if (stream.Length < RecordBytes || stream.Length > MaximumKernelBytes || stream.Length % RecordBytes != 0)
-            throw new InvalidDataException("Invalid DAF file length.");
-        _bytes = GC.AllocateUninitializedArray<byte>((int)stream.Length);
-        stream.ReadExactly(_bytes);
-
-        string identifier = Encoding.ASCII.GetString(_bytes, 0, 8).TrimEnd();
-        if (identifier != $"DAF/{expectedType}" && identifier != "NAIF/DAF")
-            throw new InvalidDataException($"Expected a DAF/{expectedType} kernel.");
-        _littleEndian = Encoding.ASCII.GetString(_bytes, 88, 8) switch
+        try
         {
-            "LTL-IEEE" => true,
-            "BIG-IEEE" => false,
-            _ => throw new InvalidDataException("Unsupported DAF binary format.")
-        };
-        if (IntegerAt(8) != 2 || IntegerAt(12) != 6)
-            throw new InvalidDataException("Unexpected DAF summary dimensions.");
+            using FileStream stream = AddonDependencies.OpenRead(path, MaximumKernelBytes);
+            if (stream.Length < RecordBytes || stream.Length > MaximumKernelBytes || stream.Length % RecordBytes != 0)
+                throw new InvalidDataException("Invalid DAF file length.");
+            _bytes = GC.AllocateUninitializedArray<byte>((int)stream.Length);
+            stream.ReadExactly(_bytes);
+
+            string identifier = Encoding.ASCII.GetString(_bytes, 0, 8).TrimEnd();
+            if (identifier != $"DAF/{expectedType}" && identifier != "NAIF/DAF")
+                throw new InvalidDataException($"Expected a DAF/{expectedType} kernel.");
+            _littleEndian = Encoding.ASCII.GetString(_bytes, 88, 8) switch
+            {
+                "LTL-IEEE" => true,
+                "BIG-IEEE" => false,
+                _ => throw new InvalidDataException("Unsupported DAF binary format.")
+            };
+            if (IntegerAt(8) != 2 || IntegerAt(12) != 6)
+                throw new InvalidDataException("Unexpected DAF summary dimensions.");
+        }
+        catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, path))
+        {
+            throw;
+        }
     }
 
     internal IEnumerable<DafSegment> Segments()

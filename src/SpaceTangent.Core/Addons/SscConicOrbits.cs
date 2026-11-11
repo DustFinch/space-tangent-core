@@ -29,7 +29,8 @@ public static class SscConicOrbits
             if (entry.Properties.Fields.ContainsKey("Timeline") ||
                 !entry.Properties.Fields.TryGetValue("EllipticalOrbit", out var block))
                 continue;
-            result.Add(ReadOrbit(entry, block, resolveParent(entry.Parent)));
+            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, entry.SourceFile,
+                () => ReadOrbit(entry, block, resolveParent(entry.Parent))));
         }
         return result.AsReadOnly();
     }
@@ -45,8 +46,11 @@ public static class SscConicOrbits
         if (entry is null || entry.Properties.Fields.ContainsKey("Timeline"))
             throw new InvalidDataException($"Expected a static SSC orbit for {objectPath}.");
 
-        var reference = ReadReference(entry);
-        return ReadOrbit(entry, entry.Properties.Get("EllipticalOrbit"), resolveFrame(reference)) with { Reference = reference };
+        return AddonDiagnostics.Read(AddonStage.Catalog, entry.SourceFile, () =>
+        {
+            var reference = ReadReference(entry);
+            return ReadOrbit(entry, entry.Properties.Get("EllipticalOrbit"), resolveFrame(reference)) with { Reference = reference };
+        });
     }
 
     private static SscConicReference ReadReference(SscDefinition entry)

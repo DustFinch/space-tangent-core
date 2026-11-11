@@ -88,14 +88,19 @@ public static class SscSampledCatalog
         CancellationToken cancellation = default)
     {
         var (root, definition) = ReadDefinition(catalogPaths, assetRoot, objectPath, cancellation);
-        var (names, parent, fields, _) = definition;
+        return AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () => ReadTrack(root, definition, cancellation));
+    }
+
+    private static SscSampledSpacecraft ReadTrack(string root, SscDefinition definition, CancellationToken cancellation)
+    {
+        var (names, parent, fields, _, _) = definition;
         if (fields.Text("Class") != "spacecraft")
             throw new NotSupportedException("The sampled SSC track must be a spacecraft.");
 
         string name = names.Split(':')[0];
         string primaryPath = parent + "/" + name;
         var id = new ObjectId("ssc/" + primaryPath.ToLowerInvariant());
-        string mesh = FindAsset(root, definition.DirectoryFor("Mesh"), fields.Text("Mesh"), "models");
+        string mesh = FindAsset(AddonStage.Mesh, root, definition.DirectoryFor("Mesh"), fields.Text("Mesh"), "models");
         if (!double.TryParse(fields.Text("Radius"), NumberStyles.Float, CultureInfo.InvariantCulture, out double radius) ||
             !double.IsFinite(radius) || radius <= 0)
             throw new InvalidDataException("SSC radius must be finite and positive.");
@@ -126,7 +131,8 @@ public static class SscSampledCatalog
             SscValue.Map source = phase.Object("SampledTrajectory");
             if (source.Text("Interpolation") != "cubic" || source.Text("DoublePrecision") != "true")
                 throw new NotSupportedException("The SSC track requires cubic double-precision samples.");
-            string path = FindAsset(root, directory, source.Text("Source"), Path.Combine("models", "trajectories"), "data");
+            string path = FindAsset(AddonStage.Trajectory, root, directory, source.Text("Source"),
+                Path.Combine("models", "trajectories"), "data");
             if (!Path.GetExtension(path).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
                 throw new NotSupportedException("The SSC track requires XYZV samples.");
             if (!curves.TryGetValue(path, out var curve))
@@ -206,7 +212,10 @@ public static class SscSampledCatalog
         return UnixEpoch.AddNanoseconds((Int128)(date.Ticks - DateTime.UnixEpoch.Ticks) * 100);
     }
 
-    internal static string FindAsset(string root, string directory, string relative, params string[] fallbacks)
+    internal static string FindAsset(AddonStage stage, string root, string directory, string relative, params string[] fallbacks) =>
+        AddonDiagnostics.Read(stage, Path.Combine(directory, relative), () => FindAssetCore(root, directory, relative, fallbacks));
+
+    private static string FindAssetCore(string root, string directory, string relative, string[] fallbacks)
     {
         try
         {
