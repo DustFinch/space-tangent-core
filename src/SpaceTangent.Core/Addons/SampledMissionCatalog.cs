@@ -69,7 +69,7 @@ public static partial class SampledMissionCatalog
         var ids = new HashSet<ObjectId>();
         var kernelLoads = new List<(string Directory, string Name)>();
         var instrumentFrames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var definitions = new List<(string Source, JsonElement Item)>();
+        var definitions = new List<(string Source, JsonElement Item, bool PackedParticle)>();
         var documents = new Dictionary<string, JsonDocument>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var active = new HashSet<string>(documents.Comparer);
         const int MaximumCatalogueBytes = 4 * 1024 * 1024;
@@ -81,7 +81,9 @@ public static partial class SampledMissionCatalog
                 Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
             var resources = new SpiceResources(root, kernelLoads);
             var missions = definitions.Select(definition => AddonDiagnostics.Read(AddonStage.Catalog,
-                definition.Source, () => ReadItem(definition.Item, Resolve, root, Path.GetDirectoryName(definition.Source)!,
+                definition.Source, () => definition.PackedParticle
+                    ? ReadPackedParticleMission(definition.Item, ResolvePacked, Path.GetDirectoryName(definition.Source)!, warning)
+                    : ReadItem(definition.Item, Resolve, root, Path.GetDirectoryName(definition.Source)!,
                     resources, name => instrumentFrames.GetValueOrDefault(name), warning, cancellation))).ToArray();
             var sensors = missions.Where(mission => mission.Geometry?.Any(span => span.Shape.Sensor is not null) == true)
                 .Select(mission => mission.Id).ToHashSet();
@@ -116,6 +118,19 @@ public static partial class SampledMissionCatalog
                     new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
                 documents.Add(path, json);
                 JsonElement catalogue = json.RootElement;
+                if (catalogue.TryGetProperty("formatVersion", out var packedVersion))
+                {
+                    int version = packedVersion.GetInt32();
+                    if (version is < 3 or > 19)
+                        throw new NotSupportedException($"Packed particle format version {version} is outside 3–19.");
+                    var bodies = catalogue.GetProperty("bodies");
+                    if (bodies.GetArrayLength() is < 1 or > 512)
+                        throw new InvalidDataException("A packed particle catalogue requires one to 512 bodies.");
+                    foreach (JsonElement body in bodies.EnumerateArray())
+                        if (body.TryGetProperty("particles", out _))
+                            Register(body, path, packedParticle: true);
+                    return true;
+                }
                 if (Text(catalogue, "version") != "1.0")
                     throw new InvalidDataException("Sampled mission catalogues require version 1.0.");
                 active.Add(path);
@@ -147,10 +162,10 @@ public static partial class SampledMissionCatalog
             });
         }
 
-        void Register(JsonElement item, string path)
+        void Register(JsonElement item, string path, bool packedParticle = false)
         {
             string name = Text(item, "name");
-            if (item.TryGetProperty("geometry", out var geometry) &&
+            if (!packedParticle && item.TryGetProperty("geometry", out var geometry) &&
                 Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem") &&
                 !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
@@ -167,16 +182,23 @@ public static partial class SampledMissionCatalog
             var id = new ObjectId("mission/" + slug);
             if (!ids.Add(id) || !names.TryAdd(name, id))
                 throw new InvalidDataException($"Duplicate sampled mission identifier for {name}.");
+            if (packedParticle && !names.TryAdd(Text(item, "path"), id))
+                throw new InvalidDataException($"Duplicate packed particle path for {name}.");
             if (definitions.Count == 512)
                 throw new InvalidDataException("The enabled catalogues may provide at most 512 sampled missions.");
-            if (item.TryGetProperty("bodyFrame", out var attitude) && attitude.ValueKind == JsonValueKind.Object &&
+            if (!packedParticle && item.TryGetProperty("bodyFrame", out var attitude) && attitude.ValueKind == JsonValueKind.Object &&
                 Text(attitude, "type") == "Spice")
                 instrumentFrames.Add(name, Text(attitude, "name"));
-            definitions.Add((path, item));
+            definitions.Add((path, item, packedParticle));
         }
 
         ObjectId Resolve(string name) => names.TryGetValue(name, out var id) ? id :
             resolveBody(name) ?? throw new InvalidDataException($"Unknown mission reference {name}.");
+
+        ObjectId ResolvePacked(string path) => names.TryGetValue(path, out var id) ? id :
+            resolveBody(path) ?? (path.StartsWith("Sol/", StringComparison.OrdinalIgnoreCase)
+                ? resolveBody(path[(path.LastIndexOf('/') + 1)..]) : null) ??
+            throw new InvalidDataException($"Unknown packed mission reference {path}.");
     }
 
     private static SampledMission ReadItem(JsonElement item, Func<string, ObjectId> resolve, string root, string directory,

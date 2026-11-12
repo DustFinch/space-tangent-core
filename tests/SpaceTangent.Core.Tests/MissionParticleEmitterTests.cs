@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
+using SpaceTangent.Core.World;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -69,6 +70,54 @@ public sealed class MissionParticleEmitterTests
         Assert.Equal(new(1, 1, 0), example.Colors[0].Color);
     }
 
+    [ParticleCorpusFact(packed: true)]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedPackedPlumesPreserveTheSourceStatesAndTextures()
+    {
+        string assets = Environment.GetEnvironmentVariable("SPACETANGENT_PARTICLE_SOURCE")!;
+        string packs = Environment.GetEnvironmentVariable("SPACETANGENT_PARTICLE_PACKS")!;
+        var io = new ObjectId("sol/io");
+        var original = Assert.Single(SampledMissionCatalog.Load("tvashtar.json", assets, Resolve));
+        foreach (string folder in packs.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var packed = Assert.Single(SampledMissionCatalog.Load("pack.json", folder, Resolve));
+            Assert.Equal(original.Id, packed.Id);
+            Assert.Equal(original.Start, packed.Start);
+            var a = Assert.Single(Assert.Single(original.Geometry!).Shape.ParticleEmitters!);
+            var b = Assert.Single(Assert.Single(packed.Geometry!).Shape.ParticleEmitters!);
+            Assert.Equal(File.ReadAllBytes(a.TexturePath!), File.ReadAllBytes(b.TexturePath!));
+
+            foreach (double date in new[] { 2455755.0, 2455755.009838, 2455755.04 })
+            {
+                var epoch = JulianInstant.FromJulianDate(date, TimeScale.Tdb);
+                var source = World(original).Evaluate(epoch);
+                var binary = World(packed).Evaluate(epoch);
+                Assert.True(source.TryState(original.Id, out var state));
+                Assert.True(binary.TryState(packed.Id, out var packedState));
+                Assert.InRange((state.PositionKilometers - packedState.PositionKilometers).Length, 0, 1e-8);
+                Assert.InRange((state.VelocityKilometersPerSecond - packedState.VelocityKilometersPerSecond).Length, 0, 1e-12);
+                Assert.True(source.TryOrientation(original.Id, out var attitude));
+                Assert.True(binary.TryOrientation(packed.Id, out var packedAttitude));
+                Assert.InRange((attitude.ToWorld.Y - packedAttitude.ToWorld.Y).Length, 0, 1e-12);
+                Assert.InRange((attitude.ToWorld.Z - packedAttitude.ToWorld.Z).Length, 0, 1e-12);
+                var first = new List<MissionParticle>();
+                var second = new List<MissionParticle>();
+                Assert.Equal(a.Sample(date, 8192, first), b.Sample(date, 8192, second));
+                Assert.Equal(first, second);
+            }
+        }
+
+        ObjectId? Resolve(string name) => name.Equals("Io", StringComparison.OrdinalIgnoreCase) ? io : null;
+        WorldGraph World(SampledMission mission)
+        {
+            var world = new WorldGraphBuilder();
+            world.AddTrajectory(io, _ => new(new(1e7, -2e7, 3e6), default));
+            world.AddOrientation(io, _ => new(new(new(0, 1, 0), new(-1, 0, 0), new(0, 0, 1)), new Vector3d(0, 0, .0001)));
+            world.AddSampledMission(mission);
+            return world.Build();
+        }
+    }
+
     private static MissionParticleEmitter MakeEmitter(JsonElement row)
     {
         double[] c = Numbers(row, "config"), g = Numbers(row, "generatorData");
@@ -101,10 +150,11 @@ public sealed class MissionParticleEmitterTests
 
     private sealed class ParticleCorpusFactAttribute : FactAttribute
     {
-        public ParticleCorpusFactAttribute()
+        public ParticleCorpusFactAttribute(bool packed = false)
         {
             if (Environment.GetEnvironmentVariable("SPACETANGENT_PARTICLE_ORACLE") is null ||
-                Environment.GetEnvironmentVariable("SPACETANGENT_PARTICLE_SOURCE") is null)
+                Environment.GetEnvironmentVariable("SPACETANGENT_PARTICLE_SOURCE") is null ||
+                packed && Environment.GetEnvironmentVariable("SPACETANGENT_PARTICLE_PACKS") is null)
                 Skip = "Set the native oracle and original particle catalogue directories.";
         }
     }

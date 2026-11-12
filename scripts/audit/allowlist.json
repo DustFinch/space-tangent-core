@@ -18,5 +18,20 @@
     "path": "src/SpaceTangent.Core/Addons/PackedSatelliteCatalog.cs",
     "reason": "Exact two-vector frame tag required to read legacy compiled scientific satellite packs.",
     "sha256": "aa831cb6e6116c87663675e124a3bf6c17de1fb59f5c903d46051e30da69e400"
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",
+    "sha256": "3a450c63f5ad69fdfcd1af5550a15b75951eef13ef9eeca542cce3ef376b96d4",
+    "reason": "Literal tag required to read the archived native particle pack format."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",
+    "sha256": "722e5e42323ff37469eafe82e0d417150e0498451573e84914d853f055db93e9",
+    "reason": "Literal tag required to read the archived native particle pack format."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",
+    "sha256": "0beb69db1a0c1b913dc398faaa57694865c9e5dc1f25e1e0e8a3cb16baa23cff",
+    "reason": "Literal tag required to read the archived native particle pack format."
   }
 ]
