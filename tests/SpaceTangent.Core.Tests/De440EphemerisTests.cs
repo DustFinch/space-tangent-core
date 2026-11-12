@@ -52,6 +52,40 @@ public sealed class De440EphemerisTests
         Assert.Throws<ArgumentOutOfRangeException>(() => model.Sample(model.Start).RelativeState(new ObjectId("unknown"), default));
     }
 
+    [De440Fact]
+    public void PublishedGreatestEclipseTimesGiveDarkUmbraeInDe440()
+    {
+        var ephemeris = Ephemeris.Value;
+        // NASA GSFC canon: 2024 Apr 08 18:18:29 TD and 2025 Sep 07 18:12:58 TD.
+        var solar = ephemeris.Sample(FromTt(new(2024, 4, 8, 18, 18, 29)));
+        Vector3d sun = solar.Sun.PositionKilometers - solar.Earth.PositionKilometers;
+        Vector3d moon = solar.Moon.PositionKilometers - solar.Earth.PositionKilometers;
+        Vector3d shadow = moon - sun;
+        shadow /= shadow.Length;
+        double closest = -Vector3d.Dot(moon, shadow);
+        double miss = (moon + shadow * closest).Length;
+        double radius = EarthSurfaceLighting.EarthRadiusKilometers;
+        Assert.InRange(miss / radius, .32, .37);
+        Vector3d ground = moon + shadow * (closest - Math.Sqrt(radius * radius - miss * miss));
+        Assert.InRange(SolarOccultation.VisibleFraction(sun - ground, moon - ground, EarthSurfaceLighting.MoonRadiusKilometers), 0, .01);
+        Assert.Equal(1, SolarOccultation.VisibleFraction(sun + ground, moon + ground, EarthSurfaceLighting.MoonRadiusKilometers));
+
+        var epoch = FromTt(new(2025, 9, 7, 18, 12, 58));
+        Assert.Equal(0, LightAtMoon(ephemeris.Sample(epoch)));
+        Assert.Equal(1, LightAtMoon(ephemeris.Sample(epoch.AddSeconds(JulianInstant.SecondsPerDay))));
+    }
+
+    private static double LightAtMoon(SolarSystemSample sample) => SolarOccultation.VisibleFraction(
+        sample.Sun.PositionKilometers - sample.Moon.PositionKilometers,
+        sample.Earth.PositionKilometers - sample.Moon.PositionKilometers, EarthSurfaceLighting.EarthRadiusKilometers);
+
+    private static JulianInstant FromTt(DateTime date)
+    {
+        DateTime j2000 = new(2000, 1, 1, 12, 0, 0);
+        return TimeConversion.Convert(new JulianInstant(JulianInstant.J2000Day, 0, TimeScale.Tt)
+            .AddNanoseconds((Int128)(date.Ticks - j2000.Ticks) * 100), TimeScale.Tdb);
+    }
+
     [Fact]
     public void RejectsUnrecognizedAndCorruptFileContents()
     {
