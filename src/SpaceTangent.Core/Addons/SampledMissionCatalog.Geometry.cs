@@ -10,6 +10,8 @@ namespace SpaceTangent.Core.Addons;
 public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Basis3d MeshRotation, Vector3d MeshOffset, MissionSensor? Sensor = null)
 {
     public IReadOnlyList<MissionParticleEmitter>? ParticleEmitters { get; init; }
+    public Vector3d? EllipsoidRadiiKilometers { get; init; }
+    public string? GlobeTexturePath { get; init; }
 }
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
 
@@ -30,13 +32,8 @@ public static partial class SampledMissionCatalog
             var mesh = ReadMesh(value, root, directory, name, warning);
             return [new(start, end, mesh)];
         }
-        if (type == "Globe" && value.TryGetProperty("radius", out _))
-        {
-            double radius = Distance(value, "radius");
-            if (!(radius > 0))
-                throw new InvalidDataException($"{name}: a mission globe requires a positive radius.");
-            return [new(start, end, new(null, radius, Basis3d.Identity, default))];
-        }
+        if (type == "Globe")
+            return [new(start, end, ReadGlobe(value, root, directory, name, warning))];
         if (type != "TimeSwitched")
         {
             warning?.Invoke($"{name}: {type} geometry is not supported by the sampled mission reader.");
@@ -92,6 +89,37 @@ public static partial class SampledMissionCatalog
             }
         }
         return spans.AsReadOnly();
+    }
+
+    private static MissionShape ReadGlobe(JsonElement value, string root, string directory, string name, Action<string>? warning)
+    {
+        Vector3d radii;
+        if (value.TryGetProperty("radii", out var ellipsoid))
+            radii = Vector(ellipsoid);
+        else
+        {
+            double radius = Distance(value, "radius");
+            radii = new(radius, radius, radius);
+        }
+        if (!radii.IsFinite || radii.X <= 0 || radii.Y <= 0 || radii.Z <= 0)
+            throw new InvalidDataException($"{name}: a mission globe requires positive finite radii.");
+
+        string? texture = null;
+        if (value.TryGetProperty("baseMap", out var map))
+        {
+            if (map.ValueKind == JsonValueKind.String && map.GetString() is { Length: > 0 } source)
+            {
+                try { texture = LocalAddonFiles.ResolveRelative(root, directory, source); }
+                catch (FileNotFoundException) { warning?.Invoke($"{name}: globe map {source} is missing; the shape is available."); }
+            }
+            else if (map.ValueKind == JsonValueKind.Object)
+                warning?.Invoke($"{name}: a tiled globe map requires a supported local surface pack.");
+        }
+        return new(null, Math.Max(radii.X, Math.Max(radii.Y, radii.Z)), Basis3d.Identity, default)
+        {
+            EllipsoidRadiiKilometers = radii,
+            GlobeTexturePath = texture
+        };
     }
 
     private static MissionShape ReadMesh(JsonElement value, string root, string directory, string name, Action<string>? warning)

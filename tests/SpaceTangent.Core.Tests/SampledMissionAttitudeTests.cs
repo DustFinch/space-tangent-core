@@ -72,6 +72,12 @@ public sealed class SampledMissionAttitudeTests
         Assert.Equal(4, missions.Count);
         var craft = Assert.Single(missions, mission => mission.Name == "CubeSat");
         var cassini = Assert.Single(missions, mission => mission.Name == "Cassini");
+        var ceres = Assert.Single(missions, mission => mission.Name == "Ceres");
+        var globe = Assert.Single(ceres.Geometry!).Shape;
+        Assert.Equal(500, globe.RadiusKilometers);
+        Assert.Equal(new Vector3d(500, 500, 480), globe.EllipsoidRadiiKilometers);
+        Assert.Null(globe.GlobeTexturePath);
+        Assert.Contains(messages, message => message.Contains("moon.dds", StringComparison.Ordinal));
         Assert.EndsWith("jason.obj", craft.MeshPath, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(craft.MeshPath, cassini.MeshPath);
         var graph = new WorldGraphBuilder();
