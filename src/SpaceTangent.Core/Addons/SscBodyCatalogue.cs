@@ -2,6 +2,7 @@
 using System.Globalization;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Spice;
 using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Addons;
@@ -140,11 +141,12 @@ public static partial class SscBodyCatalogue
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
         bool heliocentric = reference.Center.Equals("Sol", StringComparison.OrdinalIgnoreCase);
-        bool ecliptic = reference.Axes switch
+        Basis3d orbitFrame = reference.Axes switch
         {
-            SscConicAxes.EclipticJ2000 => true,
-            SscConicAxes.EquatorJ2000 => false,
-            SscConicAxes.ParentDefault => heliocentric,
+            SscConicAxes.EclipticJ2000 => Ecliptic,
+            SscConicAxes.EquatorJ2000 => Basis3d.Identity,
+            SscConicAxes.ParentDefault => heliocentric ? Ecliptic : Basis3d.Identity,
+            SscConicAxes.ConstantTwoVector => SscConstantOrbitFrame.Read(fields.Object("OrbitFrame").Object("TwoVector")),
             _ => throw new NotSupportedException($"The SSC orbital frame {reference.Axes} is unavailable.")
         };
         JulianInstant? beginning = Text("Beginning") is { } begin ? SscSampledCatalog.ReadDate(begin) : null;
@@ -152,6 +154,7 @@ public static partial class SscBodyCatalogue
         if (beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
+        double? orbitPeriodSeconds = null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
         SscScriptOrbit? scripted = usesScriptOrbit
             ? TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) : null;
@@ -162,6 +165,7 @@ public static partial class SscBodyCatalogue
             var context = new SscOrbitContext(Icrs, heliocentric ? AuKilometers : 1,
                 heliocentric ? 31_557_600 : 86_400);
             var curve = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
+            orbitPeriodSeconds = Number(((SscValue.Map)orbit).Get("Period")) * context.SecondsPerPeriodUnit;
             raw = epoch => curve.Evaluate(epoch);
         }
         else if (fields.Fields.TryGetValue("FixedPosition", out var position))
@@ -254,17 +258,36 @@ public static partial class SscBodyCatalogue
                 return null;
             }
         }
+        else if (Text("CustomRotation") is "iau-amalthea" or "iau-thebe")
+        {
+            int naif = Text("CustomRotation") == "iau-amalthea" ? 505 : 514;
+            string local = Path.Combine(root, "pck00011.tpc");
+            if (AddonDependencies.FileExists(local))
+            {
+                var model = new SpicePolynomialBodyFrame(LocalAddonFiles.Resolve(root, root, local), naif);
+                spin = epoch => model.Sample(epoch);
+            }
+            else
+            {
+                Warn("Local PCK is absent; using synchronous rotation.");
+                spin = ReadUniformSpin(new SscValue.Map(new Dictionary<string, SscValue>()), spinFrame, orbitPeriodSeconds);
+            }
+        }
+        else if (fields.Fields.ContainsKey("UniformRotation"))
+            spin = ReadUniformSpin(fields.Object("UniformRotation"), spinFrame, orbitPeriodSeconds);
         else if (fields.Fields.TryGetValue("FixedRotation", out var fixedRotation))
         {
-            if (fixedRotation is not SscValue.Map fixedSpin || fixedSpin.Fields.Any(pair => Number(pair.Value) != 0))
-                throw new NotSupportedException("Only an identity fixed rotation is available for SSC body frames.");
+            if (fixedRotation is not SscValue.Map fixedSpin)
+                throw new InvalidDataException("Expected a fixed rotation definition.");
+            if (fixedSpin.Fields.Values.Any(value => Number(value) != 0))
+                spin = ReadUniformSpin(fixedSpin, spinFrame, orbitPeriodSeconds, stationary: true);
         }
         else if (usesScriptRotation)
             return null;
-        else if (fields.Fields.Keys.Any(key => key is "UniformRotation" or "CustomRotation" or "SpiceRotation"))
+        else if (fields.Fields.Keys.Any(key => key is "PrecessingRotation" or "CustomRotation" or "SpiceRotation"))
             throw new NotSupportedException("This body catalogue needs a different rotation model.");
         if (spin is not null && orientation is not null)
-            throw new NotSupportedException("Scripted and sampled rotations currently need an inertial body frame.");
+            throw new NotSupportedException("This SSC spin model currently needs an inertial body frame.");
 
         string? mesh = Text("Mesh") is { } fileName ? resolve(item, "Mesh", AddonStage.Mesh, fileName, "models") : null;
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
@@ -299,8 +322,34 @@ public static partial class SscBodyCatalogue
                 (ending is { } stop && epoch.CompareTo(stop) > 0) ||
                 raw(epoch) is not { } state)
                 return null;
-            return ecliptic ? new(Ecliptic.Transform(state.PositionKilometers),
-                Ecliptic.Transform(state.VelocityKilometersPerSecond)) : state;
+            return new(orbitFrame.Transform(state.PositionKilometers), orbitFrame.Transform(state.VelocityKilometersPerSecond));
+        }
+    }
+
+    private static Func<JulianInstant, FrameKinematics?> ReadUniformSpin(SscValue.Map fields, Basis3d frame,
+        double? orbitPeriodSeconds, bool stationary = false)
+    {
+        double period = stationary ? 0 : fields.Fields.TryGetValue("Period", out var hours) ? Number(hours) * 3600 : orbitPeriodSeconds ?? 0;
+        if (!double.IsFinite(period))
+            throw new InvalidDataException("SSC spin period must be finite.");
+        var epoch = JulianInstant.FromJulianDate(Get("Epoch", JulianInstant.J2000Day), TimeScale.Tdb);
+        Vector3d pole = new(0, 0, 1);
+        Basis3d mean = SampledMissionCatalog.Multiply(frame,
+            SampledMissionCatalog.Multiply(Rotation(pole, Angle("AscendingNode")), Rotation(new(1, 0, 0), Angle("Inclination"))));
+        double rate = period == 0 ? 0 : Math.Tau / period;
+        double meridian = 180 + Angle("MeridianAngle");
+        return time =>
+        {
+            double seconds = (double)time.DifferenceNanoseconds(epoch) / JulianInstant.NanosecondsPerSecond;
+            double angle = meridian + (period == 0 ? 0 : 360 * Math.IEEERemainder(seconds, period) / period);
+            return new FrameKinematics(SampledMissionCatalog.Multiply(mean, Rotation(pole, angle)), mean.Z * rate);
+        };
+
+        double Get(string key, double fallback) => fields.Fields.TryGetValue(key, out var value) ? Number(value) : fallback;
+        double Angle(string key)
+        {
+            double degrees = Get(key, 0);
+            return period == 0 ? degrees : (float)(degrees / 180 * Math.PI) * (180 / Math.PI);
         }
     }
 
@@ -326,7 +375,7 @@ public static partial class SscBodyCatalogue
         value is SscValue.List list && list.Items.Length == count ? list.Items.Select(Number).ToArray() :
             throw new InvalidDataException("Invalid SSC vector.");
 
-    private static Vector3d ReadVector(SscValue value)
+    internal static Vector3d ReadVector(SscValue value)
     {
         double[] vector = Numbers(value, 3);
         return new(vector[0], vector[1], vector[2]);

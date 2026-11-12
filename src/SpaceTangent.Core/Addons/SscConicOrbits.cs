@@ -6,7 +6,7 @@ using SpaceTangent.Core.Orbits;
 namespace SpaceTangent.Core.Addons;
 
 public readonly record struct SscOrbitContext(FrameId Frame, double KilometersPerDistanceUnit, double SecondsPerPeriodUnit);
-public enum SscConicAxes { ParentDefault, EclipticJ2000, EquatorJ2000, MeanEquator, BodyFixed }
+public enum SscConicAxes { ParentDefault, EclipticJ2000, EquatorJ2000, MeanEquator, BodyFixed, ConstantTwoVector }
 public readonly record struct SscConicReference(SscConicAxes Axes, string Center, string? PoleObject, JulianInstant? Freeze);
 public sealed record SscConicOrbit(string Name, string Parent, JulianInstant ElementEpoch, ConicOrbit Orbit)
 {
@@ -66,6 +66,7 @@ public static class SscConicOrbits
             "EquatorJ2000" => SscConicAxes.EquatorJ2000,
             "MeanEquator" => SscConicAxes.MeanEquator,
             "BodyFixed" => SscConicAxes.BodyFixed,
+            "TwoVector" => SscConicAxes.ConstantTwoVector,
             _ => throw new NotSupportedException($"Unsupported conic orbit frame {name}.")
         };
         if (definition is not SscValue.Map parameters)
@@ -92,13 +93,17 @@ public static class SscConicOrbits
         double mu = motion * motion * a * a * a;
         double radians = Math.PI / 180;
         JulianInstant epoch = JulianInstant.FromJulianDate(Number(orbit, "Epoch", JulianInstant.J2000Day), TimeScale.Tdb);
-        double mean = Math.IEEERemainder(Number(orbit, "MeanAnomaly", 0) * radians, Math.Tau);
+        double node = Number(orbit, "AscendingNode", 0);
+        double argument = orbit.Fields.ContainsKey("ArgOfPericenter") ? Number(orbit, "ArgOfPericenter") :
+            orbit.Fields.ContainsKey("ArgOfPeriapsis") ? Number(orbit, "ArgOfPeriapsis") :
+            orbit.Fields.ContainsKey("LongOfPericenter") ? Number(orbit, "LongOfPericenter") - node : 0;
+        double anomaly = orbit.Fields.ContainsKey("MeanAnomaly") ? Number(orbit, "MeanAnomaly") :
+            orbit.Fields.ContainsKey("MeanLongitude") ? Number(orbit, "MeanLongitude") - (argument + node) : 0;
+        double mean = Math.IEEERemainder(anomaly * radians, Math.Tau);
         JulianInstant periapsis = epoch.AddSeconds(-mean / motion);
-        double argument = orbit.Fields.ContainsKey("ArgOfPericenter")
-            ? Number(orbit, "ArgOfPericenter")
-            : Number(orbit, "ArgOfPeriapsis", 0);
+
         var elements = new ConicElements(a * (1 - e), e, Number(orbit, "Inclination", 0) * radians,
-            Number(orbit, "AscendingNode", 0) * radians, argument * radians, periapsis, mu, context.Frame);
+            node * radians, argument * radians, periapsis, mu, context.Frame);
         return new(entry.Names, entry.Parent, epoch, new ConicOrbit(elements));
     }
 
