@@ -6,17 +6,19 @@ using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Addons;
 
-public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Basis3d MeshRotation, Vector3d MeshOffset);
+public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Basis3d MeshRotation, Vector3d MeshOffset, MissionSensor? Sensor = null);
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
 
 public static partial class SampledMissionCatalog
 {
     private static IReadOnlyList<MissionGeometrySpan> ReadGeometry(JsonElement value, string root, string directory,
-        string name, JulianInstant start, JulianInstant end, Action<string>? warning, int depth = 0)
+        string name, JulianInstant start, JulianInstant end, Func<string, ObjectId> resolve, Action<string>? warning, int depth = 0)
     {
         if (depth >= 16)
             throw new InvalidDataException("Mission geometry exceeds 16 nested levels.");
         string type = Text(value, "type");
+        if (type == "Sensor")
+            return [new(start, end, new(null, .001, Basis3d.Identity, default, ReadSensor(value, resolve)))];
         if (type == "Mesh")
         {
             var mesh = ReadMesh(value, root, directory, name, warning);
@@ -50,7 +52,7 @@ public static partial class SampledMissionCatalog
                 throw new InvalidDataException("A mission geometry step is missing its start time.");
             times[index] = Date(step, "startTime", start);
             shapes[index] = step.TryGetProperty("geometry", out var geometry) && geometry.ValueKind == JsonValueKind.Object
-                ? ReadGeometry(geometry, root, directory, name, start, end, warning, depth + 1) : [];
+                ? ReadGeometry(geometry, root, directory, name, start, end, resolve, warning, depth + 1) : [];
         }
 
         // The source selects the first matching adjacent interval, or its last item when none match.

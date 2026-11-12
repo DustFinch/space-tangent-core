@@ -126,7 +126,7 @@ public static partial class SampledMissionCatalog
         void Register(JsonElement item, string path)
         {
             string name = Text(item, "name");
-            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched"))
+            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor"))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
                 return;
@@ -157,7 +157,7 @@ public static partial class SampledMissionCatalog
         JulianInstant start = Date(item, "startTime", Minimum);
         JulianInstant finish = Date(item, "endTime", Maximum);
         IReadOnlyList<MissionGeometrySpan>? geometry = item.TryGetProperty("geometry", out var shown)
-            ? ReadGeometry(shown, root, directory, name, start, finish, warning) : null;
+            ? ReadGeometry(shown, root, directory, name, start, finish, resolve, warning) : null;
         var arcs = item.TryGetProperty("arcs", out var sequence) ? sequence.EnumerateArray().ToArray() : [item];
         if (arcs.Length is < 1 or > 128)
             throw new InvalidDataException($"{name}: a mission must contain one to 128 arcs.");
