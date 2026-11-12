@@ -55,13 +55,19 @@ public sealed partial class WorldGraphBuilder
             {
                 if (frame.AngularVelocityRadiansPerSecond is { } angularVelocity)
                 {
-                    // The original entity-state API applies its angular term to the unrotated source position.
-                    relative = new(frame.ToWorld.Transform(local.PositionKilometers),
-                        frame.ToWorld.Transform(local.VelocityKilometersPerSecond) + Vector3d.Cross(angularVelocity,
-                            SscSampledSpacecraft.ToEquatorial(local.PositionKilometers)));
+                    Vector3d position = frame.ToWorld.Transform(local.PositionKilometers);
+                    // Native entity-state trajectories cross omega with the unrotated position in source axes.
+                    Vector3d offset = arc.UsePhysicalBodyFixedVelocity ? position : arc.NativeVelocitySource is { } source
+                        ? source.Transform(local.PositionKilometers) : SscSampledSpacecraft.ToEquatorial(local.PositionKilometers);
+                    relative = new(position, frame.ToWorld.Transform(local.VelocityKilometersPerSecond) + Vector3d.Cross(angularVelocity, offset));
                 }
-                else if (!TransformLocal(input, rotating.Body, local, out relative))
-                    return default;
+                else
+                {
+                    if (rotating.LocalAxes is { } axes)
+                        local = new(axes.Transform(local.PositionKilometers), axes.Transform(local.VelocityKilometersPerSecond));
+                    if (!TransformLocal(input, rotating.Body, local, out relative))
+                        return default;
+                }
             }
             else
                 relative = new(frame.ToWorld.Transform(local.PositionKilometers), frame.ToWorld.Transform(local.VelocityKilometersPerSecond));
@@ -117,7 +123,9 @@ public sealed partial class WorldGraphBuilder
                 return true;
             case MissionFrame.BodyFixed fixedFrame:
                 var value = input.ReadIfPresent(new(fixedFrame.Body, WorldChannel.Orientation));
-                frame = value.Orientation;
+                frame = fixedFrame.LocalAxes is { } axes && value.Available
+                    ? new(SampledMissionCatalog.Multiply(value.Orientation.ToWorld, axes), value.Orientation.AngularVelocityRadiansPerSecond)
+                    : value.Orientation;
                 return value.Available;
             case MissionFrame.Rotating rotating when TryMissionFrame(input, rotating.Parent, out var parent):
                 var local = rotating.Local(input.Epoch);

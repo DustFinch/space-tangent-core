@@ -22,6 +22,8 @@ public sealed record MissionArc(JulianInstant Start, JulianInstant End, ObjectId
 {
     /// <summary>The frame on which the model's local attitude is based.</summary>
     public MissionFrame? BodyReferenceFrame { get; init; }
+    internal Basis3d? NativeVelocitySource { get; init; }
+    internal bool UsePhysicalBodyFixedVelocity { get; init; }
 }
 
 public abstract record MissionFrame
@@ -30,7 +32,10 @@ public abstract record MissionFrame
 
     public sealed record Inertial(Basis3d ToWorld) : MissionFrame;
     public sealed record Spice(Func<JulianInstant, FrameKinematics?> Sample) : MissionFrame;
-    public sealed record BodyFixed(ObjectId Body) : MissionFrame;
+    public sealed record BodyFixed(ObjectId Body) : MissionFrame
+    {
+        internal Basis3d? LocalAxes { get; init; }
+    }
     public sealed record Rotating(MissionFrame Parent, Func<JulianInstant, FrameKinematics> Local) : MissionFrame;
     public sealed record TwoVector(FrameAxis PrimaryAxis, MissionDirection Primary,
         FrameAxis SecondaryAxis, MissionDirection Secondary) : MissionFrame
@@ -73,7 +78,7 @@ public static partial class SampledMissionCatalog
         var ids = new HashSet<ObjectId>();
         var kernelLoads = new List<(string Directory, string Name)>();
         var instrumentFrames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var definitions = new List<(string Source, JsonElement Item, bool PackedParticle)>();
+        var definitions = new List<(string Source, JsonElement Item, bool Packed)>();
         var documents = new Dictionary<string, JsonDocument>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var active = new HashSet<string>(documents.Comparer);
         const int MaximumCatalogueBytes = 4 * 1024 * 1024;
@@ -84,11 +89,54 @@ public static partial class SampledMissionCatalog
             foreach (string entry in catalogPaths)
                 Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
             var resources = new SpiceResources(root, kernelLoads);
-            var missions = definitions.Select(definition => AddonDiagnostics.Read(AddonStage.Catalog,
-                definition.Source, () => definition.PackedParticle
-                    ? ReadPackedParticleMission(definition.Item, ResolvePacked, Path.GetDirectoryName(definition.Source)!, warning)
-                    : ReadItem(definition.Item, Resolve, root, Path.GetDirectoryName(definition.Source)!,
-                    resources, name => instrumentFrames.GetValueOrDefault(name), warning, cancellation))).ToArray();
+            var rejected = new HashSet<ObjectId>();
+            var loaded = new List<(SampledMission Mission, HashSet<ObjectId> References)>();
+            foreach (var definition in definitions)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                string directory = Path.GetDirectoryName(definition.Source)!;
+                var references = new HashSet<ObjectId>();
+                try
+                {
+                    var mission = AddonDiagnostics.Read(AddonStage.Catalog, definition.Source, () =>
+                        definition.Packed ? definition.Item.TryGetProperty("particles", out _)
+                            ? ReadPackedParticleMission(definition.Item, TrackReference, directory, warning)
+                            : ReadPackedBody(definition.Item, TrackReference, directory, warning, cancellation)
+                        : ReadItem(definition.Item, Resolve, root, directory, resources,
+                            name => instrumentFrames.GetValueOrDefault(name), warning, cancellation));
+                    loaded.Add((mission, references));
+                }
+                catch (Exception error) when (definition.Packed && !definition.Item.TryGetProperty("particles", out _) &&
+                    (error is NotSupportedException or FileNotFoundException ||
+                    AddonDiagnostics.Get(error) is { Stage: AddonStage.Trajectory, Code: AddonIssue.InvalidInput }))
+                {
+                    string name = Text(definition.Item, "name");
+                    rejected.Add(ResolvePacked(Text(definition.Item, "path")));
+                    warning?.Invoke($"{name}: {error.Message}");
+                }
+
+                ObjectId TrackReference(string path)
+                {
+                    ObjectId id = ResolvePacked(path);
+                    references.Add(id);
+                    return id;
+                }
+            }
+
+            bool removed;
+            do
+            {
+                removed = false;
+                foreach (var (mission, references) in loaded)
+                {
+                    if (references.Overlaps(rejected) && rejected.Add(mission.Id))
+                    {
+                        warning?.Invoke($"{mission.Name}: depends on an unavailable packed mission body.");
+                        removed = true;
+                    }
+                }
+            } while (removed);
+            var missions = loaded.Where(item => !rejected.Contains(item.Mission.Id)).Select(item => item.Mission).ToArray();
             var sensors = missions.Where(mission => mission.Geometry?.Any(span => span.Shape.Sensor is not null) == true)
                 .Select(mission => mission.Id).ToHashSet();
             foreach (var mission in missions)
@@ -126,13 +174,13 @@ public static partial class SampledMissionCatalog
                 {
                     int version = packedVersion.GetInt32();
                     if (version is < 3 or > 19)
-                        throw new NotSupportedException($"Packed particle format version {version} is outside 3–19.");
+                        throw new NotSupportedException($"Packed mission format version {version} is outside 3–19.");
                     var bodies = catalogue.GetProperty("bodies");
                     if (bodies.GetArrayLength() is < 1 or > 512)
-                        throw new InvalidDataException("A packed particle catalogue requires one to 512 bodies.");
+                        throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
                     foreach (JsonElement body in bodies.EnumerateArray())
-                        if (body.TryGetProperty("particles", out _))
-                            Register(body, path, packedParticle: true);
+                        if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _))
+                            Register(body, path, packed: true);
                     return true;
                 }
                 if (Text(catalogue, "version") != "1.0")
@@ -166,15 +214,15 @@ public static partial class SampledMissionCatalog
             });
         }
 
-        void Register(JsonElement item, string path, bool packedParticle = false)
+        void Register(JsonElement item, string path, bool packed = false)
         {
-            if (!packedParticle && item.TryGetProperty("type", out var type) && type.GetString() == "Visualizer")
+            if (!packed && item.TryGetProperty("type", out var type) && type.GetString() == "Visualizer")
             {
                 warning?.Invoke($"Mission visualizer {Text(item, "tag")} will be unavailable.");
                 return;
             }
             string name = Text(item, "name");
-            if (!packedParticle && item.TryGetProperty("geometry", out var geometry) &&
+            if (!packed && item.TryGetProperty("geometry", out var geometry) &&
                 Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem") &&
                 !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
@@ -191,14 +239,14 @@ public static partial class SampledMissionCatalog
             var id = new ObjectId("mission/" + slug);
             if (!ids.Add(id) || !names.TryAdd(name, id))
                 throw new InvalidDataException($"Duplicate sampled mission identifier for {name}.");
-            if (packedParticle && !names.TryAdd(Text(item, "path"), id))
-                throw new InvalidDataException($"Duplicate packed particle path for {name}.");
+            if (packed && !names.TryAdd(Text(item, "path"), id))
+                throw new InvalidDataException($"Duplicate packed mission path for {name}.");
             if (definitions.Count == 512)
                 throw new InvalidDataException("The enabled catalogues may provide at most 512 sampled missions.");
-            if (!packedParticle && item.TryGetProperty("bodyFrame", out var attitude) && attitude.ValueKind == JsonValueKind.Object &&
+            if (!packed && item.TryGetProperty("bodyFrame", out var attitude) && attitude.ValueKind == JsonValueKind.Object &&
                 Text(attitude, "type") == "Spice")
                 instrumentFrames.Add(name, Text(attitude, "name"));
-            definitions.Add((path, item, packedParticle));
+            definitions.Add((path, item, packed));
         }
 
         ObjectId Resolve(string name) => names.TryGetValue(name, out var id) ? id :

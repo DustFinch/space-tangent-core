@@ -64,61 +64,17 @@ public static partial class SampledMissionCatalog
         if (trajectoryFrame is null)
         {
             var orbitFrame = orbit.GetProperty("frame");
-            trajectoryFrame = PackedFrame(orbitFrame, 0);
+            trajectoryFrame = PackedFrame(orbitFrame, resolve, id);
             if (trajectoryFrame is MissionFrame.BodyFixed direct)
                 axes = LegacyBodyAxes(direct.Body, axes);
         }
         MissionFrame attitude = particles.TryGetProperty("frameBody", out var emitterFrame)
             ? new MissionFrame.BodyFixed(resolve(emitterFrame.GetString()!))
-            : body.TryGetProperty("bodyFrame", out var bodyFrame) ? PackedFrame(bodyFrame, 0)
-            : PackedFrame(rotation.GetProperty("frame"), 0);
+            : body.TryGetProperty("bodyFrame", out var bodyFrame) ? PackedFrame(bodyFrame, resolve, id)
+            : PackedFrame(rotation.GetProperty("frame"), resolve, id);
         return new(id, name, null, shape.RadiusKilometers,
             [new(start, end, center, Constant(axes.Transform(position)), trajectoryFrame, attitude)])
             { Geometry = [new(start, end, shape)] };
-
-        MissionFrame PackedFrame(JsonElement value, int depth)
-        {
-            if (depth >= 16)
-                throw new InvalidDataException("Packed particle frame definitions exceed 16 nested levels.");
-            return Text(value, "kind") switch
-            {
-                "bodyFixed" => new MissionFrame.BodyFixed(resolve(Text(value, "body"))),
-                "eclipticJ2000" => Ecliptic,
-                "equatorJ2000" or "cosmographiaIcrf" => Equatorial,
-                "cosmographiaTwoVector" or "twoVector" => TwoVector(),
-                var kind => throw new NotSupportedException($"Unknown packed particle frame {kind}.")
-            };
-
-            MissionFrame TwoVector()
-            {
-                var primary = value.GetProperty("primary");
-                var secondary = value.GetProperty("secondary");
-                return new MissionFrame.TwoVector(Axis(Text(primary, "axis")), Side(primary),
-                    Axis(Text(secondary, "axis")), Side(secondary));
-            }
-
-            MissionDirection Side(JsonElement side)
-            {
-                var direction = side.GetProperty("direction");
-                string kind = Text(direction, "kind");
-                if (kind == "constant")
-                {
-                    var frame = PackedFrame(direction.GetProperty("frame"), depth + 1);
-                    var vector = Vector(direction.GetProperty("vector"));
-                    if (frame is MissionFrame.BodyFixed fixedFrame)
-                        vector = LegacyBodyAxes(fixedFrame.Body, Basis3d.Identity).Transform(vector);
-                    return new MissionDirection.Constant(vector, frame);
-                }
-                var observer = direction.TryGetProperty("observer", out var from) ? resolve(from.GetString()!) : id;
-                var target = resolve(Text(direction, "target"));
-                return new MissionDirection.Relative(new(observer, target, kind switch
-                {
-                    "relativePosition" or "relativePositionFrom" => DirectionQuantity.Position,
-                    "relativeVelocity" or "relativeVelocityFrom" => DirectionQuantity.Velocity,
-                    _ => throw new NotSupportedException($"Unknown packed particle direction {kind}.")
-                }));
-            }
-        }
     }
 
     // A legacy pack stores its natural-body prime meridian on the opposite X axis.

@@ -122,13 +122,18 @@ public static partial class SampledMissionCatalog
         double majorAxis = Distance(value, "semiMajorAxis");
         double eccentricity = value.TryGetProperty("eccentricity", out var given) ? given.GetDouble() : 0;
         double period = Seconds(value, "period", JulianInstant.SecondsPerDay);
+        return Keplerian(majorAxis, eccentricity, period, Date(value, "epoch", J2000), Angle(value, "meanAnomaly"),
+            Angle(value, "inclination"), Angle(value, "ascendingNode"), Angle(value, "argumentOfPeriapsis"));
+    }
+
+    private static Func<JulianInstant, CartesianState?> Keplerian(double majorAxis, double eccentricity, double period,
+        JulianInstant reference, double anomaly, double inclination, double node, double periapsis)
+    {
         if (majorAxis <= 0 || !double.IsFinite(eccentricity) || eccentricity is < 0 or >= 1 || period <= 0)
             throw new InvalidDataException("Invalid elliptical mission orbit.");
-        var reference = Date(value, "epoch", J2000);
         double meanMotion = Math.Tau / period;
-        double initial = Angle(value, "meanAnomaly") / meanMotion;
-        var orbit = new ConicOrbit(new(majorAxis * (1 - eccentricity), eccentricity, Angle(value, "inclination"),
-            Angle(value, "ascendingNode"), Angle(value, "argumentOfPeriapsis"), reference,
+        double initial = anomaly / meanMotion;
+        var orbit = new ConicOrbit(new(majorAxis * (1 - eccentricity), eccentricity, inclination, node, periapsis, reference,
             majorAxis * majorAxis * majorAxis * meanMotion * meanMotion, MissionSource));
         return epoch => orbit.EvaluateElapsedSeconds(initial +
             (double)epoch.DifferenceNanoseconds(reference) / JulianInstant.NanosecondsPerSecond);

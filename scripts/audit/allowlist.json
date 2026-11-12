@@ -21,16 +21,6 @@
   },
   {
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",
-    "sha256": "3a450c63f5ad69fdfcd1af5550a15b75951eef13ef9eeca542cce3ef376b96d4",
-    "reason": "Literal tag required to read the archived native particle pack format."
-  },
-  {
-    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",
-    "sha256": "722e5e42323ff37469eafe82e0d417150e0498451573e84914d853f055db93e9",
-    "reason": "Literal tag required to read the archived native particle pack format."
-  },
-  {
-    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",
     "sha256": "0beb69db1a0c1b913dc398faaa57694865c9e5dc1f25e1e0e8a3cb16baa23cff",
     "reason": "Literal tag required to read the archived native particle pack format."
   },
@@ -43,5 +33,65 @@
     "reason": "Exact compatibility key from the native attitude input and its independent verification metadata.",
     "path": "tests/SpaceTangent.Core.Tests/SampledMissionAttitudeTests.cs",
     "sha256": "095d1503264a6ca0775bc58667fd0344a325a8c53fdcd1a5e99f8c9316541a66"
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "4e39cb19284220b19da31fb0b34c502591514a4bde1c57d11e00cba6a049acac",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "da30700c9e0cf8b3180b85f4a53a92fdd7e4f71663386e1eb110cb7ffcd86133",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "673f01147604464888297b802f65aa225f91f9d559f2b12b3e8029b3693970c1",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "52eb273cc1c396f29b23cec2977de6b14f0eac631a4badd9c45f2f666f530d6d",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "fd4f1897c9899dd7c5635f0dc5b248868eea571d7c5db3953d12e2161edef066",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "8fdea7c154491bd1d3377c477946a94385fb312dda85a92ef0aacdb5b2f1c10b",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "e7feac1670416f1c5679be07a30a0aae02c34d2bb1366c5fd9e8546270b4301f",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "3cc35aa200742e0043574a0fae94b9403203c7e241746c1ed3f4b9f54ce28e2e",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedFrames.cs",
+    "sha256": "449c863915267dddfa8df2de48b570edd8741fd15d3f8968fee6e9bb6f36b153",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedFrames.cs",
+    "sha256": "4a34d37b3050c363d24b4b88c69921ce6ad67b2fd101afe8644b7a06350daaa7",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.cs",
+    "sha256": "ef7ccf317d14f3df65d077a94dad6b72c016dba359fcbb64ca2d4e223aed9bad",
+    "reason": "Exact compatibility tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedFrames.cs",
+    "sha256": "02f15211bdfa5f7fa95400f0bc5e7531dd557f834d861bb8890781e7998cacf4",
+    "reason": "Exact B1950 frame tag in the archived mission pack schema."
   }
 ]
