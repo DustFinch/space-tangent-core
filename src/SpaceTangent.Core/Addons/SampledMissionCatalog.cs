@@ -42,53 +42,111 @@ public static partial class SampledMissionCatalog
     private static readonly JulianInstant Maximum = new(JulianInstant.MaximumDay, JulianInstant.NanosecondsPerDay - 1, TimeScale.Tdb);
 
     public static IReadOnlyList<SampledMission> Load(string catalogPath, string assetRoot,
+        Func<string, ObjectId?> resolveBody, Action<string>? warning = null, CancellationToken cancellation = default) =>
+        Load([catalogPath], assetRoot, resolveBody, warning, cancellation);
+
+    public static IReadOnlyList<SampledMission> Load(IEnumerable<string> catalogPaths, string assetRoot,
         Func<string, ObjectId?> resolveBody, Action<string>? warning = null, CancellationToken cancellation = default)
     {
+        ArgumentNullException.ThrowIfNull(catalogPaths);
         ArgumentNullException.ThrowIfNull(resolveBody);
         string root = Path.GetFullPath(assetRoot);
-        string path = Path.GetFullPath(catalogPath, root);
-        return AddonDiagnostics.Read(AddonStage.Catalog, path, () => Read(root, path, resolveBody, warning, cancellation));
-    }
+        var names = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
+        var ids = new HashSet<ObjectId>();
+        var definitions = new List<(string Source, JsonElement Item)>();
+        var documents = new Dictionary<string, JsonDocument>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var active = new HashSet<string>(documents.Comparer);
+        const int MaximumCatalogueBytes = 4 * 1024 * 1024;
+        const int MaximumTotalBytes = 16 * 1024 * 1024;
+        long bytes = 0;
+        try
+        {
+            foreach (string entry in catalogPaths)
+                Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
+            return Array.AsReadOnly(definitions.Select(definition => AddonDiagnostics.Read(AddonStage.Catalog,
+                definition.Source, () => ReadItem(definition.Item, Resolve, root, Path.GetDirectoryName(definition.Source)!,
+                    warning, cancellation))).ToArray());
+        }
+        finally
+        {
+            foreach (var document in documents.Values)
+                document.Dispose();
+        }
 
-    private static IReadOnlyList<SampledMission> Read(string root, string path, Func<string, ObjectId?> resolveBody,
-        Action<string>? warning, CancellationToken cancellation)
-    {
-        path = LocalAddonFiles.Resolve(root, root, path);
-        string directory = Path.GetDirectoryName(path)!;
-        const int MaximumBytes = 4 * 1024 * 1024;
-        using var stream = AddonDependencies.OpenRead(path, MaximumBytes);
-        if (stream.Length > MaximumBytes)
-            throw new InvalidDataException("Sampled mission catalogue exceeds 4 MiB.");
-        using var json = JsonDocument.Parse(stream);
-        JsonElement catalogue = json.RootElement;
-        if (Text(catalogue, "version") != "1.0")
-            throw new InvalidDataException("Sampled mission catalogues require version 1.0.");
-        var items = catalogue.GetProperty("items");
-        if (items.GetArrayLength() > 512)
-            throw new InvalidDataException("A sampled mission catalogue may contain at most 512 items.");
+        void Visit(string path, int depth)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (active.Contains(path))
+                throw new InvalidDataException($"Mission catalogue dependency cycle at {Path.GetFileName(path)}.");
+            if (documents.ContainsKey(path))
+                return;
+            if (depth > 16 || documents.Count == 64)
+                throw new InvalidDataException("Mission catalogue dependencies exceed their depth or file limit.");
+            AddonDiagnostics.Read(AddonStage.Catalog, path, () =>
+            {
+                using var stream = AddonDependencies.OpenRead(path, MaximumCatalogueBytes);
+                bytes += stream.Length;
+                if (stream.Length > MaximumCatalogueBytes || bytes > MaximumTotalBytes)
+                    throw new InvalidDataException("Sampled mission catalogues exceed their size limit.");
+                using var reader = new StreamReader(stream);
+                var json = JsonDocument.Parse(reader.ReadToEnd(),
+                    new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+                documents.Add(path, json);
+                JsonElement catalogue = json.RootElement;
+                if (Text(catalogue, "version") != "1.0")
+                    throw new InvalidDataException("Sampled mission catalogues require version 1.0.");
+                active.Add(path);
+                if (catalogue.TryGetProperty("require", out var requirements))
+                {
+                    if (requirements.ValueKind != JsonValueKind.Array || requirements.GetArrayLength() > 64)
+                        throw new InvalidDataException("Mission require must be an array of at most 64 local catalogues.");
+                    foreach (var requirement in requirements.EnumerateArray())
+                    {
+                        if (requirement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(requirement.GetString()))
+                            throw new InvalidDataException("A mission dependency requires a nonempty local path.");
+                        string resource = requirement.GetString()!;
+                        string dependency;
+                        try { dependency = LocalAddonFiles.ResolveRelative(root, Path.GetDirectoryName(path)!, resource); }
+                        catch (FileNotFoundException)
+                        {
+                            warning?.Invoke($"{Path.GetFileName(path)} requires {resource}; resolving references against installed objects.");
+                            continue;
+                        }
+                        Visit(dependency, depth + 1);
+                    }
+                }
+                if (catalogue.TryGetProperty("items", out var items))
+                    foreach (JsonElement item in items.EnumerateArray())
+                        Register(item, path);
+                active.Remove(path);
+                return true;
+            });
+        }
 
-        var missions = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
-        var definitions = new List<JsonElement>();
-        foreach (var item in items.EnumerateArray())
+        void Register(JsonElement item, string path)
         {
             string name = Text(item, "name");
             if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched"))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
-                continue;
+                return;
             }
+            if (item.TryGetProperty("trajectory", out var trajectory) && Text(trajectory, "type") == "TLE" &&
+                resolveBody(name) is not null)
+                return;
             string ascii = new(name.ToLowerInvariant().Select(character => char.IsAsciiLetterOrDigit(character) ? character : '-').ToArray());
             string slug = string.Join('-', ascii.Split('-', StringSplitOptions.RemoveEmptyEntries));
             if (slug.Length is < 1 or > 80)
                 throw new InvalidDataException($"Invalid mission identifier for {name}.");
-            if (missions.Values.Contains(new ObjectId("mission/" + slug)) ||
-                !missions.TryAdd(name, new("mission/" + slug)))
+            var id = new ObjectId("mission/" + slug);
+            if (!ids.Add(id) || !names.TryAdd(name, id))
                 throw new InvalidDataException($"Duplicate sampled mission identifier for {name}.");
-            definitions.Add(item);
+            if (definitions.Count == 512)
+                throw new InvalidDataException("The enabled catalogues may provide at most 512 sampled missions.");
+            definitions.Add((path, item));
         }
-        return Array.AsReadOnly(definitions.Select(item => ReadItem(item, Resolve, root, directory, warning, cancellation)).ToArray());
 
-        ObjectId Resolve(string name) => missions.TryGetValue(name, out var id) ? id :
+        ObjectId Resolve(string name) => names.TryGetValue(name, out var id) ? id :
             resolveBody(name) ?? throw new InvalidDataException($"Unknown mission reference {name}.");
     }
 
