@@ -106,6 +106,9 @@ public sealed partial class WorldGraphBuilder
     {
         switch (definition)
         {
+            case MissionFrame.Spice spice when spice.Sample(input.Epoch) is { } pointing:
+                frame = pointing;
+                return true;
             case MissionFrame.Inertial inertial:
                 frame = new(inertial.ToWorld, default(Vector3d));
                 return true;

@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.World;
+using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.Addons;
 
@@ -106,11 +107,13 @@ public static partial class SampledMissionCatalog
         return new(path, radius, rotation, offset);
     }
 
-    private static MissionFrame Rotation(MissionFrame parent, JsonElement item)
+    private static MissionFrame Rotation(MissionFrame parent, JsonElement item, SpiceResources resources)
     {
         if (!item.TryGetProperty("rotationModel", out var model))
             return parent;
         string kind = Text(model, "type");
+        if (kind == "Spice")
+            return SpiceOrientation(model.TryGetProperty("frame", out _) ? Text(model, "frame") : Text(model, "name"), resources);
         double ascending = Angle(model, "ascendingNode"), inclination = Angle(model, "inclination"), meridian = Angle(model, "meridianAngle");
         var mean = Multiply(RotateZ(ascending), RotateX(inclination));
         if (kind == "Fixed")

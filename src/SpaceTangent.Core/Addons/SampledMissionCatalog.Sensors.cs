@@ -13,11 +13,7 @@ public static partial class SampledMissionCatalog
         double range = value.TryGetProperty("range", out _) ? Distance(value, "range") : 1000;
         if (!(range > 0))
             throw new InvalidDataException("A sensor range must be positive.");
-        Vector3d color = value.TryGetProperty("frustumColor", out var rgb) ? Vector(rgb) : new(1, 1, 1);
-        double opacity = value.TryGetProperty("frustumOpacity", out var alpha) ? alpha.GetDouble() : .3;
-        if (!double.IsFinite(opacity) || opacity is < 0 or > 1 ||
-            color.X is < 0 or > 1 || color.Y is < 0 or > 1 || color.Z is < 0 or > 1)
-            throw new InvalidDataException("Sensor colour and opacity require values between zero and one.");
+        var (color, opacity) = SensorStyle(value);
         bool rectangle = value.TryGetProperty("shape", out var shape) && shape.GetString() == "rectangular";
         double x = HalfExtent("horizontalFov"), y = HalfExtent("verticalFov");
         Basis3d basis = value.TryGetProperty("orientation", out var attitude) ? Quaternion(attitude) : Basis3d.Identity;
@@ -43,6 +39,16 @@ public static partial class SampledMissionCatalog
             }
             return Math.Tan(radians / 2);
         }
+    }
+
+    private static (Vector3d Color, double Opacity) SensorStyle(JsonElement value)
+    {
+        Vector3d color = value.TryGetProperty("frustumColor", out var rgb) ? Vector(rgb) : new(1, 1, 1);
+        double opacity = value.TryGetProperty("frustumOpacity", out var alpha) ? alpha.GetDouble() : .3;
+        if (!double.IsFinite(opacity) || opacity is < 0 or > 1 ||
+            color.X is < 0 or > 1 || color.Y is < 0 or > 1 || color.Z is < 0 or > 1)
+            throw new InvalidDataException("Sensor colour and opacity require values between zero and one.");
+        return (color, opacity);
     }
 
     private static Vector3d RectangleRay(int index, double x, double y)

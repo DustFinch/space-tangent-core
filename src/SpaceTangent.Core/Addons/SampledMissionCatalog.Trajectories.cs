@@ -6,6 +6,7 @@ using SpaceTangent.Contracts;
 using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Ephemerides;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.Addons;
 
@@ -15,7 +16,7 @@ public static partial class SampledMissionCatalog
     private static readonly JulianInstant J2000 = new(JulianInstant.J2000Day, 0, TimeScale.Tdb);
 
     private static Func<JulianInstant, CartesianState?> ReadTrajectory(JsonElement value, string root, string directory,
-        JulianInstant start, JulianInstant end, MissionFrame frame, int depth = 0)
+        JulianInstant start, JulianInstant end, MissionFrame frame, SpiceResources resources, string center, int depth = 0)
     {
         if (depth >= 16)
             throw new InvalidDataException("A mission trajectory exceeds 16 nested levels.");
@@ -49,6 +50,8 @@ public static partial class SampledMissionCatalog
                 return Composite();
             case "LinearCombination":
                 return Combination();
+            case "Spice":
+                return SpiceTrajectory(value, resources, center);
             case "Builtin":
                 string name = Text(value, "name");
                 if (frame != Equatorial || !Enum.TryParse<SatelliteTheory>(name, ignoreCase: false, out var theory) ||
@@ -77,7 +80,7 @@ public static partial class SampledMissionCatalog
                 if (begins.CompareTo(previous) < 0 || until.CompareTo(begins) <= 0)
                     throw new InvalidDataException("Composite trajectory segments must be ordered and non-overlapping.");
                 var nested = segment.TryGetProperty("trajectory", out var child) ? child : segment;
-                segments.Add((begins, until, ReadTrajectory(nested, root, directory, begins, until, frame, depth + 1)));
+                segments.Add((begins, until, ReadTrajectory(nested, root, directory, begins, until, frame, resources, center, depth + 1)));
                 previous = until;
             }
             return epoch =>
@@ -97,7 +100,7 @@ public static partial class SampledMissionCatalog
             if (count is < 2 or > 16 || count != weights.GetArrayLength())
                 throw new InvalidDataException("A trajectory combination requires matching trajectories and weights.");
             var terms = children.EnumerateArray().Select((child, index) =>
-                (Sample: ReadTrajectory(child, root, directory, start, end, frame, depth + 1), Weight: weights[index].GetDouble())).ToArray();
+                (Sample: ReadTrajectory(child, root, directory, start, end, frame, resources, center, depth + 1), Weight: weights[index].GetDouble())).ToArray();
             if (terms.Any(term => !double.IsFinite(term.Weight)))
                 throw new InvalidDataException("Trajectory combination weights must be finite.");
             return epoch =>

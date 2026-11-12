@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Time;
+using SpaceTangent.Core.Spice;
 using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Addons;
@@ -24,6 +25,7 @@ public abstract record MissionFrame
     private MissionFrame() { }
 
     public sealed record Inertial(Basis3d ToWorld) : MissionFrame;
+    public sealed record Spice(Func<JulianInstant, FrameKinematics?> Sample) : MissionFrame;
     public sealed record BodyFixed(ObjectId Body) : MissionFrame;
     public sealed record Rotating(MissionFrame Parent, Func<JulianInstant, FrameKinematics> Local) : MissionFrame;
     public sealed record TwoVector(FrameAxis PrimaryAxis, RelativeDirection Primary,
@@ -54,6 +56,8 @@ public static partial class SampledMissionCatalog
         string root = Path.GetFullPath(assetRoot);
         var names = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<ObjectId>();
+        var kernelLoads = new List<(string Directory, string Name)>();
+        var instrumentFrames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var definitions = new List<(string Source, JsonElement Item)>();
         var documents = new Dictionary<string, JsonDocument>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var active = new HashSet<string>(documents.Comparer);
@@ -64,9 +68,10 @@ public static partial class SampledMissionCatalog
         {
             foreach (string entry in catalogPaths)
                 Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
+            var resources = new SpiceResources(root, kernelLoads);
             var missions = definitions.Select(definition => AddonDiagnostics.Read(AddonStage.Catalog,
                 definition.Source, () => ReadItem(definition.Item, Resolve, root, Path.GetDirectoryName(definition.Source)!,
-                    warning, cancellation))).ToArray();
+                    resources, name => instrumentFrames.GetValueOrDefault(name), warning, cancellation))).ToArray();
             var sensors = missions.Where(mission => mission.Geometry?.Any(span => span.Shape.Sensor is not null) == true)
                 .Select(mission => mission.Id).ToHashSet();
             foreach (var mission in missions)
@@ -122,6 +127,7 @@ public static partial class SampledMissionCatalog
                         Visit(dependency, depth + 1);
                     }
                 }
+                ReadSpiceLoads(catalogue, Path.GetDirectoryName(path)!, kernelLoads);
                 if (catalogue.TryGetProperty("items", out var items))
                     foreach (JsonElement item in items.EnumerateArray())
                         Register(item, path);
@@ -133,7 +139,9 @@ public static partial class SampledMissionCatalog
         void Register(JsonElement item, string path)
         {
             string name = Text(item, "name");
-            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations"))
+            if (item.TryGetProperty("geometry", out var geometry) &&
+                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations") &&
+                !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
                 return;
@@ -150,6 +158,9 @@ public static partial class SampledMissionCatalog
                 throw new InvalidDataException($"Duplicate sampled mission identifier for {name}.");
             if (definitions.Count == 512)
                 throw new InvalidDataException("The enabled catalogues may provide at most 512 sampled missions.");
+            if (item.TryGetProperty("bodyFrame", out var attitude) && attitude.ValueKind == JsonValueKind.Object &&
+                Text(attitude, "type") == "Spice")
+                instrumentFrames.Add(name, Text(attitude, "name"));
             definitions.Add((path, item));
         }
 
@@ -158,12 +169,15 @@ public static partial class SampledMissionCatalog
     }
 
     private static SampledMission ReadItem(JsonElement item, Func<string, ObjectId> resolve, string root, string directory,
-        Action<string>? warning, CancellationToken cancellation)
+        SpiceResources resources, Func<string, string?> instrumentFrame, Action<string>? warning, CancellationToken cancellation)
     {
         string name = Text(item, "name");
         JulianInstant start = Date(item, "startTime", Minimum);
         JulianInstant finish = Date(item, "endTime", Maximum);
-        if (item.TryGetProperty("geometry", out var special) && Text(special, "type") == "Observations")
+        if (item.TryGetProperty("geometry", out var special) && Text(special, "type") == "Spice" &&
+            special.TryGetProperty("instrName", out _))
+            return ReadSpiceInstrument(item, special, start, finish, name, resolve, resources, instrumentFrame);
+        if (special.ValueKind == JsonValueKind.Object && Text(special, "type") == "Observations")
         {
             if (finish.CompareTo(start) <= 0)
                 throw new InvalidDataException($"{name}: observation availability must end after it starts.");
@@ -186,11 +200,12 @@ public static partial class SampledMissionCatalog
             var end = Date(arc, "endTime", finish);
             if (begins.CompareTo(start) < 0 || end.CompareTo(begins) <= 0 || end.CompareTo(finish) > 0)
                 throw new InvalidDataException($"{name}: mission arcs must be ordered and non-overlapping within the mission window.");
-            var center = resolve(Text(arc, "center"));
-            var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center);
-            var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center), arc);
+            string centerName = Text(arc, "center");
+            var center = resolve(centerName);
+            var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center, resources);
+            var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center, resources), arc, resources);
             var trajectory = arc.GetProperty("trajectory");
-            result.Add(new(begins, end, center, ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame), trajectoryFrame, bodyFrame));
+            result.Add(new(begins, end, center, ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame, resources, centerName), trajectoryFrame, bodyFrame));
             start = end;
         }
         double radius = geometry is { Count: > 0 } ? geometry.Max(span => span.Shape.RadiusKilometers) : .005;
@@ -199,7 +214,7 @@ public static partial class SampledMissionCatalog
     }
 
     private static MissionFrame Frame(JsonElement arc, string property, Func<string, ObjectId> resolve,
-        string self, ObjectId center)
+        string self, ObjectId center, SpiceResources resources)
     {
         if (!arc.TryGetProperty(property, out var value))
             return Equatorial;
@@ -208,6 +223,7 @@ public static partial class SampledMissionCatalog
         {
             "EclipticJ2000" => Ecliptic,
             "ICRF" or "EquatorJ2000" => Equatorial,
+            "Spice" when property == "bodyFrame" => SpiceOrientation(Text(value, "name"), resources),
             "BodyFixed" => new MissionFrame.BodyFixed(resolve(Text(value, "body"))),
             "TwoVector" => new MissionFrame.TwoVector(Axis(Text(value, "primaryAxis")), Direction(value.GetProperty("primary")),
                 Axis(Text(value, "secondaryAxis")), Direction(value.GetProperty("secondary"))),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
+using SpaceTangent.Core.World;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -52,6 +53,33 @@ public sealed class OrderedSpiceCatalogueTests
                 Assert.Equal(expected.CornersInBody.Count, sensor.CornersInBody.Count);
                 for (int index = 0; index < expected.CornersInBody.Count; index++)
                     Assert.InRange((expected.CornersInBody[index] - toOriginal.Transform(sensor.CornersInBody[index])).Length, 0, 1e-14);
+            }
+
+            ObjectId saturn = new("sol/saturn");
+            var sampled = SampledMissionCatalog.Load(["cassini-catalog.json", "late-catalogue.json"], folder.FullName,
+                name => name.Equals("Saturn", StringComparison.OrdinalIgnoreCase) ? saturn : null);
+            Assert.Equal(3, sampled.Count);
+            var graph = new WorldGraphBuilder();
+            graph.AddTrajectory(saturn, _ => new(default, default));
+            foreach (var missionTrack in sampled)
+                graph.AddSampledMission(missionTrack);
+            var epochOfInterest = JulianInstant.FromTdbSeconds(141917558.4203589);
+            var snapshot = graph.Build().Evaluate(epochOfInterest);
+            var cassini = Assert.Single(sampled, item => item.Name == track.Name);
+            Assert.True(snapshot.TryState(cassini.Id, out var actualState));
+            Assert.True(track.TrySample(epochOfInterest, out var expectedState));
+            Assert.Equal(expectedState, actualState);
+            Assert.True(snapshot.TryOrientation(cassini.Id, out var actualFrame));
+            Assert.True(track.TryAttitude(epochOfInterest, out var expectedFrame));
+            Assert.Equal(expectedFrame, actualFrame.ToWorld);
+            foreach (var instrument in sampled.Where(item => item.Id != cassini.Id))
+            {
+                var geometry = Assert.IsType<MissionSensor>(Assert.Single(instrument.Geometry!).Shape.Sensor);
+                var referenceSensor = Assert.Single(combined.Sensors, item => item.Name == instrument.Name);
+                Assert.Equal(referenceSensor.BoresightInBody, geometry.Boresight);
+                Assert.Equal(48, geometry.Boundary.Count);
+                Assert.True(snapshot.TryState(instrument.Id, out var position));
+                Assert.Equal(actualState, position);
             }
 
             Copy(oracle, "fixed-frames.tf");
