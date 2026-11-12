@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
+using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.Orbits;
 
 namespace SpaceTangent.Core.Observing;
 
@@ -14,9 +16,27 @@ public sealed record StellarEntry(ObjectId Id, string Name, double DistanceParse
     private const double SecondsPerJulianYear = 31_557_600;
     private static readonly JulianInstant J2000 = JulianInstant.FromJulianDate(2451545, TimeScale.Tdb);
 
+    public IReadOnlyList<string> Aliases { get; init; } = [];
+    public double? AbsoluteMagnitude { get; init; }
+    public Vector3d? ColorSrgb { get; init; }
+    public bool IsBarycenter { get; init; }
+    public double SystemRadiusKilometers { get; init; }
+    public ObjectId? BarycenterId => Barycenter?.Id;
+    internal StellarEntry? Barycenter { get; init; }
+    internal StellarConic? Orbit { get; init; }
+
     /// <summary>Geometric position and velocity in ICRS axes, relative to the Sun's J2000 position.</summary>
     public CartesianState StateAt(JulianInstant tdb)
     {
+        if (Barycenter is { } parent)
+        {
+            CartesianState origin = parent.StateAt(tdb);
+            if (Orbit is not { } orbit)
+                return origin;
+            CartesianState relative = orbit.Evaluate(tdb);
+            return origin + new CartesianState(HistoricalSolarEphemeris.Rotate(relative.PositionKilometers),
+                HistoricalSolarEphemeris.Rotate(relative.VelocityKilometersPerSecond));
+        }
         double years = (double)tdb.DifferenceNanoseconds(J2000) / (JulianInstant.NanosecondsPerSecond * SecondsPerJulianYear);
         return new((PositionParsecs + MotionParsecsPerYear * years) * KilometersPerParsec,
             MotionParsecsPerYear * (KilometersPerParsec / SecondsPerJulianYear));
@@ -24,21 +44,34 @@ public sealed record StellarEntry(ObjectId Id, string Name, double DistanceParse
 }
 
 /// <summary>Positions with measured distances, separate from direction-only catalogue entries.</summary>
-public sealed class StellarCatalogue
+public sealed partial class StellarCatalogue
 {
     private const string Header = "id\tname\tdist_pc\tx_pc\ty_pc\tz_pc\tvx_pc_y\tvy_pc_y\tvz_pc_y\tv_mag\tb_v\tr_km";
     private const int MaximumEntries = 160_000;
     private readonly Dictionary<ObjectId, StellarEntry> _index;
+    private readonly Lazy<Dictionary<string, StellarEntry>> _names;
 
     private StellarCatalogue(Dictionary<ObjectId, StellarEntry> index)
     {
         _index = index;
         Stars = Array.AsReadOnly(index.Values.ToArray());
+        _names = new(() =>
+        {
+            var names = new Dictionary<string, StellarEntry>(StringComparer.OrdinalIgnoreCase);
+            foreach (StellarEntry star in Stars)
+            {
+                names.TryAdd(star.Name, star);
+                foreach (string alias in star.Aliases)
+                    names.TryAdd(alias, star);
+            }
+            return names;
+        });
     }
 
     public static StellarCatalogue Empty { get; } = new([]);
     public IReadOnlyList<StellarEntry> Stars { get; }
     public StellarEntry? Find(ObjectId id) => _index.GetValueOrDefault(id);
+    public StellarEntry? FindByName(string name) => _names.Value.GetValueOrDefault(name.Trim());
 
     public static StellarCatalogue Load(string path)
     {

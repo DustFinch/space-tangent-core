@@ -52,9 +52,11 @@ public sealed class ConicOrbit
 
     public ConicElements Elements { get; }
 
-    public CartesianState Evaluate(JulianInstant tdb)
+    public CartesianState Evaluate(JulianInstant tdb) =>
+        EvaluateElapsedSeconds((double)tdb.DifferenceNanoseconds(Elements.PeriapsisEpoch) / JulianInstant.NanosecondsPerSecond);
+
+    internal CartesianState EvaluateElapsedSeconds(double elapsed)
     {
-        double elapsed = (double)tdb.DifferenceNanoseconds(Elements.PeriapsisEpoch) / JulianInstant.NanosecondsPerSecond;
         if (_periodSeconds > 0 && double.IsFinite(_periodSeconds))
             elapsed = Math.IEEERemainder(elapsed, _periodSeconds);
         if (elapsed == 0)
@@ -73,7 +75,7 @@ public sealed class ConicOrbit
         var state = new CartesianState(_orbitalToReference.Transform(new(x, y, 0)),
             _orbitalToReference.Transform(new(vx, vy, 0)));
         if (!(state.PositionKilometers.IsFinite && state.VelocityKilometersPerSecond.IsFinite))
-            throw new ArgumentOutOfRangeException(nameof(tdb), "Conic state exceeds the finite numeric range.");
+            throw new ArgumentOutOfRangeException(nameof(elapsed), "Conic state exceeds the finite numeric range.");
         return state;
     }
 
