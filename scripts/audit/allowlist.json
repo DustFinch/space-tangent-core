@@ -13,5 +13,10 @@
     "reason": "Pinned upstream source attribution for the NORAD deep-space equations.",
     "sha256": "de824feeed7a878ee681324e82569ce677436836ae9fa6ab9e50b38e42d4ca6b",
     "path": "docs/SATELLITE_ORBITS.md"
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/PackedSatelliteCatalog.cs",
+    "reason": "Exact two-vector frame tag required to read legacy compiled scientific satellite packs.",
+    "sha256": "aa831cb6e6116c87663675e124a3bf6c17de1fb59f5c903d46051e30da69e400"
   }
 ]
