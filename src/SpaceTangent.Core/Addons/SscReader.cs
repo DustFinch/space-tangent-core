@@ -54,6 +54,19 @@ internal sealed class SscReader(string input, string path)
         }
     }
 
+    internal IEnumerable<(string Name, SscValue.Map Properties)> ReadNamedRecords()
+    {
+        while (SkipSpace())
+        {
+            if (input[_offset] != '"')
+                throw Error("Expected a quoted record name.");
+            string name = ReadText();
+            if (!SkipSpace() || input[_offset] != '{')
+                throw Error("Expected record properties.");
+            yield return (name, ReadObject(0));
+        }
+    }
+
     private SscValue ReadValue(int depth)
     {
         if (depth >= 16 || !SkipSpace())
