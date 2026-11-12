@@ -74,7 +74,7 @@ public sealed class DistantStarIndex : IDisposable
 
     public static DistantStarIndex Load(string file, string? names = null, long cacheBytes = DefaultCacheBytes)
     {
-        var source = AddonDependencies.OpenRead(file, MaximumFileBytes);
+        var source = AddonDependencies.OpenRead(file, MaximumFileBytes, FileShare.Read | FileShare.Delete);
         try
         {
             var index = Open(source, cacheBytes);
@@ -208,7 +208,8 @@ public sealed class DistantStarIndex : IDisposable
 
     private static uint? ParseId(ObjectId id)
     {
-        string value = id.Value;
+        if (id.Value is not { } value)
+            return null;
         if ((value.StartsWith("hip/", StringComparison.Ordinal) || value.StartsWith("stc/", StringComparison.Ordinal)) &&
             uint.TryParse(value.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture, out uint number) && number > 0)
             return number;

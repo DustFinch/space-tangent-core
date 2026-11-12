@@ -92,12 +92,14 @@ public sealed class AddonDependencies
     }
 
     /// <summary>Records the content of the same file handle used by the parser.</summary>
-    public static FileStream OpenRead(string path, long maximumBytes)
+    public static FileStream OpenRead(string path, long maximumBytes) => OpenRead(path, maximumBytes, FileShare.Read);
+
+    internal static FileStream OpenRead(string path, long maximumBytes, FileShare sharing)
     {
         FileStream file;
         try
         {
-            file = File.OpenRead(path);
+            file = File.Open(path, FileMode.Open, FileAccess.Read, sharing);
         }
         catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
         {
