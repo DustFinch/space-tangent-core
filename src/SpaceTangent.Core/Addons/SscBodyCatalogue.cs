@@ -46,6 +46,56 @@ public static class SscBodyCatalogue
         return result.AsReadOnly();
     }
 
+    /// <summary>Reads a local body pack and its optional fixed-column MPC selections.</summary>
+    public static IReadOnlyList<SscBodyDefinition> LoadWithMpc(string root, Action<string> warning,
+        CancellationToken cancellation = default)
+    {
+        ArgumentNullException.ThrowIfNull(warning);
+        root = Path.GetFullPath(root);
+        var bodies = Load(root, cancellation).ToList();
+        if (!AddonDependencies.DirectoryExists(root))
+            return bodies.AsReadOnly();
+
+        string data = Path.Combine(root, "data");
+        var paths = AddonDependencies.ListFiles(root, "*.mpc").AsEnumerable();
+        if (AddonDependencies.DirectoryExists(data))
+            paths = paths.Concat(AddonDependencies.ListFiles(data, "*.mpc"));
+        string[] files = paths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (files.Length > 64)
+            throw new InvalidDataException("A body catalogue source contains more than 64 MPC selections.");
+        var known = new HashSet<string>(bodies.Where(body => body.Parent.Equals("Sol", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(body => body.Names.Split(':')), StringComparer.OrdinalIgnoreCase);
+        foreach (string path in files)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var catalogue = AddonDiagnostics.Read(AddonStage.Catalog, path,
+                () => MpcCatalogue.Load(LocalAddonFiles.Resolve(root, root, path), cancellation));
+            string label = Path.GetFileName(path);
+            foreach (string message in catalogue.Warnings)
+                warning($"{label}: {message}");
+            foreach (MpcOrbit orbit in catalogue.Orbits)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (known.Contains(orbit.Name) || known.Contains(orbit.Designation))
+                {
+                    warning($"{label}: {orbit.Designation} already has a catalogue entry.");
+                    continue;
+                }
+                if (bodies.Count == 512)
+                {
+                    warning($"{label}: the body pack has reached 512 objects. Later MPC records were left out.");
+                    return bodies.AsReadOnly();
+                }
+                known.Add(orbit.Name);
+                known.Add(orbit.Designation);
+                string aliases = orbit.Name == orbit.Designation ? orbit.Name : $"{orbit.Name}:{orbit.Designation}";
+                bodies.Add(new(aliases, "Sol", "Sol", orbit.IsComet ? "comet" : "asteroid", orbit.RadiusKilometers,
+                    new(.70, .65, .60), null, default, Basis3d.Identity, null, epoch => orbit.Sample(epoch)));
+            }
+        }
+        return bodies.AsReadOnly();
+    }
+
     public static string ResolveTexture(string root, string mesh, string relative) =>
         SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
