@@ -124,9 +124,7 @@ public sealed partial class WorldGraphBuilder
             NaifObject(spacecraft.Center));
         if (spacecraft.AttitudeFrame is not null)
         {
-            AddOrientation(id, epoch => spacecraft.TryAttitude(epoch, out var attitude)
-                ? new FrameKinematics(attitude, null)
-                : null);
+            AddOrientation(id, epoch => spacecraft.TryKinematics(epoch, out var attitude) ? attitude : null);
         }
         return id;
     }

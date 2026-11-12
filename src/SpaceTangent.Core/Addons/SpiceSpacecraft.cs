@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Spice;
+using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Addons;
 
@@ -38,9 +39,16 @@ public sealed class SpiceSpacecraft
 
     public bool TryAttitude(JulianInstant tdb, out Basis3d bodyToReference)
     {
+        bool available = TryKinematics(tdb, out var frame);
+        bodyToReference = frame.ToWorld;
+        return available;
+    }
+
+    internal bool TryKinematics(JulianInstant tdb, out FrameKinematics frame)
+    {
         if (_attitude is { } attitude)
-            return attitude.TrySample(tdb, out bodyToReference);
-        bodyToReference = default;
+            return attitude.TrySample(tdb, out frame);
+        frame = default;
         return false;
     }
 }

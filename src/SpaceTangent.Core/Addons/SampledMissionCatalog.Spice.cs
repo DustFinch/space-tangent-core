@@ -64,7 +64,7 @@ public static partial class SampledMissionCatalog
     private static MissionFrame.Spice SpiceOrientation(string frame, SpiceResources resources)
     {
         var attitude = new SpiceAttitude(frame, "J2000", resources);
-        return new(epoch => attitude.TrySample(epoch, out var orientation) ? new FrameKinematics(orientation, null) : null);
+        return new(epoch => attitude.TrySample(epoch, out var orientation) ? orientation : null);
     }
 
     private static SampledMission ReadSpiceInstrument(JsonElement item, JsonElement geometry, JulianInstant start,
