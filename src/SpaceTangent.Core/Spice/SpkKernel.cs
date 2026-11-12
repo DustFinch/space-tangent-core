@@ -4,8 +4,8 @@ using SpaceTangent.Core.Ephemerides;
 
 namespace SpaceTangent.Core.Spice;
 
-/// <summary>Reads primitive J2000 states from SPK types 1, 2 and 3 without a native runtime.</summary>
-public sealed class SpkKernel
+/// <summary>Reads primitive J2000 states from supported SPK segments without a native runtime.</summary>
+public sealed partial class SpkKernel
 {
     private readonly record struct Segment(DafSegment Descriptor, JulianInstant Start, JulianInstant End,
         int EpochAddress = 0, int RecordCount = 0, int RecordWords = 0, double InitialEpoch = 0, double Interval = 0);
@@ -54,8 +54,10 @@ public sealed class SpkKernel
             double evaluationTime = Math.Clamp(et, descriptor.Begin, descriptor.End);
             state = descriptor.FourthId switch
             {
-                1 => SampleTypeOne(segment, evaluationTime),
+                1 or 21 => SampleDifferences(segment, evaluationTime),
                 2 or 3 => SampleChebyshev(segment, evaluationTime),
+                8 or 9 or 12 or 13 => SampleSlidingWindow(segment, evaluationTime),
+                17 => SampleEquinoctial(segment, evaluationTime),
                 _ => throw new NotSupportedException($"Unsupported SPK record type {descriptor.FourthId}.")
             };
             return true;
@@ -70,25 +72,33 @@ public sealed class SpkKernel
         JulianInstant end = JulianInstant.FromTdbSeconds(descriptor.End);
         if (descriptor.FourthId is 2 or 3)
             return PrepareChebyshev(descriptor, start, end);
-        if (descriptor.FourthId != 1)
+        if (descriptor.FourthId is 8 or 9 or 12 or 13)
+            return PrepareSlidingWindow(descriptor, start, end);
+        if (descriptor.FourthId == 17)
+            return PrepareEquinoctial(descriptor, start, end);
+        if (descriptor.FourthId is not (1 or 21))
             return new(descriptor, start, end);
 
         int words = descriptor.LastWord - descriptor.FirstWord + 1;
-        int count = DafFile.ExactInteger(_file.Word(descriptor.LastWord), 1, words / TypeOneWords, "SPK record count");
-        if (72L * count + count / 100 + 1 != words)
-            throw new InvalidDataException("SPK type 1 records do not fit the segment.");
-        int epochs = descriptor.FirstWord + count * TypeOneWords;
+        bool extended = descriptor.FourthId == 21;
+        int recordWords = extended ? 4 * DafFile.ExactInteger(_file.Word(descriptor.LastWord - 1),
+            15, 64, "SPK difference line dimension") + 11 : TypeOneWords;
+        int count = DafFile.ExactInteger(_file.Word(descriptor.LastWord), 1, words / recordWords, "SPK record count");
+        int trailer = extended ? 2 : 1;
+        if ((long)(recordWords + 1) * count + count / 100 + trailer != words)
+            throw new InvalidDataException("SPK difference lines do not fit the segment.");
+        int epochs = descriptor.FirstWord + count * recordWords;
         double previous = double.NegativeInfinity;
         for (int index = 0; index < count; index++)
         {
             double epoch = _file.Word(epochs + index);
             if (!double.IsFinite(epoch) || epoch <= previous)
-                throw new InvalidDataException("SPK type 1 record epochs must increase.");
+                throw new InvalidDataException("SPK difference line epochs must increase.");
             previous = epoch;
         }
         if (previous < descriptor.End)
-            throw new InvalidDataException("SPK type 1 records do not reach segment end.");
-        return new(descriptor, start, end, epochs, count);
+            throw new InvalidDataException("SPK difference lines do not reach segment end.");
+        return new(descriptor, start, end, epochs, count, recordWords);
     }
 
     private Segment PrepareChebyshev(DafSegment descriptor, JulianInstant start, JulianInstant end)
@@ -116,7 +126,7 @@ public sealed class SpkKernel
         return new(descriptor, start, end, RecordCount: count, RecordWords: recordWords, InitialEpoch: initial, Interval: interval);
     }
 
-    private CartesianState SampleTypeOne(Segment segment, double et)
+    private CartesianState SampleDifferences(Segment segment, double et)
     {
         int lower = 0, upper = segment.RecordCount - 1;
         while (lower < upper)
@@ -127,7 +137,7 @@ public sealed class SpkKernel
             else
                 upper = middle;
         }
-        return EvaluateTypeOne(segment.Descriptor.FirstWord + lower * TypeOneWords, et);
+        return EvaluateDifferences(segment.Descriptor.FirstWord + lower * segment.RecordWords, (segment.RecordWords - 11) / 4, et);
     }
 
     private CartesianState SampleChebyshev(Segment segment, double et)
@@ -155,30 +165,29 @@ public sealed class SpkKernel
             Chebyshev.Evaluate(_file.WordBytes(record + 2 + axis * count, count), u, _file.LittleEndian);
     }
 
-    // NAIF SPKE01 modified divided differences. Each recurrence uses 1-based local indices.
-    private CartesianState EvaluateTypeOne(int record, double et)
+    // Modified divided differences. Each recurrence uses 1-based local indices.
+    private CartesianState EvaluateDifferences(int record, int dimension, double et)
     {
-        const int Dimension = 15;
-        int reference = record + 1 + Dimension;
+        int reference = record + 1 + dimension;
         int differences = reference + 6;
-        int maximumOrder = DafFile.ExactInteger(_file.Word(differences + 3 * Dimension), 2, Dimension + 2,
-            "SPK type 1 maximum order");
+        int maximumOrder = DafFile.ExactInteger(_file.Word(differences + 3 * dimension), 2, dimension + 2,
+            "SPK difference line maximum order");
         Span<int> order = stackalloc int[3];
         for (int axis = 0; axis < 3; axis++)
-            order[axis] = DafFile.ExactInteger(_file.Word(differences + 3 * Dimension + 1 + axis), 1,
-                Math.Min(maximumOrder - 1, Dimension), "SPK type 1 axis order");
+            order[axis] = DafFile.ExactInteger(_file.Word(differences + 3 * dimension + 1 + axis), 1,
+                Math.Min(maximumOrder - 1, dimension), "SPK difference line axis order");
 
         double delta = et - _file.Word(record);
         double elapsed = delta;
         int basisIndex = maximumOrder - 1;
-        Span<double> fractions = stackalloc double[Dimension + 2];
-        Span<double> ratios = stackalloc double[Dimension + 2];
-        Span<double> weights = stackalloc double[Dimension + 3];
+        Span<double> fractions = stackalloc double[dimension + 2];
+        Span<double> ratios = stackalloc double[dimension + 2];
+        Span<double> weights = stackalloc double[dimension + 3];
         for (int j = 1; j <= maximumOrder - 2; j++)
         {
             double step = _file.Word(record + j);
             if (!double.IsFinite(step) || step == 0)
-                throw new InvalidDataException("SPK type 1 record has an invalid time step.");
+                throw new InvalidDataException("SPK difference line has an invalid time step.");
             fractions[j + 1] = elapsed / step;
             ratios[j] = delta / step;
             elapsed = delta + step;
@@ -196,7 +205,7 @@ public sealed class SpkKernel
         Span<double> position = stackalloc double[3];
         for (int axis = 0; axis < 3; axis++)
         {
-            double acceleration = SumDifferences(weights, basisIndex, differences + axis * Dimension, order[axis]);
+            double acceleration = SumDifferences(weights, basisIndex, differences + axis * dimension, order[axis]);
             position[axis] = _file.Word(reference + axis * 2) +
                 delta * (_file.Word(reference + axis * 2 + 1) + delta * acceleration);
         }
@@ -204,12 +213,12 @@ public sealed class SpkKernel
         Span<double> velocity = stackalloc double[3];
         for (int axis = 0; axis < 3; axis++)
         {
-            double acceleration = SumDifferences(weights, basisIndex - 1, differences + axis * Dimension, order[axis]);
+            double acceleration = SumDifferences(weights, basisIndex - 1, differences + axis * dimension, order[axis]);
             velocity[axis] = _file.Word(reference + axis * 2 + 1) + delta * acceleration;
         }
         var result = new CartesianState(new(position[0], position[1], position[2]), new(velocity[0], velocity[1], velocity[2]));
         if (!result.PositionKilometers.IsFinite || !result.VelocityKilometersPerSecond.IsFinite)
-            throw new InvalidDataException("SPK type 1 record produced a nonfinite state.");
+            throw new InvalidDataException("SPK difference line produced a nonfinite state.");
         return result;
     }
 
