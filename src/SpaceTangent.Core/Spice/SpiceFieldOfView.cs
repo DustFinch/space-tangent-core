@@ -25,7 +25,7 @@ internal sealed record SpiceFieldOfView(int InstrumentId, Vector3d Boresight, Ve
                 Vector3d reference = Unit(Vector(pool, prefix + "_FOV_REF_VECTOR"));
                 Vector3d vertical = Unit(Vector3d.Cross(boresight, reference));
                 Vector3d horizontal = Vector3d.Cross(vertical, boresight);
-                double unit = AngleUnit(Text(pool, prefix + "_FOV_ANGLE_UNITS"));
+                double unit = SpiceFixedFrames.AngleUnit(Text(pool, prefix + "_FOV_ANGLE_UNITS"));
                 double halfWidth = Numbers(pool, prefix + "_FOV_REF_ANGLE", 1)[0] * unit;
                 double halfHeight = Numbers(pool, prefix + "_FOV_CROSS_ANGLE", 1)[0] * unit;
                 if (halfWidth is <= 0 or >= Math.PI / 2 || halfHeight is <= 0 or >= Math.PI / 2)
@@ -44,7 +44,7 @@ internal sealed record SpiceFieldOfView(int InstrumentId, Vector3d Boresight, Ve
             default:
                 throw new NotSupportedException("Unknown SPICE field-of-view specification.");
         }
-        Basis3d toBody = FixedFrame(pool, frame, bodyFrame);
+        Basis3d toBody = SpiceFixedFrames.Between(pool, frame, bodyFrame);
         return new(id, toBody.Transform(boresight), corners.Select(toBody.Transform).ToArray());
     }
 
@@ -63,36 +63,6 @@ internal sealed record SpiceFieldOfView(int InstrumentId, Vector3d Boresight, Ve
         }
         throw new InvalidDataException($"Unknown SPICE instrument {name}.");
     }
-
-    private static Basis3d FixedFrame(SpiceTextKernel pool, string frame, string bodyFrame)
-    {
-        if (frame.Equals(bodyFrame, StringComparison.OrdinalIgnoreCase))
-            return Basis3d.Identity;
-        int id = pool.GetInteger("FRAME_" + frame);
-        string frameId = id.ToString(CultureInfo.InvariantCulture);
-        string key = "TKFRAME_" + frameId;
-        if (pool.GetInteger("FRAME_" + frameId + "_CLASS") != 4 ||
-            !Text(pool, key + "_RELATIVE").Equals(bodyFrame, StringComparison.OrdinalIgnoreCase))
-            throw new NotSupportedException("The SPICE camera frame must be fixed directly to the spacecraft frame.");
-        if (Text(pool, key + "_SPEC") != "ANGLES")
-            throw new NotSupportedException("The SPICE camera frame requires an Euler angle definition.");
-
-        double unit = AngleUnit(Text(pool, key + "_UNITS"));
-        double[] angles = Numbers(pool, key + "_ANGLES", 3), axes = Numbers(pool, key + "_AXES", 3);
-        return SpiceEuler.Compose([angles[0] * unit, angles[1] * unit, angles[2] * unit], axes);
-    }
-
-    private static double AngleUnit(string unit) => unit switch
-    {
-        "DEGREES" => Math.PI / 180,
-        "RADIANS" => 1,
-        "ARCSECONDS" => Math.PI / 648000,
-        "ARCMINUTES" => Math.PI / 10800,
-        "HOURANGLE" => Math.PI / 12,
-        "MINUTEANGLE" => Math.PI / 720,
-        "SECONDANGLE" => Math.PI / 43200,
-        _ => throw new NotSupportedException($"Unsupported SPICE angular unit {unit}.")
-    };
 
     private static Vector3d Vector(SpiceTextKernel pool, string key)
     {

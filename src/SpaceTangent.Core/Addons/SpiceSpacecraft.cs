@@ -21,7 +21,7 @@ public sealed class SpiceSpacecraft
         AttitudeFrame = attitudeFrame;
         AttitudeBaseFrame = attitudeBaseFrame;
         _kernels = resources.TrajectoryKernels();
-        _attitude = attitudeFrame is null ? null : new SpiceAttitude(attitudeFrame, attitudeBaseFrame!, resources.Files);
+        _attitude = attitudeFrame is null ? null : new SpiceAttitude(attitudeFrame, attitudeBaseFrame!, resources);
     }
 
     public string Name { get; }

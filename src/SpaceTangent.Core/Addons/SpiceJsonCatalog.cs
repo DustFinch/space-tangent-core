@@ -12,27 +12,47 @@ public sealed record SpiceCatalogResult(IReadOnlyList<SpiceSpacecraft> Spacecraf
 
 public static class SpiceJsonCatalog
 {
-    public static SpiceCatalogResult Load(string catalogPath, string assetRoot) =>
-        AddonDiagnostics.Read(AddonStage.Catalog, Path.GetFullPath(catalogPath, Path.GetFullPath(assetRoot)),
-            () => LoadCore(catalogPath, assetRoot));
+    public static SpiceCatalogResult Load(string catalogPath, string assetRoot) => Load([catalogPath], assetRoot);
 
-    private static SpiceCatalogResult LoadCore(string catalogPath, string assetRoot)
+    /// <summary>Loads local catalogues into one ordered kernel pool before binding spacecraft or instruments.</summary>
+    public static SpiceCatalogResult Load(IEnumerable<string> catalogues, string assetRoot)
     {
+        ArgumentNullException.ThrowIfNull(catalogues);
         string root = Path.GetFullPath(assetRoot);
-        string path = LocalAddonFiles.Resolve(root, root, catalogPath);
-        string directory = Path.GetDirectoryName(path)!;
-        using FileStream stream = AddonDependencies.OpenRead(path, 1024 * 1024);
-        if (stream.Length > 1024 * 1024)
-            throw new InvalidDataException("SPICE JSON catalogue exceeds 1 MiB.");
-        using JsonDocument json = JsonDocument.Parse(stream);
-        JsonElement catalog = json.RootElement;
-        Require(catalog, "version", "1.0");
-        var resources = new SpiceResources(root, directory,
-            catalog.GetProperty("spiceKernels").EnumerateArray().Select(item => Text(item)));
+        var items = new List<(string Directory, JsonElement Item)>();
+        var kernels = new List<(string Directory, string Name)>();
+        int documents = 0;
+        long totalBytes = 0;
+        foreach (string catalogue in catalogues)
+        {
+            if (++documents > 64)
+                throw new InvalidDataException("The SPICE import is limited to 64 catalogues.");
+            AddonDiagnostics.Read(AddonStage.Catalog, Path.GetFullPath(catalogue, root), () =>
+            {
+                string path = LocalAddonFiles.Resolve(root, root, catalogue);
+                string directory = Path.GetDirectoryName(path)!;
+                const int maximumCatalogueBytes = 1024 * 1024;
+                using FileStream stream = AddonDependencies.OpenRead(path, maximumCatalogueBytes);
+                totalBytes += stream.Length;
+                if (stream.Length > maximumCatalogueBytes || totalBytes > 8 * maximumCatalogueBytes)
+                    throw new InvalidDataException("SPICE catalogue input exceeds its byte limit.");
+                using JsonDocument json = JsonDocument.Parse(stream);
+                JsonElement catalog = json.RootElement;
+                Require(catalog, "version", "1.0");
+                if (catalog.TryGetProperty("spiceKernels", out var loads))
+                    kernels.AddRange(loads.EnumerateArray().Select(file => (directory, Text(file))));
+                if (catalog.TryGetProperty("items", out var definitions))
+                    items.AddRange(definitions.EnumerateArray().Select(item => (directory, item.Clone())));
+                if (items.Count > 512)
+                    throw new InvalidDataException("The SPICE import is limited to 512 items.");
+                return true;
+            });
+        }
 
+        var resources = new SpiceResources(root, kernels);
         var tracks = new List<SpiceSpacecraft>();
         var sensorItems = new List<JsonElement>();
-        foreach (JsonElement item in catalog.GetProperty("items").EnumerateArray())
+        foreach (var (directory, item) in items)
         {
             string kind = Text(item.GetProperty("class"));
             if (kind == "sensor")
@@ -59,19 +79,8 @@ public static class SpiceJsonCatalog
                 mesh, size, Text(bodyFrame.GetProperty("name")), "J2000", resources));
         }
         var sensors = new List<SpiceSensor>(sensorItems.Count);
-        if (sensorItems.Count > 0)
-        {
-            var pool = new SpiceTextKernel();
-            foreach (string file in resources.Files)
-            {
-                string extension = Path.GetExtension(file);
-                if (extension.Equals(".tf", StringComparison.OrdinalIgnoreCase) ||
-                    extension.Equals(".ti", StringComparison.OrdinalIgnoreCase))
-                    pool.Furnish(file);
-            }
-            foreach (JsonElement sensor in sensorItems)
-                sensors.Add(ReadSensor(sensor, tracks, pool));
-        }
+        foreach (JsonElement sensor in sensorItems)
+            sensors.Add(ReadSensor(sensor, tracks, resources.Text));
         return new(tracks.AsReadOnly(), sensors.AsReadOnly());
     }
 

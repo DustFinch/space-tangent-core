@@ -1,47 +1,67 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+using System.Text;
 using SpaceTangent.Core.Addons;
 
 namespace SpaceTangent.Core.Spice;
 
 internal sealed class SpiceResources
 {
+    private enum KernelKind { Unknown, Meta, Text, Trajectory, Attitude }
+
     private const int MaximumDepth = 12, MaximumLoads = 256;
-    private readonly Dictionary<string, SpkKernel> _spk;
-    internal IReadOnlyList<string> Files { get; }
+    private static readonly StringComparer FileNames = OperatingSystem.IsWindows() ?
+        StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private readonly Lazy<SpiceTextKernel> _text;
+    private readonly Lazy<SpkKernel[]> _trajectories;
+    private readonly Lazy<CkKernel[]> _attitudes;
 
     internal SpiceResources(string root, string directory, IEnumerable<string> names)
         : this(root, names.Select(name => (directory, name))) { }
 
     internal SpiceResources(string root, IEnumerable<(string Directory, string Name)> sources)
     {
-        StringComparer comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        var active = new HashSet<string>(comparer);
-        var files = new List<string>();
+        var active = new HashSet<string>(FileNames);
+        var ordered = new List<(string Path, KernelKind Kind)>();
         int visits = 0;
         foreach (var (directory, name) in sources)
-            Expand(root, directory, name, active, files, ref visits, 0);
-        Files = files.AsReadOnly();
-        _spk = new Dictionary<string, SpkKernel>(comparer);
-    }
-
-    internal SpkKernel[] TrajectoryKernels()
-    {
-        var kernels = new List<SpkKernel>();
-        foreach (string path in Files)
+            Expand(root, directory, name, active, ordered, ref visits, 0);
+        _text = new(() =>
         {
-            if (!Path.GetExtension(path).Equals(".bsp", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!_spk.TryGetValue(path, out var kernel))
-                _spk.Add(path, kernel = new SpkKernel(path));
-            kernels.Add(kernel);
+            var pool = new SpiceTextKernel();
+            foreach (var (path, kind) in ordered)
+                if (kind is KernelKind.Meta or KernelKind.Text)
+                    pool.Furnish(path);
+            return pool;
+        });
+        _trajectories = new(() => Load(KernelKind.Trajectory, path => new SpkKernel(path)));
+        _attitudes = new(() => Load(KernelKind.Attitude, path => new CkKernel(path)));
+
+        T[] Load<T>(KernelKind wanted, Func<string, T> parse)
+        {
+            var parsed = new Dictionary<string, T>(FileNames);
+            var output = new List<T>();
+            foreach (var (path, kind) in ordered)
+            {
+                if (kind != wanted)
+                    continue;
+                if (!parsed.TryGetValue(path, out var kernel))
+                    parsed.Add(path, kernel = parse(path));
+                output.Add(kernel);
+            }
+            return output.ToArray();
         }
-        if (kernels.Count == 0)
-            throw new InvalidDataException("SPICE trajectory has no SPK file.");
-        return [.. kernels];
     }
 
-    private static void Expand(string root, string directory, string name, HashSet<string> active, List<string> result,
-        ref int visits, int depth)
+    internal SpiceTextKernel Text => _text.Value;
+
+    internal SpkKernel[] TrajectoryKernels() => _trajectories.Value is { Length: > 0 } kernels ? kernels :
+        throw new InvalidDataException("SPICE trajectory has no SPK file.");
+
+    internal CkKernel[] AttitudeKernels() => _attitudes.Value is { Length: > 0 } kernels ? kernels :
+        throw new InvalidDataException("SPICE attitude has no CK file.");
+
+    private static void Expand(string root, string directory, string name, HashSet<string> active,
+        List<(string Path, KernelKind Kind)> result, ref int visits, int depth)
     {
         string file = Path.Combine(directory, name);
         try
@@ -49,11 +69,10 @@ internal sealed class SpiceResources
             if (++visits > MaximumLoads || depth > MaximumDepth)
                 throw new InvalidDataException("SPICE metakernel load limit exceeded.");
             file = LocalAddonFiles.ResolveRelative(root, directory, name);
-            if (!Path.GetExtension(file).Equals(".tm", StringComparison.OrdinalIgnoreCase))
-            {
-                result.Add(file);
+            KernelKind kind = Classify(file);
+            result.Add((file, kind));
+            if (kind != KernelKind.Meta)
                 return;
-            }
             if (!active.Add(file))
                 throw new InvalidDataException("SPICE metakernel load cycle.");
 
@@ -65,15 +84,13 @@ internal sealed class SpiceResources
                 string[] labels = text.Get("PATH_SYMBOLS"), values = text.Get("PATH_VALUES");
                 if (labels.Length != values.Length)
                     throw new InvalidDataException("SPICE metakernel path labels and values must match.");
-                for (int i = 0; i < labels.Length; i++)
-                {
-                    if (!symbols.TryAdd(labels[i], values[i]))
+                for (int index = 0; index < labels.Length; index++)
+                    if (!symbols.TryAdd(labels[index], values[index]))
                         throw new InvalidDataException("Duplicate SPICE metakernel path symbol.");
-                }
             }
-
-            foreach (string item in text.Get("KERNELS_TO_LOAD"))
-                Expand(root, Path.GetDirectoryName(file)!, Substitute(item, symbols), active, result, ref visits, depth + 1);
+            if (text.Contains("KERNELS_TO_LOAD"))
+                foreach (string item in text.Get("KERNELS_TO_LOAD"))
+                    Expand(root, Path.GetDirectoryName(file)!, Substitute(item, symbols), active, result, ref visits, depth + 1);
             active.Remove(file);
         }
         catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, file))
@@ -82,11 +99,38 @@ internal sealed class SpiceResources
         }
     }
 
+    private static KernelKind Classify(string path)
+    {
+        KernelKind byExtension = Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".tm" => KernelKind.Meta,
+            ".bsp" => KernelKind.Trajectory,
+            ".bc" => KernelKind.Attitude,
+            ".tf" or ".ti" or ".tsc" or ".tpc" or ".tls" => KernelKind.Text,
+            _ => KernelKind.Unknown
+        };
+        if (byExtension != KernelKind.Unknown)
+            return byExtension;
+        using var file = AddonDependencies.OpenRead(path, 256L * 1024 * 1024);
+        Span<byte> prefix = stackalloc byte[8];
+        int read = file.ReadAtLeast(prefix, prefix.Length, throwOnEndOfStream: false);
+        string header = Encoding.ASCII.GetString(prefix[..read]).TrimEnd();
+        if (header.StartsWith("KPL/MK", StringComparison.Ordinal))
+            return KernelKind.Meta;
+        if (header.StartsWith("KPL/", StringComparison.Ordinal))
+            return KernelKind.Text;
+        return header switch
+        {
+            "DAF/SPK" => KernelKind.Trajectory,
+            "DAF/CK" => KernelKind.Attitude,
+            _ => KernelKind.Unknown
+        };
+    }
+
     private static string Substitute(string item, Dictionary<string, string> symbols)
     {
         if (!item.StartsWith('$'))
             return item;
-
         int separator = item.IndexOfAny(['/', '\\']);
         string symbol = separator < 0 ? item[1..] : item[1..separator];
         if (!symbols.TryGetValue(symbol, out string? value))
