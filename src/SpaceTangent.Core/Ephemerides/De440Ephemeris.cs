@@ -9,7 +9,7 @@ namespace SpaceTangent.Core.Ephemerides;
 /// Evaluates the Sun, Moon and planetary systems from the published little-endian classic DE440
 /// file or the pinned 1900–2100 subset of that file. No network or native runtime is required.
 /// </summary>
-public sealed class De440Ephemeris
+public sealed class De440Ephemeris : ISolarSystemEphemeris
 {
     private const int RecordBytes = 1018 * sizeof(double);
     private const int FullBytes = 102_272_352;

@@ -11,9 +11,11 @@ namespace SpaceTangent.Core.World;
 public sealed class WorldGraphBuilder
 {
     private readonly Dictionary<WorldKey, WorldRule> _rules = new();
-    private De440Ephemeris? _solar;
+    private ISolarSystemEphemeris? _solar;
 
-    public void AddSolarSystem(De440Ephemeris ephemeris)
+    public void AddSolarSystem(De440Ephemeris ephemeris) => AddSolarSystem((ISolarSystemEphemeris)ephemeris);
+
+    public void AddSolarSystem(ISolarSystemEphemeris ephemeris)
     {
         ArgumentNullException.ThrowIfNull(ephemeris);
         if (_solar is not null)

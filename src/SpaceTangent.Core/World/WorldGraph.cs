@@ -90,9 +90,9 @@ public sealed class WorldGraph
     private readonly record struct Node(WorldRule Rule, int[] Dependencies);
     private readonly Dictionary<WorldKey, int> _indices = new();
     private readonly Node[] _nodes;
-    private readonly De440Ephemeris? _solar;
+    private readonly ISolarSystemEphemeris? _solar;
 
-    internal WorldGraph(WorldRule[] orderedRules, De440Ephemeris? solar)
+    internal WorldGraph(WorldRule[] orderedRules, ISolarSystemEphemeris? solar)
     {
         _solar = solar;
         _nodes = new Node[orderedRules.Length];

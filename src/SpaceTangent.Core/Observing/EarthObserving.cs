@@ -56,7 +56,10 @@ public static class EarthObserving
     }
 
     /// <summary>Estimates crossings using five-minute samples refined to one second. Uses a level horizon.</summary>
-    public static CivilTwilight Twilight(De440Ephemeris ephemeris, DateOnly date, EarthSite site, DeltaTModel deltaT)
+    public static CivilTwilight Twilight(De440Ephemeris ephemeris, DateOnly date, EarthSite site, DeltaTModel deltaT) =>
+        Twilight((ISolarSystemEphemeris)ephemeris, date, site, deltaT);
+
+    public static CivilTwilight Twilight(ISolarSystemEphemeris ephemeris, DateOnly date, EarthSite site, DeltaTModel deltaT)
     {
         if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));

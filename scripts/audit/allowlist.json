@@ -1,1 +1,7 @@
-[]
+[
+  {
+    "path": "docs/DE440.md",
+    "sha256": "b0b8b8e0b256196c6456a9c91623af39596e58c5ce7f54706b08d62131b76b30",
+    "reason": "Pinned upstream source attribution required for the historical series and lunar harmonics."
+  }
+]
