@@ -7,7 +7,10 @@ using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.Addons;
 
-public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Basis3d MeshRotation, Vector3d MeshOffset, MissionSensor? Sensor = null);
+public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Basis3d MeshRotation, Vector3d MeshOffset, MissionSensor? Sensor = null)
+{
+    public IReadOnlyList<MissionParticleEmitter>? ParticleEmitters { get; init; }
+}
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
 
 public static partial class SampledMissionCatalog
@@ -20,6 +23,8 @@ public static partial class SampledMissionCatalog
         string type = Text(value, "type");
         if (type == "Sensor")
             return [new(start, end, new(null, .001, Basis3d.Identity, default, ReadSensor(value, resolve)))];
+        if (type == "ParticleSystem")
+            return [new(start, end, ReadParticles(value, root, directory, warning))];
         if (type == "Mesh")
         {
             var mesh = ReadMesh(value, root, directory, name, warning);

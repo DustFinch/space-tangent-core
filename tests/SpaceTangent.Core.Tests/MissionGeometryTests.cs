@@ -53,14 +53,15 @@ public sealed class MissionGeometryTests
             File.Copy(Path.Combine(archive, "time-switch-original-examples__2008TC3.json"), Path.Combine(catalog, "2008TC3.json"));
             File.Copy(Path.Combine(archive, "sampled-original-2008TC3.xyzv"), Path.Combine(catalog, "2008TC3.xyzv"));
             var warnings = new List<string>();
-            var track = Assert.Single(SampledMissionCatalog.Load("catalog/2008TC3.json", folder.FullName, name => name switch
+            var tracks = SampledMissionCatalog.Load("catalog/2008TC3.json", folder.FullName, name => name switch
             {
                 "Sun" => SolarSystemSample.SunId,
                 "Earth" => SolarSystemSample.EarthId,
                 _ => null
-            }, warnings.Add));
+            }, warnings.Add);
             Assert.Contains(warnings, issue => issue.Contains("8flora.cmod", StringComparison.Ordinal));
-            Assert.Contains(warnings, issue => issue.Contains("ParticleSystem", StringComparison.Ordinal));
+            var track = Assert.Single(tracks, mission => mission.Name == "2008 TC3");
+            Assert.Equal(2, tracks.Count(mission => mission.Geometry?.Any(span => span.Shape.ParticleEmitters is { Count: > 0 }) == true));
             var shown = Assert.Single(track.Geometry!);
             Assert.Equal(.0035, shown.Shape.RadiusKilometers);
             Assert.InRange((double)track.Arcs[1].Start.DifferenceNanoseconds(shown.End) / 1e9, 8.199999, 8.200001);

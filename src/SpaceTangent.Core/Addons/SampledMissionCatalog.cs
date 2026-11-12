@@ -28,8 +28,19 @@ public abstract record MissionFrame
     public sealed record Spice(Func<JulianInstant, FrameKinematics?> Sample) : MissionFrame;
     public sealed record BodyFixed(ObjectId Body) : MissionFrame;
     public sealed record Rotating(MissionFrame Parent, Func<JulianInstant, FrameKinematics> Local) : MissionFrame;
-    public sealed record TwoVector(FrameAxis PrimaryAxis, RelativeDirection Primary,
-        FrameAxis SecondaryAxis, RelativeDirection Secondary) : MissionFrame;
+    public sealed record TwoVector(FrameAxis PrimaryAxis, MissionDirection Primary,
+        FrameAxis SecondaryAxis, MissionDirection Secondary) : MissionFrame
+    {
+        public TwoVector(FrameAxis primaryAxis, RelativeDirection primary, FrameAxis secondaryAxis, RelativeDirection secondary)
+            : this(primaryAxis, new MissionDirection.Relative(primary), secondaryAxis, new MissionDirection.Relative(secondary)) { }
+    }
+}
+
+public abstract record MissionDirection
+{
+    private MissionDirection() { }
+    public sealed record Relative(RelativeDirection Direction) : MissionDirection;
+    public sealed record Constant(Vector3d Vector, MissionFrame Frame) : MissionDirection;
 }
 
 /// <summary>Reads local sampled mission arcs in the version 1.0 JSON format.</summary>
@@ -140,7 +151,7 @@ public static partial class SampledMissionCatalog
         {
             string name = Text(item, "name");
             if (item.TryGetProperty("geometry", out var geometry) &&
-                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations") &&
+                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem") &&
                 !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
@@ -204,8 +215,12 @@ public static partial class SampledMissionCatalog
             var center = resolve(centerName);
             var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center, resources);
             var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center, resources), arc, resources);
-            var trajectory = arc.GetProperty("trajectory");
-            result.Add(new(begins, end, center, ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame, resources, centerName), trajectoryFrame, bodyFrame));
+            var sample = arc.TryGetProperty("trajectory", out var trajectory)
+                ? ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame, resources, centerName)
+                : geometry?.Any(span => span.Shape.ParticleEmitters is not null) == true
+                    ? Constant(default)
+                    : throw new InvalidDataException($"{name}: a mission arc requires a trajectory.");
+            result.Add(new(begins, end, center, sample, trajectoryFrame, bodyFrame));
             start = end;
         }
         double radius = geometry is { Count: > 0 } ? geometry.Max(span => span.Shape.RadiusKilometers) : .005;
@@ -218,28 +233,44 @@ public static partial class SampledMissionCatalog
     {
         if (!arc.TryGetProperty(property, out var value))
             return Equatorial;
-        string type = value.ValueKind == JsonValueKind.String ? value.GetString()! : Text(value, "type");
-        return type switch
-        {
-            "EclipticJ2000" => Ecliptic,
-            "ICRF" or "EquatorJ2000" => Equatorial,
-            "Spice" when property == "bodyFrame" => SpiceOrientation(Text(value, "name"), resources),
-            "BodyFixed" => new MissionFrame.BodyFixed(resolve(Text(value, "body"))),
-            "TwoVector" => new MissionFrame.TwoVector(Axis(Text(value, "primaryAxis")), Direction(value.GetProperty("primary")),
-                Axis(Text(value, "secondaryAxis")), Direction(value.GetProperty("secondary"))),
-            _ => throw new NotSupportedException($"Unsupported mission frame {type}.")
-        };
+        return ReadFrame(value, 0);
 
-        RelativeDirection Direction(JsonElement direction)
+        MissionFrame ReadFrame(JsonElement frame, int depth)
         {
+            if (depth >= 16)
+                throw new InvalidDataException("Mission frame definitions exceed 16 nested levels.");
+            string type = frame.ValueKind == JsonValueKind.String ? frame.GetString()! : Text(frame, "type");
+            return type switch
+            {
+                "EclipticJ2000" => Ecliptic,
+                "ICRF" or "EquatorJ2000" => Equatorial,
+                "Spice" when property == "bodyFrame" => SpiceOrientation(Text(frame, "name"), resources),
+                "BodyFixed" => new MissionFrame.BodyFixed(resolve(Text(frame, "body"))),
+                "TwoVector" => new MissionFrame.TwoVector(Axis(Text(frame, "primaryAxis")), Direction(frame.GetProperty("primary"), depth),
+                    Axis(Text(frame, "secondaryAxis")), Direction(frame.GetProperty("secondary"), depth)),
+                _ => throw new NotSupportedException($"Unsupported mission frame {type}.")
+            };
+        }
+
+        MissionDirection Direction(JsonElement direction, int depth)
+        {
+            string kind = Text(direction, "type");
+            if (kind == "ConstantVector")
+            {
+                var vector = Vector(direction.GetProperty("direction"));
+                if (!(vector.Length > 0) || !double.IsFinite(vector.Length))
+                    throw new InvalidDataException("A constant mission frame vector must be finite and nonzero.");
+                return new MissionDirection.Constant(vector,
+                    direction.TryGetProperty("frame", out var frame) ? ReadFrame(frame, depth + 1) : Equatorial);
+            }
             ObjectId observer = direction.TryGetProperty("observer", out var from) ? resolve(from.GetString()!) : resolve(self);
             ObjectId target = direction.TryGetProperty("target", out var to) ? resolve(to.GetString()!) : center;
-            return new(observer, target, Text(direction, "type") switch
+            return new MissionDirection.Relative(new(observer, target, kind switch
             {
                 "RelativePosition" => DirectionQuantity.Position,
                 "RelativeVelocity" => DirectionQuantity.Velocity,
-                var kind => throw new NotSupportedException($"Unsupported mission frame vector {kind}.")
-            });
+                _ => throw new NotSupportedException($"Unsupported mission frame vector {kind}.")
+            }));
         }
     }
 

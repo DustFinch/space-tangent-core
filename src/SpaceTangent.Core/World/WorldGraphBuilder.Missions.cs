@@ -97,8 +97,7 @@ public sealed partial class WorldGraphBuilder
     {
         MissionFrame.BodyFixed fixedFrame => [StateKey(fixedFrame.Body), new(fixedFrame.Body, WorldChannel.Orientation)],
         MissionFrame.Rotating rotating => FrameKeys(rotating.Parent),
-        MissionFrame.TwoVector two =>  [StateKey(two.Primary.Observer), StateKey(two.Primary.Target),
-            StateKey(two.Secondary.Observer), StateKey(two.Secondary.Target)],
+        MissionFrame.TwoVector two => DirectionKeys(two.Primary).Concat(DirectionKeys(two.Secondary)),
         _ => []
     };
 
@@ -123,9 +122,9 @@ public sealed partial class WorldGraphBuilder
                         ? parentRate + parent.ToWorld.Transform(localRate) : null;
                 frame = new(SampledMissionCatalog.Multiply(parent.ToWorld, local.ToWorld), angularVelocity);
                 return true;
-            case MissionFrame.TwoVector two when  DirectionAvailable(input, two.Primary) && DirectionAvailable(input, two.Secondary) &&
-                TwoVectorBasis.TryCreate(ResolveAxis(two.PrimaryAxis), ReadDirection(input, two.Primary),
-                    ResolveAxis(two.SecondaryAxis), ReadDirection(input, two.Secondary), out var basis):
+            case MissionFrame.TwoVector two when TryMissionDirection(input, two.Primary, out var primary) &&
+                TryMissionDirection(input, two.Secondary, out var secondary) &&
+                TwoVectorBasis.TryCreate(ResolveAxis(two.PrimaryAxis), primary, ResolveAxis(two.SecondaryAxis), secondary, out var basis):
                 frame = new(basis, null);
                 return true;
             default:
@@ -134,6 +133,27 @@ public sealed partial class WorldGraphBuilder
         }
     }
 
-    private static bool DirectionAvailable(EvaluationInput input, RelativeDirection direction) =>
-        input.Read(StateKey(direction.Observer)).Available && input.Read(StateKey(direction.Target)).Available;
+    private static IEnumerable<WorldKey> DirectionKeys(MissionDirection direction) => direction switch
+    {
+        MissionDirection.Relative relative => [StateKey(relative.Direction.Observer), StateKey(relative.Direction.Target)],
+        MissionDirection.Constant constant => FrameKeys(constant.Frame),
+        _ => []
+    };
+
+    private static bool TryMissionDirection(EvaluationInput input, MissionDirection direction, out Vector3d vector)
+    {
+        switch (direction)
+        {
+            case MissionDirection.Relative { Direction: var relative } when
+                input.Read(StateKey(relative.Observer)).Available && input.Read(StateKey(relative.Target)).Available:
+                vector = ReadDirection(input, relative);
+                return true;
+            case MissionDirection.Constant constant when TryMissionFrame(input, constant.Frame, out var frame):
+                vector = frame.ToWorld.Transform(constant.Vector);
+                return true;
+            default:
+                vector = default;
+                return false;
+        }
+    }
 }

@@ -19,7 +19,7 @@ public sealed class SampledMissionCatalogTests
         var msl = Load("msl", "SPACETANGENT_MSL_ROOT", messages);
         var dawn = Load("dawn", "SPACETANGENT_DAWN_ROOT", messages);
         Assert.Contains(messages, message => message.StartsWith("MSL: mesh", StringComparison.Ordinal));
-        Assert.Contains(messages, message => message.Contains("ParticleSystem", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, message => message.Contains("ParticleSystem geometry is not supported", StringComparison.Ordinal));
         Assert.Equal(2, msl.Arcs.Count);
         Assert.Equal(3, dawn.Arcs.Count);
         Assert.Equal(2455892.161261574, msl.Start.ToJulianDate(), 8);
@@ -95,13 +95,20 @@ public sealed class SampledMissionCatalogTests
     private static SampledMission Load(string filename, string variable, List<string> messages)
     {
         string root = Environment.GetEnvironmentVariable(variable)!;
-        return Assert.Single(SampledMissionCatalog.Load(filename + ".json", root, name => name switch
+        var missions = SampledMissionCatalog.Load(filename + ".json", root, name => name switch
         {
             "Sun" => Sun,
             "Mars" => Mars,
             "Vesta" => Vesta,
             _ => null
-        }, messages.Add));
+        }, messages.Add);
+        if (filename == "dawn")
+        {
+            var exhaust = Assert.Single(missions, mission => mission.Name == "_Dawn Engine 1");
+            var emitter = Assert.Single(Assert.Single(exhaust.Geometry!).Shape.ParticleEmitters!);
+            Assert.Equal(2000, emitter.SpawnRate);
+        }
+        return Assert.Single(missions, mission => mission.Name.Equals(filename, StringComparison.OrdinalIgnoreCase));
     }
 
     private static WorldGraphBuilder BuildWorld()
