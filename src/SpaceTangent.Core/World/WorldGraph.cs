@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
 
 namespace SpaceTangent.Core.World;
@@ -24,25 +25,30 @@ internal readonly record struct EvaluationInput(JulianInstant Epoch, SolarSystem
 {
     internal CartesianState State(ObjectId id) => Values[Indices[new(id, WorldChannel.State)]].State;
     internal WorldValue Read(WorldKey key) => Values[Indices[key]];
+    internal WorldValue ReadIfPresent(WorldKey key) => Indices.TryGetValue(key, out int index) ? Values[index] : default;
     internal EvaluationInput At(JulianInstant epoch) => Graph.EvaluatePrefix(epoch, RuleIndex);
 }
 
 public sealed class WorldSnapshot
 {
-    private readonly IReadOnlyDictionary<WorldKey, int> _indices;
-    private readonly WorldValue[] _values;
+    private readonly EvaluationInput _input;
+    internal WorldSnapshot(EvaluationInput input) => _input = input;
 
-    internal WorldSnapshot(JulianInstant epoch, SolarSystemSample? solar, IReadOnlyDictionary<WorldKey, int> indices,
-        WorldValue[] values)
+    public JulianInstant Epoch => _input.Epoch;
+    public SolarSystemSample? SolarSystem => _input.Solar;
+
+    /// <summary>Evaluates the centre and axes of the mission arc selected at a possibly different TDB epoch.</summary>
+    public bool TryMissionReferenceFrame(ObjectId owner, bool orbit, JulianInstant selection,
+        out CartesianState origin, out FrameKinematics axes)
     {
-        Epoch = epoch;
-        SolarSystem = solar;
-        _indices = indices;
-        _values = values;
+        origin = default;
+        axes = default;
+        if (selection.Scale != TimeScale.Tdb || !_input.Graph.TryMissionArc(owner, selection, out var arc))
+            return false;
+        return TryState(orbit ? arc.Center : owner, out origin) &&
+            WorldGraphBuilder.TryMissionFrame(_input,
+                orbit ? arc.TrajectoryFrame : arc.BodyReferenceFrame ?? arc.BodyFrame, out axes);
     }
-
-    public JulianInstant Epoch { get; }
-    public SolarSystemSample? SolarSystem { get; }
 
     public bool TryState(ObjectId id, out CartesianState state)
     {
@@ -79,7 +85,7 @@ public sealed class WorldSnapshot
 
     private bool TryValue(WorldKey key, out WorldValue value)
     {
-        value = _indices.TryGetValue(key, out int index) ? _values[index] : default;
+        value = _input.Indices.TryGetValue(key, out int index) ? _input.Values[index] : default;
         return value.Available;
     }
 }
@@ -91,10 +97,13 @@ public sealed class WorldGraph
     private readonly Dictionary<WorldKey, int> _indices = new();
     private readonly Node[] _nodes;
     private readonly ISolarSystemEphemeris? _solar;
+    private readonly IReadOnlyDictionary<ObjectId, MissionArc[]> _missions;
 
-    internal WorldGraph(WorldRule[] orderedRules, ISolarSystemEphemeris? solar)
+    internal WorldGraph(WorldRule[] orderedRules, ISolarSystemEphemeris? solar,
+        IReadOnlyDictionary<ObjectId, MissionArc[]> missions)
     {
         _solar = solar;
+        _missions = missions;
         _nodes = new Node[orderedRules.Length];
         for (int index = 0; index < orderedRules.Length; index++)
         {
@@ -108,8 +117,14 @@ public sealed class WorldGraph
     {
         if (tdb.Scale != TimeScale.Tdb)
             throw new ArgumentException("World graph evaluation requires TDB.", nameof(tdb));
-        EvaluationInput input = EvaluatePrefix(tdb, _nodes.Length);
-        return new(tdb, input.Solar, _indices, input.Values);
+        return new(EvaluatePrefix(tdb, _nodes.Length));
+    }
+
+    internal bool TryMissionArc(ObjectId owner, JulianInstant selection,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MissionArc? arc)
+    {
+        arc = _missions.TryGetValue(owner, out var arcs) ? WorldGraphBuilder.FindMissionArc(arcs, selection) : null;
+        return arc is not null;
     }
 
     internal EvaluationInput EvaluatePrefix(JulianInstant tdb, int count)

@@ -10,6 +10,8 @@ namespace SpaceTangent.Core.World;
 
 public sealed partial class WorldGraphBuilder
 {
+    private readonly Dictionary<ObjectId, MissionArc[]> _missionArcs = new();
+
     public void AddMeanEarthRotation()
     {
         AddOrientation(SolarSystemSample.EarthId, epoch =>
@@ -42,7 +44,7 @@ public sealed partial class WorldGraphBuilder
         var stateKey = StateKey(mission.Id);
         Add(new(stateKey, trajectoryKeys, input =>
         {
-            var arc = ActiveArc(input.Epoch);
+            var arc = FindMissionArc(arcs, input.Epoch);
             if (arc?.LocalState(input.Epoch) is not { } local)
                 return default;
             var parent = input.Read(StateKey(arc.Center));
@@ -71,24 +73,26 @@ public sealed partial class WorldGraphBuilder
         WorldKey[] orientationKeys = arcs.SelectMany(arc => FrameKeys(arc.BodyFrame)).Append(stateKey).Distinct().ToArray();
         Add(new(new(mission.Id, WorldChannel.Orientation), orientationKeys, input =>
         {
-            var arc = ActiveArc(input.Epoch);
+            var arc = FindMissionArc(arcs, input.Epoch);
             return arc is not null && input.Read(stateKey).Available && TryMissionFrame(input, arc.BodyFrame, out var frame)
                 ? WorldValue.FromOrientation(frame) : default;
         }, RequireAll: false));
 
-        MissionArc? ActiveArc(JulianInstant epoch)
+        _missionArcs.Add(mission.Id, arcs);
+    }
+
+    internal static MissionArc? FindMissionArc(MissionArc[] arcs, JulianInstant epoch)
+    {
+        int low = 0, high = arcs.Length;
+        while (low < high)
         {
-            int low = 0, high = arcs.Length;
-            while (low < high)
-            {
-                int middle = low + (high - low) / 2;
-                if (epoch.CompareTo(arcs[middle].End) < 0)
-                    high = middle;
-                else
-                    low = middle + 1;
-            }
-            return low < arcs.Length && epoch.CompareTo(arcs[low].Start) >= 0 ? arcs[low] : null;
+            int middle = low + (high - low) / 2;
+            if (epoch.CompareTo(arcs[middle].End) < 0)
+                high = middle;
+            else
+                low = middle + 1;
         }
+        return low < arcs.Length && epoch.CompareTo(arcs[low].Start) >= 0 ? arcs[low] : null;
     }
 
     private static WorldKey StateKey(ObjectId id) => new(id, WorldChannel.State);
@@ -101,7 +105,7 @@ public sealed partial class WorldGraphBuilder
         _ => []
     };
 
-    private static bool TryMissionFrame(EvaluationInput input, MissionFrame definition, out FrameKinematics frame)
+    internal static bool TryMissionFrame(EvaluationInput input, MissionFrame definition, out FrameKinematics frame)
     {
         switch (definition)
         {
@@ -112,7 +116,7 @@ public sealed partial class WorldGraphBuilder
                 frame = new(inertial.ToWorld, default(Vector3d));
                 return true;
             case MissionFrame.BodyFixed fixedFrame:
-                var value = input.Read(new(fixedFrame.Body, WorldChannel.Orientation));
+                var value = input.ReadIfPresent(new(fixedFrame.Body, WorldChannel.Orientation));
                 frame = value.Orientation;
                 return value.Available;
             case MissionFrame.Rotating rotating when TryMissionFrame(input, rotating.Parent, out var parent):
@@ -145,7 +149,7 @@ public sealed partial class WorldGraphBuilder
         switch (direction)
         {
             case MissionDirection.Relative { Direction: var relative } when
-                input.Read(StateKey(relative.Observer)).Available && input.Read(StateKey(relative.Target)).Available:
+                input.ReadIfPresent(StateKey(relative.Observer)).Available && input.ReadIfPresent(StateKey(relative.Target)).Available:
                 vector = ReadDirection(input, relative);
                 return true;
             case MissionDirection.Constant constant when TryMissionFrame(input, constant.Frame, out var frame):

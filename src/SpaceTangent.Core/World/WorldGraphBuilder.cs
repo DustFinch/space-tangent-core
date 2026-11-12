@@ -306,7 +306,7 @@ public sealed partial class WorldGraphBuilder
         if (sorted.Count != _rules.Count)
             throw new InvalidOperationException("World dependency cycle among " +
                 string.Join(", ", dependencies.Where(pair => pair.Value > 0).Select(pair => Describe(pair.Key))) + ".");
-        return new([.. sorted], _solar);
+        return new([.. sorted], _solar, new Dictionary<ObjectId, MissionArc[]>(_missionArcs));
     }
 
     private void Add(WorldRule rule)

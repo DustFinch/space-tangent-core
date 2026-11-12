@@ -18,7 +18,11 @@ public sealed record SampledMission(ObjectId Id, string Name, string? MeshPath, 
 }
 
 public sealed record MissionArc(JulianInstant Start, JulianInstant End, ObjectId Center,
-    Func<JulianInstant, CartesianState?> LocalState, MissionFrame TrajectoryFrame, MissionFrame BodyFrame);
+    Func<JulianInstant, CartesianState?> LocalState, MissionFrame TrajectoryFrame, MissionFrame BodyFrame)
+{
+    /// <summary>The frame on which the model's local attitude is based.</summary>
+    public MissionFrame? BodyReferenceFrame { get; init; }
+}
 
 public abstract record MissionFrame
 {
@@ -241,14 +245,16 @@ public static partial class SampledMissionCatalog
             string centerName = Text(arc, "center");
             var center = resolve(centerName);
             var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center, resources);
-            var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center, resources), arc,
+            var bodyReference = Frame(arc, "bodyFrame", resolve, name, center, resources);
+            var bodyFrame = Rotation(bodyReference, arc,
                 resources, root, directory, cancellation);
             var sample = arc.TryGetProperty("trajectory", out var trajectory)
                 ? ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame, resources, centerName)
                 : geometry?.Any(span => span.Shape.ParticleEmitters is not null) == true
                     ? Constant(default)
                     : throw new InvalidDataException($"{name}: a mission arc requires a trajectory.");
-            result.Add(new(begins, end, center, sample, trajectoryFrame, bodyFrame));
+            result.Add(new(begins, end, center, sample, trajectoryFrame, bodyFrame)
+                { BodyReferenceFrame = bodyReference is MissionFrame.Spice ? Equatorial : bodyReference });
             start = end;
         }
         double radius = geometry is { Count: > 0 } ? geometry.Max(span => span.Shape.RadiusKilometers) : .005;

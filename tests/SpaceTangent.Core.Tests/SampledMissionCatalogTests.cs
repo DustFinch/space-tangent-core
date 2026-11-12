@@ -46,6 +46,15 @@ public sealed class SampledMissionCatalogTests
         var landed = world.Evaluate(msl.Arcs[1].Start);
         Assert.True(landed.TryStateCenter(msl.Id, out center));
         Assert.Equal(Mars, center);
+
+        Assert.True(landed.TryMissionReferenceFrame(msl.Id, orbit: true, before.Epoch, out var oldOrigin, out var oldAxes));
+        Assert.True(landed.TryMissionReferenceFrame(msl.Id, orbit: true, landed.Epoch, out var newOrigin, out var newAxes));
+        Assert.Equal(default, oldOrigin.PositionKilometers);
+        Assert.Equal(new Vector3d(1.7e8, 1e8, 1e7), newOrigin.PositionKilometers);
+        Assert.InRange((oldAxes.ToWorld.Z - Ecliptic(new(0, 0, 1))).Length, 0, 1e-9);
+        Assert.Equal(Basis3d.Identity, newAxes.ToWorld);
+        Assert.Equal(Spin, newAxes.AngularVelocityRadiansPerSecond);
+        Assert.False(landed.TryMissionReferenceFrame(msl.Id, orbit: true, msl.Start.AddNanoseconds(-1), out _, out _));
         Assert.True(landed.TryState(msl.Id, out var state));
         Assert.True(landed.TryState(Mars, out var mars));
         var local = new Vector3d(-2492.7174249882, 2283.7760531933, -246.57248398216);
@@ -53,6 +62,9 @@ public sealed class SampledMissionCatalogTests
         Assert.InRange(((state - mars).VelocityKilometersPerSecond - Vector3d.Cross(Spin, Ecliptic(local))).Length, 0, 1e-12);
         Assert.True(landed.TryOrientation(msl.Id, out var frame));
         Assert.True(landed.TryState(Sun, out var sun));
+        Assert.True(landed.TryMissionReferenceFrame(msl.Id, orbit: false, landed.Epoch, out var bodyOrigin, out var bodyAxes));
+        Assert.Equal(state, bodyOrigin);
+        Assert.Equal(frame.ToWorld, bodyAxes.ToWorld);
         var direction = sun.PositionKilometers - state.PositionKilometers;
         Assert.InRange(Vector3d.Dot(frame.ToWorld.Z, direction / direction.Length), -1.0000000001, -.9999999999);
         Assert.False(world.Evaluate(msl.Start.AddNanoseconds(-1)).TryState(msl.Id, out _));
