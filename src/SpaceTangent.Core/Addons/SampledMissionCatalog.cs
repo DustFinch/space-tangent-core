@@ -2,7 +2,6 @@
 using System.Globalization;
 using System.Text.Json;
 using SpaceTangent.Contracts;
-using SpaceTangent.Core.Orbits;
 using SpaceTangent.Core.Time;
 using SpaceTangent.Core.World;
 
@@ -29,7 +28,7 @@ public abstract record MissionFrame
 }
 
 /// <summary>Reads local sampled mission arcs in the version 1.0 JSON format.</summary>
-public static class SampledMissionCatalog
+public static partial class SampledMissionCatalog
 {
     private static readonly string[] CalendarFormats = [
         "yyyy-MM-dd", "yyyy-MM-dd HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF"
@@ -99,7 +98,7 @@ public static class SampledMissionCatalog
         double radius = .005;
         if (item.TryGetProperty("geometry", out var geometry))
         {
-            radius = geometry.GetProperty("size").GetDouble();
+            radius = Distance(geometry, "size");
             if (!double.IsFinite(radius) || radius <= 0)
                 throw new InvalidDataException($"{name}: the mesh size must be finite and positive.");
             string source = Text(geometry, "source");
@@ -132,36 +131,10 @@ public static class SampledMissionCatalog
             var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center);
             var bodyFrame = Frame(arc, "bodyFrame", resolve, name, center);
             var trajectory = arc.GetProperty("trajectory");
-            result.Add(new(begins, end, center, ReadTrajectory(trajectory, root, directory), trajectoryFrame, bodyFrame));
+            result.Add(new(begins, end, center, ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame), trajectoryFrame, bodyFrame));
             start = end;
         }
         return new(resolve(name), name, mesh, radius, result.AsReadOnly());
-    }
-
-    private static Func<JulianInstant, CartesianState?> ReadTrajectory(JsonElement value, string root, string directory)
-    {
-        string type = Text(value, "type");
-        if (type == "FixedPoint")
-        {
-            double[] components = value.GetProperty("position").EnumerateArray().Select(component => component.GetDouble()).ToArray();
-            if (components.Length != 3 || components.Any(component => !double.IsFinite(component)))
-                throw new InvalidDataException("A fixed mission point requires three finite components.");
-            var state = new CartesianState(new(components[0], components[1], components[2]), default);
-            return _ => state;
-        }
-        if (type == "InterpolatedStates")
-        {
-            string path = LocalAddonFiles.ResolveRelative(root, directory, Text(value, "source"));
-            var frame = new FrameId("mission-source");
-            var curve = Path.GetExtension(path).ToLowerInvariant() switch
-            {
-                ".xyzv" => SampledStateTrajectory.ReadXyzv(path, frame),
-                ".xyz" => SampledStateTrajectory.ReadXyz(path, frame),
-                _ => throw new InvalidDataException("A sampled mission trajectory requires a local XYZ or XYZV file.")
-            };
-            return epoch => curve.TrySample(epoch, out var state) ? state : null;
-        }
-        throw new NotSupportedException($"Unsupported mission trajectory {type}.");
     }
 
     private static MissionFrame Frame(JsonElement arc, string property, Func<string, ObjectId> resolve,
