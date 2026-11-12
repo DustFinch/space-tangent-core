@@ -8,7 +8,7 @@ using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.World;
 
-public sealed class WorldGraphBuilder
+public sealed partial class WorldGraphBuilder
 {
     private readonly Dictionary<WorldKey, WorldRule> _rules = new();
     private ISolarSystemEphemeris? _solar;

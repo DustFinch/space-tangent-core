@@ -64,17 +64,20 @@ public sealed class SampledStateTrajectory
     public JulianInstant? End => _samples.Length == 0 ? null : _samples[^1].Epoch;
 
     public static SampledStateTrajectory ReadXyzv(string path, FrameId frame) =>
-        AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadXyzvCore(path, frame));
+        AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadCoordinates(path, frame, positionsOnly: false));
 
-    private static SampledStateTrajectory ReadXyzvCore(string path, FrameId frame)
+    public static SampledStateTrajectory ReadXyz(string path, FrameId frame) =>
+        AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadCoordinates(path, frame, positionsOnly: true));
+
+    private static SampledStateTrajectory ReadCoordinates(string path, FrameId frame, bool positionsOnly)
     {
         using FileStream file = AddonDependencies.OpenRead(path, 64L * 1024 * 1024);
         if (file.Length > 64L * 1024 * 1024)
-            throw new InvalidDataException("XYZV file exceeds 64 MiB.");
+            throw new InvalidDataException("Sampled trajectory exceeds 64 MiB.");
         using var reader = new StreamReader(file, new UTF8Encoding(false, true));
         var samples = new List<TimedState>();
         var seconds = new List<double>();
-        double[] values = new double[7];
+        double[] values = new double[positionsOnly ? 4 : 7];
         int field = 0;
         while (reader.ReadLine() is { } line)
         {
@@ -84,21 +87,49 @@ public sealed class SampledStateTrajectory
             {
                 if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ||
                     !double.IsFinite(value))
-                    throw new InvalidDataException("XYZV contains an invalid number.");
+                    throw new InvalidDataException("A sampled trajectory contains an invalid number.");
                 values[field++] = value;
-                if (field != 7)
+                if (field != values.Length)
                     continue;
                 if (samples.Count == MaximumSamples)
-                    throw new InvalidDataException("XYZV contains too many samples.");
+                    throw new InvalidDataException("A trajectory contains too many samples.");
                 samples.Add(new(JulianInstant.FromJulianDate(values[0], TimeScale.Tdb),
-                    new(new(values[1], values[2], values[3]), new(values[4], values[5], values[6]))));
+                    new(new(values[1], values[2], values[3]), positionsOnly ? default : new(values[4], values[5], values[6]))));
                 seconds.Add((values[0] - JulianInstant.J2000Day) * JulianInstant.SecondsPerDay);
                 field = 0;
             }
         }
         if (field != 0)
-            throw new InvalidDataException("XYZV contains an incomplete sample.");
+            throw new InvalidDataException("A sampled trajectory contains an incomplete sample.");
+        if (positionsOnly && samples.Count != 0)
+            DeriveVelocities(samples, seconds);
         return new([.. samples], [.. seconds], frame, SampledEndpointPolicy.ClampState, SampledClockPolicy.SourceJulianDouble);
+    }
+
+    private static void DeriveVelocities(List<TimedState> samples, List<double> seconds)
+    {
+        if (samples.Count < 2)
+            throw new InvalidDataException("A nonempty XYZ file requires at least two positions.");
+        Vector3d next = Slope(1);
+        for (int i = 0; i < samples.Count; i++)
+        {
+            Vector3d previous = next;
+            if (i > 0 && i < samples.Count - 1)
+                next = Slope(i + 1);
+            var state = samples[i].State with { VelocityKilometersPerSecond = previous * .5 + next * .5 };
+            samples[i] = samples[i] with { State = state };
+        }
+
+        Vector3d Slope(int later)
+        {
+            double duration = seconds[later] - seconds[later - 1];
+            if (duration <= 0)
+                throw new InvalidDataException("XYZ source times must increase.");
+            Vector3d slope = (samples[later].State.PositionKilometers - samples[later - 1].State.PositionKilometers) / duration;
+            if (!slope.IsFinite)
+                throw new InvalidDataException("XYZ position differences produce a nonfinite velocity.");
+            return slope;
+        }
     }
 
     public bool TrySample(JulianInstant epoch, out CartesianState state)
