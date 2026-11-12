@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+using System.Globalization;
 using System.Text;
 
 namespace SpaceTangent.Core.Addons;
@@ -69,15 +70,45 @@ internal sealed class SscReader(string input, string path)
 
     internal IEnumerable<(string Kind, string Name, SscValue.Map Properties)> ReadTypedRecords(string defaultKind)
     {
+        foreach (var (disposition, kind, number, name, properties) in ReadCatalogueRecords(defaultKind))
+        {
+            if (disposition != SscDisposition.Add || number is not null || name is null)
+                throw Error("Expected a named catalogue addition.");
+            yield return (kind, name, properties);
+        }
+    }
+
+    internal IEnumerable<(SscDisposition Disposition, string Kind, uint? Number, string? Name,
+        SscValue.Map Properties)> ReadCatalogueRecords(string defaultKind)
+    {
         while (SkipSpace())
         {
-            string kind = input[_offset] == '"' ? defaultKind : ReadText();
-            if (kind == "Add")
-                kind = SkipSpace() && input[_offset] == '"' ? defaultKind : ReadText();
-            string name = ReadText();
+            SscDisposition disposition = SscDisposition.Add;
+            string kind = defaultKind;
+            uint? number = null;
+            string? name = null;
+            if (input[_offset] != '"' && !char.IsAsciiDigit(input[_offset]))
+            {
+                string prefix = ReadText();
+                if (prefix is "Add" or "Modify" or "Replace")
+                {
+                    disposition = Enum.Parse<SscDisposition>(prefix);
+                    if (SkipSpace() && input[_offset] != '"' && !char.IsAsciiDigit(input[_offset]))
+                        kind = ReadText();
+                }
+                else
+                {
+                    kind = prefix;
+                }
+            }
+            if (SkipSpace() && char.IsAsciiDigit(input[_offset]))
+                number = uint.TryParse(ReadText(), NumberStyles.None, CultureInfo.InvariantCulture, out uint parsed)
+                    ? parsed : throw Error("Invalid catalogue number.");
+            if (SkipSpace() && input[_offset] == '"')
+                name = ReadText();
             if (!SkipSpace() || input[_offset] != '{')
                 throw Error("Expected catalogue object properties.");
-            yield return (kind, name, ReadObject(0));
+            yield return (disposition, kind, number, name, ReadObject(0));
         }
     }
 
