@@ -110,13 +110,13 @@ public sealed class HistoricalSolarEphemeris : ISolarSystemEphemeris
     private static CartesianState EclipticToIcrf(CartesianState state) =>
         new(Rotate(state.PositionKilometers), Rotate(state.VelocityKilometersPerSecond));
 
-    private static Vector3d Rotate(Vector3d ecliptic)
+    internal static Vector3d Rotate(Vector3d ecliptic)
     {
         var (sin, cos) = Math.SinCos(J2000Obliquity);
         return J2000ToIcrf(new(ecliptic.X, cos * ecliptic.Y - sin * ecliptic.Z, sin * ecliptic.Y + cos * ecliptic.Z));
     }
 
-    private static Vector3d J2000ToIcrf(Vector3d vector)
+    internal static Vector3d J2000ToIcrf(Vector3d vector)
     {
         Vector3d doubled = Vector3d.Cross(BiasAxis, vector) * 2;
         return vector + doubled + Vector3d.Cross(BiasAxis, doubled);
