@@ -5,4 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="../SpaceTangent.Contracts/SpaceTangent.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Data/blackholes.txt" />
+  </ItemGroup>
 </Project>

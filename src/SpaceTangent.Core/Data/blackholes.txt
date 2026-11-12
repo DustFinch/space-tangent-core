@@ -1,0 +1,12 @@
+# Measured mass, distance and orientation with literature references.
+sgra | Стрелец A* | Sgr A*;Sagittarius A* | 17 45 40.0409 | -29 00 28.118 | 8277 | 4.297e6 | - | - | - | GRAVITY Collaboration 2022, A&A 657, L12 (distance); 2023, A&A 677, L10 (mass)
+m87 | M87* | M 87*;Powehi | 12 30 49.42338 | +12 23 28.0439 | 16.8e6 | 6.5e9 | M 87 | - | - | Event Horizon Telescope Collaboration 2019, ApJL 875, L6
+m31 | M31* | M 31*;Andromeda Galaxy nucleus | 00 42 44.3 | +41 16 09 | 761e3 | 1.4e8 | M 31 | - | - | Bender et al. 2005, ApJ 631, 280 (mass); Li et al. 2021, ApJ 920, 84 (distance)
+gaia-bh1 | Gaia BH1 | Gaia DR3 4373465352415301632 | 17 28 41.09661 | -00 34 51.5234 | 480 | 9.62 | - | - | - | El-Badry et al. 2023, MNRAS 518, 1057
+gaia-bh2 | Gaia BH2 | Gaia DR3 5870569352746779008 | 13 50 16.748 | -59 14 20.33 | 1160 | 8.94 | - | - | - | El-Badry et al. 2023, MNRAS 521, 4323
+gaia-bh3 | Gaia BH3 | Gaia DR3 4318465066420528000 | 19 39 18.71 | +14 55 54.0 | 590.6 | 32.70 | - | - | - | Gaia Collaboration, Panuzzo et al. 2024, A&A 686, L2
+cyg-x1 | Лебедь X-1 | Cyg X-1;Cygnus X-1;HDE 226868 | 19 58 21.67574 | +35 12 05.7845 | 2220 | 21.2 | - | 27.51 | 0.998 | Miller-Jones et al. 2021, Science 371, 1046; spin: Zhao et al. 2021, ApJ 908, 117 (above 0.9985; held at Thorne's 0.998)
+v404-cyg | V404 Лебедя | V404 Cyg;V404 Cygni;GS 2023+338 | 20 24 03.82 | +33 52 02.0 | 2390 | 9.0 | - | 67 | 0.92 | Miller-Jones et al. 2009, ApJL 706, L230 (distance); Khargharia et al. 2010, ApJ 716, 1105 (mass, inclination); spin: Walton et al. 2017, ApJ 839, 110 (above 0.92)
+a0620 | A0620-00 | V616 Mon;Nova Monocerotis 1975 | 06 22 44.542 | -00 20 44.29 | 1060 | 6.61 | - | 51.0 | 0.12 | Cantrell et al. 2010, ApJ 710, 1127; spin: Gou et al. 2010, ApJ 718, L122
+grs1915 | GRS 1915+105 | V1487 Aql | 19 15 11.6 | +10 56 44 | 8600 | 12.4 | - | 60 | 0.98 | Reid et al. 2014, ApJ 796, 2; spin: McClintock et al. 2006, ApJ 652, 518 (above 0.98)
+gro1655 | GRO J1655-40 | V1033 Sco;Nova Scorpii 1994 | 16 54 00.14 | -39 50 44.9 | 3200 | 6.3 | - | 70.2 | 0.70 | Hjellming & Rupen 1995, Nature 375, 464 (distance); Greene, Bailyn & Orosz 2001, ApJ 554, 1290 (mass, inclination); spin: Shafee et al. 2006, ApJ 636, L113 (0.65-0.75)
