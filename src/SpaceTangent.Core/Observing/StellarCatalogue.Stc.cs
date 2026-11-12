@@ -312,7 +312,7 @@ public sealed partial class StellarCatalogue
         'M' => 3_100, 'L' => 1_900, 'T' or 'Y' => 900, 'D' => 11_000, _ => 5_772
     };
 
-    private static double EstimateRadius(double absoluteMagnitude, double temperature)
+    internal static double EstimateRadius(double absoluteMagnitude, double temperature)
     {
         double kelvin = Math.Clamp(temperature, 1000, 200_000), log = Math.Log10(kelvin) - 4;
         double correction = -.438 + log * (-3.901 + log * (-8.131 + log * (13.421 - log * 8.499)));
