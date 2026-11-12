@@ -22,7 +22,7 @@ public interface ISscScriptModels
 
 public static partial class SscBodyCatalogue
 {
-    private static SscScriptRequest ScriptRequest(SscDefinition body, string field, string root)
+    private static SscScriptRequest ScriptRequest(SscDefinition body, string field, string root, SscResource resolve)
     {
         var definition = body.Properties.Object(field);
         string module = definition.Text("Module");
@@ -30,7 +30,7 @@ public static partial class SscBodyCatalogue
         if (string.IsNullOrWhiteSpace(module) || string.IsNullOrWhiteSpace(function) || module.Length > 256 || function.Length > 128)
             throw new InvalidDataException($"Invalid {field} module or function.");
         string source = module.EndsWith(".lua", StringComparison.OrdinalIgnoreCase) ? module : module.Replace('.', '/') + ".lua";
-        string path = SscSampledCatalog.FindAsset(AddonStage.Catalog, root, body.DirectoryFor(field), source, "scripts");
+        string path = resolve(body, field, AddonStage.Catalog, source, "scripts");
         var arguments = Map(definition);
         return new(root, path, function, arguments);
 

@@ -31,6 +31,9 @@ public static partial class SscBodyCatalogue
         root = Path.GetFullPath(root);
         if (!AddonDependencies.DirectoryExists(root))
             return [];
+        string pack = Path.Combine(root, "pack.json");
+        if (AddonDependencies.FileExists(pack))
+            return AddonDiagnostics.Read(AddonStage.Catalog, pack, () => ReadPackedSsc(root, pack, scripts, warning, cancellation));
         string data = Path.Combine(root, "data");
         var paths = AddonDependencies.ListFiles(root, "*.ssc").AsEnumerable();
         if (AddonDependencies.DirectoryExists(data))
@@ -39,6 +42,14 @@ public static partial class SscBodyCatalogue
         if (files.Length > 64)
             throw new InvalidDataException("A body catalogue source contains more than 64 SSC files.");
         var definitions = SscDefinitions.Load(files, root, cancellation);
+        return ReadBodyDefinitions(definitions, root, scripts, warning,
+            (body, field, stage, asset, fallbacks) => SscSampledCatalog.FindAsset(stage, root,
+                body.DirectoryFor(field), asset, fallbacks), cancellation);
+    }
+
+    private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
+        string root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation)
+    {
         if (definitions.Count > 512)
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
         var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
@@ -59,7 +70,7 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException($"SSC parent cycle at {path}.");
             if (!byPath.TryGetValue(item.Parent, out var parent) || Read(parent))
             {
-                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning));
+                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning, resolve));
                 installed = body is not null;
                 if (body is not null)
                     result.Add(body);
@@ -124,7 +135,7 @@ public static partial class SscBodyCatalogue
         SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
 
-    private static SscBodyDefinition? ReadBody(SscDefinition item, string root, ISscScriptModels? scripts, Action<string>? warning)
+    private static SscBodyDefinition? ReadBody(SscDefinition item, string root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -176,8 +187,7 @@ public static partial class SscBodyCatalogue
             string file;
             try
             {
-                file = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root, item.DirectoryFor(key), name,
-                    Path.Combine("models", "trajectories"), "data", "trajectories");
+                file = resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories");
             }
             catch (FileNotFoundException) when (usesScriptOrbit)
             {
@@ -196,8 +206,7 @@ public static partial class SscBodyCatalogue
         double radius = fields.Fields.TryGetValue("Radius", out var radiusValue) ? Number(radiusValue) : 1;
         if (radius is <= 0 or > 2_000_000)
             throw new InvalidDataException("SSC body radius is out of range.");
-        string? mesh = Text("Mesh") is { } fileName
-            ? SscSampledCatalog.FindAsset(AddonStage.Mesh, root, item.DirectoryFor("Mesh"), fileName, "models") : null;
+
         Vector3d color = fields.Fields.TryGetValue("Color", out var colorValue) ? ReadVector(colorValue) : new(.8, .8, .8);
         if (color.X is < 0 or > 1 || color.Y is < 0 or > 1 || color.Z is < 0 or > 1)
             throw new InvalidDataException("SSC color components must be between zero and one.");
@@ -236,8 +245,7 @@ public static partial class SscBodyCatalogue
             string name = Text("SampledOrientation")!;
             try
             {
-                string file = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root,
-                    item.DirectoryFor("SampledOrientation"), name, "data", "trajectories");
+                string file = resolve(item, "SampledOrientation", AddonStage.Trajectory, name, "data", "trajectories");
                 spin = ReadSampledSpin(file, spinFrame);
             }
             catch (FileNotFoundException) when (usesScriptRotation)
@@ -258,6 +266,7 @@ public static partial class SscBodyCatalogue
         if (spin is not null && orientation is not null)
             throw new NotSupportedException("Scripted and sampled rotations currently need an inertial body frame.");
 
+        string? mesh = Text("Mesh") is { } fileName ? resolve(item, "Mesh", AddonStage.Mesh, fileName, "models") : null;
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
             mesh, meshCenter, meshRotation, orientation, Sample) { SampleRotation = spin };
 
@@ -267,7 +276,7 @@ public static partial class SscBodyCatalogue
             {
                 try
                 {
-                    if (make(ScriptRequest(item, field, root)) is { } model)
+                    if (make(ScriptRequest(item, field, root, resolve)) is { } model)
                         return model;
                 }
                 catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException)

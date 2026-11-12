@@ -33,6 +33,24 @@ public sealed class SscScriptModelCatalogueTests
         Assert.Contains(warnings, warning => warning.Contains("alternate SampledTrajectory resource is unavailable", StringComparison.Ordinal));
     }
 
+    [PackedFactoryCorpusFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalPackUsesItsEmbeddedSscAndDeclaredLocalResources()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_SCRIPTED_PACK")!;
+        var warnings = new List<string>();
+        var probe = new RecordingFactories();
+        var (loaded, inputs) = AddonDependencies.Capture(() => SscBodyCatalogue.Load(root, scripts: probe, warning: warnings.Add));
+        Assert.Equal(["rejectOrbit", "rejectOrbit", "rejectSpin", "make", "turn"], probe.Calls);
+        Assert.Equal(["Fallback Sample", "Fallback Spin", "Cassini SOI"], loaded.Select(body => body.Name));
+        Assert.Equal(3, warnings.Count);
+        Assert.EndsWith("cassini.glb", loaded[2].Mesh, StringComparison.OrdinalIgnoreCase);
+        Assert.True(inputs.IsCurrent());
+        var instant = JulianInstant.FromJulianDate(2453187.55, TimeScale.Tdb);
+        Assert.NotNull(loaded[0].Sample(instant));
+        Assert.NotNull(loaded[1].SampleRotation!(instant));
+    }
+
     private sealed class RecordingFactories : ISscScriptModels
     {
         public List<string> Calls { get; } = [];
@@ -62,6 +80,15 @@ public sealed class SscScriptModelCatalogueTests
         {
             if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_SCRIPTED_SSC")))
                 Skip = "Set the path to the archived scripted body catalogue.";
+        }
+    }
+
+    private sealed class PackedFactoryCorpusFactAttribute : FactAttribute
+    {
+        public PackedFactoryCorpusFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_SCRIPTED_PACK")))
+                Skip = "Set the path to the original packed scripted catalogue.";
         }
     }
 }

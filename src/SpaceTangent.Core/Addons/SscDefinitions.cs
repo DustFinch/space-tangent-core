@@ -21,7 +21,7 @@ internal static class SscDefinitions
         "SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation", "FixedAttitude"];
 
     internal static IReadOnlyList<SscDefinition> Load(IEnumerable<string> paths, string? root,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default, IReadOnlyDictionary<string, string>? embedded = null)
     {
         var bodies = new List<SscDefinition>();
         var aliases = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -43,14 +43,9 @@ internal static class SscDefinitions
 
         void LoadFile(string file)
         {
-            if (root is not null)
-                file = LocalAddonFiles.Resolve(root, root, file);
             string directory = Path.GetDirectoryName(file)!;
-            using FileStream stream = AddonDependencies.OpenRead(file, MaximumCatalogBytes);
-            if (stream.Length > MaximumCatalogBytes)
-                throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
-            using var reader = new StreamReader(stream, new UTF8Encoding(false, true));
-            foreach (var (disposition, kind, nameList, parentPath, properties) in new SscReader(reader.ReadToEnd(), file).ReadDefinitions())
+            string source = embedded is not null ? embedded[file] : ReadFile(file);
+            foreach (var (disposition, kind, nameList, parentPath, properties) in new SscReader(source, file).ReadDefinitions())
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (kind is "Location" or "AltSurface")
@@ -84,6 +79,17 @@ internal static class SscDefinitions
                 bodies.Add(new(string.Join(':', names), parent, properties, directories, file));
             }
         }
+        string ReadFile(string file)
+        {
+            if (root is not null)
+                file = LocalAddonFiles.Resolve(root, root, file);
+            using FileStream stream = AddonDependencies.OpenRead(file, MaximumCatalogBytes);
+            if (stream.Length > MaximumCatalogBytes)
+                throw new InvalidDataException("SSC catalogue exceeds 1 MiB.");
+            using var reader = new StreamReader(stream, new UTF8Encoding(false, true));
+            return reader.ReadToEnd();
+        }
+
         string ResolveParent(string path)
         {
             if (aliases.TryGetValue(path, out int index))
