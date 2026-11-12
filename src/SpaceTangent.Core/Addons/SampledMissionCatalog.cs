@@ -10,6 +10,7 @@ namespace SpaceTangent.Core.Addons;
 public sealed record SampledMission(ObjectId Id, string Name, string? MeshPath, double RadiusKilometers,
     IReadOnlyList<MissionArc> Arcs)
 {
+    public MissionObservation? Observation { get; init; }
     public JulianInstant Start => Arcs[0].Start;
     public JulianInstant End => Arcs[^1].End;
     public IReadOnlyList<MissionGeometrySpan>? Geometry { get; init; }
@@ -63,9 +64,15 @@ public static partial class SampledMissionCatalog
         {
             foreach (string entry in catalogPaths)
                 Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
-            return Array.AsReadOnly(definitions.Select(definition => AddonDiagnostics.Read(AddonStage.Catalog,
+            var missions = definitions.Select(definition => AddonDiagnostics.Read(AddonStage.Catalog,
                 definition.Source, () => ReadItem(definition.Item, Resolve, root, Path.GetDirectoryName(definition.Source)!,
-                    warning, cancellation))).ToArray());
+                    warning, cancellation))).ToArray();
+            var sensors = missions.Where(mission => mission.Geometry?.Any(span => span.Shape.Sensor is not null) == true)
+                .Select(mission => mission.Id).ToHashSet();
+            foreach (var mission in missions)
+                if (mission.Observation is { } observation && !sensors.Contains(observation.Sensor))
+                    throw new InvalidDataException($"{mission.Name}: observation requires an installed sensor field.");
+            return Array.AsReadOnly(missions);
         }
         finally
         {
@@ -126,7 +133,7 @@ public static partial class SampledMissionCatalog
         void Register(JsonElement item, string path)
         {
             string name = Text(item, "name");
-            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor"))
+            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations"))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
                 return;
@@ -156,6 +163,16 @@ public static partial class SampledMissionCatalog
         string name = Text(item, "name");
         JulianInstant start = Date(item, "startTime", Minimum);
         JulianInstant finish = Date(item, "endTime", Maximum);
+        if (item.TryGetProperty("geometry", out var special) && Text(special, "type") == "Observations")
+        {
+            if (finish.CompareTo(start) <= 0)
+                throw new InvalidDataException($"{name}: observation availability must end after it starts.");
+            var target = resolve(Text(item, "center"));
+            var observation = ReadObservation(special, target, resolve);
+            return new(resolve(name), name, null, .001,
+                [new(start, finish, target, _ => new CartesianState(default, default), Equatorial, Equatorial)])
+                { Geometry = [], Observation = observation };
+        }
         IReadOnlyList<MissionGeometrySpan>? geometry = item.TryGetProperty("geometry", out var shown)
             ? ReadGeometry(shown, root, directory, name, start, finish, resolve, warning) : null;
         var arcs = item.TryGetProperty("arcs", out var sequence) ? sequence.EnumerateArray().ToArray() : [item];
