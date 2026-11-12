@@ -76,6 +76,22 @@ public static class DemoWorlds
     public static IReadOnlyList<DemoWorldBody> Bodies { get; } = Array.AsReadOnly(Definitions.Select(item => item.Body).ToArray());
     public static DemoWorldBody? Find(ObjectId id) => ById.GetValueOrDefault(id)?.Body;
 
+    /// <summary>Returns the same surface profile for globe maps, terrain meshes and navigation.</summary>
+    public static ProceduralSurface? CreateSurface(DemoWorldBody body)
+    {
+        (int seed, ProceduralWorldKind kind) = body.Surface switch
+        {
+            DemoWorldSurface.Temperate => (1, ProceduralWorldKind.Terran),
+            DemoWorldSurface.Volcanic => (7, ProceduralWorldKind.Volcanic),
+            DemoWorldSurface.Desert => (3, ProceduralWorldKind.Desert),
+            DemoWorldSurface.Ice => (5, ProceduralWorldKind.Ice),
+            DemoWorldSurface.GasGiant => (10, ProceduralWorldKind.GasGiant),
+            DemoWorldSurface.Barren => (11, ProceduralWorldKind.Cratered),
+            _ => default
+        };
+        return seed == 0 ? null : new ProceduralSurface(seed, body.RadiusKilometers, kind);
+    }
+
     public static void AddTo(WorldGraphBuilder graph)
     {
         ArgumentNullException.ThrowIfNull(graph);
