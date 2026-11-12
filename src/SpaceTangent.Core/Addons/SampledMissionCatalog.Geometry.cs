@@ -13,6 +13,7 @@ public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Bas
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? GlobeTexturePath { get; init; }
     public MissionAxesStyle? Axes { get; init; }
+    public MissionVectorStyle? VectorOverlay { get; init; }
 }
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
 
@@ -29,6 +30,8 @@ public static partial class SampledMissionCatalog
             var axes = SourceAxes(value, MissionAxesKind.Geometry, "scale");
             return [new(start, end, AxesShape(axes))];
         }
+        if (type is "PlaneVisualizer" or "DirectionVisualizer")
+            return [new(start, end, ReadVectorShape(value, type == "PlaneVisualizer", resolve))];
         if (type == "Sensor")
             return [new(start, end, new(null, .001, Basis3d.Identity, default, ReadSensor(value, resolve)))];
         if (type == "ParticleSystem")
@@ -113,21 +116,30 @@ public static partial class SampledMissionCatalog
 
     private static bool IsVisualizer(JsonElement value) => value.TryGetProperty("type", out var type) && type.GetString() == "Visualizer";
 
-    private static SampledMission ReadAxesVisualizer(JsonElement item, Func<string, ObjectId> resolve)
+    private static SampledMission ReadVisualizer(JsonElement item, Func<string, ObjectId> resolve, SpiceResources resources)
     {
         string tag = Text(item, "tag");
         ObjectId id = resolve(tag), owner = resolve(Text(item, "body"));
         var style = item.GetProperty("style");
-        var kind = Text(style, "type") == "BodyAxes" ? MissionAxesKind.BodyVisualizer : MissionAxesKind.FrameVisualizer;
+        string type = Text(style, "type");
+        if (type is "Plane" or "BodyDirection")
+        {
+            var overlay = ReadVectorShape(style, type == "Plane", resolve);
+            MissionFrame orientation = Frame(style, "frame", resolve, tag, owner, resources);
+            return Visualizer(overlay, orientation);
+        }
+        var kind = type == "BodyAxes" ? MissionAxesKind.BodyVisualizer : MissionAxesKind.FrameVisualizer;
         var axes = SourceAxes(style, kind, "size");
         if (kind == MissionAxesKind.FrameVisualizer)
             axes = axes with { ReferenceOwner = owner };
         MissionFrame frame = kind == MissionAxesKind.BodyVisualizer ? new MissionFrame.BodyFixed(owner) : Equatorial;
-        var shape = AxesShape(axes);
-        return new(id, tag, null, shape.RadiusKilometers, [new(Minimum, Maximum, owner, Constant(default), Equatorial, frame)])
-        {
-            Geometry = [new(Minimum, Maximum, shape)]
-        };
+        return Visualizer(AxesShape(axes), frame);
+
+        SampledMission Visualizer(MissionShape shape, MissionFrame orientation) =>
+            new(id, tag, null, shape.RadiusKilometers, [new(Minimum, Maximum, owner, Constant(default), Equatorial, orientation)])
+            {
+                Geometry = [new(Minimum, Maximum, shape)]
+            };
     }
 
     private static MissionShape ReadGlobe(JsonElement value, string root, string directory, string name, Action<string>? warning)

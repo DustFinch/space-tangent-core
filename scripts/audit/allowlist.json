@@ -86,7 +86,7 @@
   },
   {
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.cs",
-    "sha256": "ef7ccf317d14f3df65d077a94dad6b72c016dba359fcbb64ca2d4e223aed9bad",
+    "sha256": "6ebc28cba75bbe8337980a97b55a200155d00b3d58e8a81b1745d88791cf399e",
     "reason": "Exact compatibility tag in the archived mission pack schema."
   },
   {

@@ -59,7 +59,7 @@ public static partial class SampledMissionCatalog
             AddArc(start, end, parent, body.GetProperty("orbit"));
 
         double radius = PackedPositive(body, "radiusKm");
-        MissionShape? shape = ReadPackedShape(body, root, name, radius, warning);
+        MissionShape? shape = ReadPackedShape(body, root, name, radius, resolve, warning);
         var shown = body.TryGetProperty("shown", out var interval) ? interval : default;
         var visibleFrom = shown.ValueKind == JsonValueKind.Object ? Date(shown, "fromJdTdb", start) : start;
         var visibleTo = shown.ValueKind == JsonValueKind.Object ? Date(shown, "untilJdTdb", end) : end;
@@ -193,8 +193,12 @@ public static partial class SampledMissionCatalog
         return new(Multiply(parent, local.ToWorld), local.AngularVelocityRadiansPerSecond is { } rate ? parent.Transform(rate) : null);
     }
 
-    private static MissionShape? ReadPackedShape(JsonElement body, string root, string name, double radius, Action<string>? warning)
+    private static MissionShape? ReadPackedShape(JsonElement body, string root, string name, double radius, Func<string, ObjectId> resolve, Action<string>? warning)
     {
+        if (body.TryGetProperty("plane", out var plane))
+            return ReadVectorShape(plane, plane: true, resolve, packed: true);
+        if (body.TryGetProperty("direction", out var direction))
+            return ReadVectorShape(direction, plane: false, resolve, packed: true);
         if (body.TryGetProperty("axesGeometry", out var axes))
         {
             var kind = Text(axes, "kind") switch

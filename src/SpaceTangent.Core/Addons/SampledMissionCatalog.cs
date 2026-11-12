@@ -179,7 +179,8 @@ public static partial class SampledMissionCatalog
                     if (bodies.GetArrayLength() is < 1 or > 512)
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
                     foreach (JsonElement body in bodies.EnumerateArray())
-                        if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _))
+                        if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
+                            body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _))
                             Register(body, path, packed: true);
                     return true;
                 }
@@ -217,14 +218,14 @@ public static partial class SampledMissionCatalog
         void Register(JsonElement item, string path, bool packed = false)
         {
             bool visualizer = !packed && IsVisualizer(item);
-            if (visualizer && Text(item.GetProperty("style"), "type") is not ("BodyAxes" or "FrameAxes"))
+            if (visualizer && Text(item.GetProperty("style"), "type") is not ("BodyAxes" or "FrameAxes" or "Plane" or "BodyDirection"))
             {
                 warning?.Invoke($"Mission visualizer {Text(item, "tag")} will be unavailable.");
                 return;
             }
             string name = Text(item, visualizer ? "tag" : "name");
             if (!packed && item.TryGetProperty("geometry", out var geometry) &&
-                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem" or "Axes") &&
+                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem" or "Axes" or "PlaneVisualizer" or "DirectionVisualizer") &&
                 !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
@@ -263,7 +264,7 @@ public static partial class SampledMissionCatalog
         SpiceResources resources, Func<string, string?> instrumentFrame, Action<string>? warning, CancellationToken cancellation)
     {
         if (IsVisualizer(item))
-            return ReadAxesVisualizer(item, resolve);
+            return ReadVisualizer(item, resolve, resources);
         string name = Text(item, "name");
         JulianInstant start = Date(item, "startTime", Minimum);
         JulianInstant finish = Date(item, "endTime", Maximum);
