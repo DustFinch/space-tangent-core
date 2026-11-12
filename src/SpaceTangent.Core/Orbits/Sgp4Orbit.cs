@@ -6,7 +6,7 @@ using SpaceTangent.Core.Time;
 
 namespace SpaceTangent.Core.Orbits;
 
-/// <summary>WGS 72 near-Earth SGP4. States are Earth-centred TEME in km and km/s.</summary>
+/// <summary>Near-Earth SGP4 and deep-space SDP4. States are Earth-centred TEME in km and km/s.</summary>
 public sealed class Sgp4Orbit
 {
     private const double Mu = 398600.8;
@@ -16,6 +16,7 @@ public sealed class Sgp4Orbit
     private static readonly double Xke = 60 / Math.Sqrt(EarthRadius * EarthRadius * EarthRadius / Mu);
 
     private readonly TwoLineElements _elements;
+    private readonly Sdp4Orbit? _deep;
     private readonly bool _simple;
     private readonly double _meanMotion, _sinInclination, _cosInclination, _con41, _x1mth2, _x7thm1;
     private readonly double _eta, _cc1, _cc4, _cc5, _meanRate, _perigeeRate, _nodeRate;
@@ -40,14 +41,16 @@ public sealed class Sgp4Orbit
         _meanMotion = elements.MeanMotion / (1 + d1 / (correctedA * correctedA));
         if (!double.IsFinite(_meanMotion) || _meanMotion <= 0)
             throw new ArgumentException("TLE does not produce a valid SGP4 orbit.", nameof(elements));
-        if (Math.Tau / _meanMotion >= 225)
-            throw new NotSupportedException("This SGP4 implementation supports periods shorter than 225 minutes.");
-
         double a = Math.Pow(Xke / _meanMotion, TwoThirds);
         double p = a * oneMinusE2;
         double perigeeKm = (a * (1 - e) - 1) * EarthRadius;
         if (perigeeKm < 0)
             throw new ArgumentException("TLE perigee is below the Earth reference surface.", nameof(elements));
+        if (Math.Tau / _meanMotion >= 225)
+        {
+            _deep = new(elements);
+            return;
+        }
         _simple = perigeeKm < 220;
         double sKm = perigeeKm < 156 ? Math.Max(20, perigeeKm - 78) : 78;
         double s = 1 + sKm / EarthRadius;
@@ -105,6 +108,7 @@ public sealed class Sgp4Orbit
     }
 
     public JulianInstant Epoch { get; }
+    public bool DeepSpace => _deep is not null;
     public static FrameId Frame { get; } = new("teme-of-date");
 
     public bool TrySample(JulianInstant tdb, out CartesianState state)
@@ -113,6 +117,9 @@ public sealed class Sgp4Orbit
         state = default;
         if (Math.Abs(minutes) > 365 * 1440)
             return false;
+
+        if (_deep is not null)
+            return _deep.TrySample(minutes, out state);
 
         double t2 = minutes * minutes;
         double mean = _elements.MeanAnomaly + _meanRate * minutes;

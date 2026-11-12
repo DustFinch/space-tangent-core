@@ -8,5 +8,10 @@
     "path": "docs/DE440.md",
     "sha256": "971b665143337863e05c11076e193529db06f5a97b6d7f44314c071f37901b3e",
     "reason": "Pinned GPL source attribution for the TASS satellite coefficients."
+  },
+  {
+    "reason": "Pinned upstream source attribution for the NORAD deep-space equations.",
+    "sha256": "de824feeed7a878ee681324e82569ce677436836ae9fa6ab9e50b38e42d4ca6b",
+    "path": "docs/SATELLITE_ORBITS.md"
   }
 ]

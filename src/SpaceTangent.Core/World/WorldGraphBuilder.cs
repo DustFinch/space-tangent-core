@@ -125,10 +125,23 @@ public sealed partial class WorldGraphBuilder
         return id;
     }
 
-    public void AddScienceSatellite(ScienceSatellite satellite)
+    public void AddLocalTleSatellite(LocalTleSatellite satellite)
     {
         ArgumentNullException.ThrowIfNull(satellite);
-        AddTrajectory(satellite.Id, satellite.TryOrbit, SolarSystemSample.EarthId);
+        AddTrajectory(satellite.Id, epoch => satellite.SampleInWorld(epoch), SolarSystemSample.EarthId);
+    }
+
+    public void AddScienceSatellite(ScienceSatellite satellite) => AddScienceSatellite(satellite, null);
+
+    public void AddScienceSatellite(ScienceSatellite satellite, LocalTleSatellite? updatedElements)
+    {
+        ArgumentNullException.ThrowIfNull(satellite);
+        if (updatedElements is not null && updatedElements.Id != satellite.Id)
+            throw new ArgumentException("Updated elements must use the same satellite ID.", nameof(updatedElements));
+        bool preferUpdate = updatedElements?.Epoch.CompareTo(satellite.Epoch) > 0;
+        AddTrajectory(satellite.Id, epoch => preferUpdate
+            ? updatedElements!.SampleInWorld(epoch) ?? satellite.TryOrbit(epoch)
+            : satellite.TryOrbit(epoch) ?? updatedElements?.SampleInWorld(epoch), SolarSystemSample.EarthId);
         AddTwoVectorOrientation(satellite.Id, ToAxis(satellite.NadirAxis),
             new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Position),
             ToAxis(satellite.RelativeVelocityAxis),

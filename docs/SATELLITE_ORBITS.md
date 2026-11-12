@@ -1,0 +1,7 @@
+# Satellite element catalogues
+
+`TwoLineElements.Parse` validates paired catalogue numbers, field ranges and checksums. `LocalTleCatalogue.Load` reads local two-line or named three-line catalogues, retaining the newest valid elements per number and aliases from all contributing groups. Propagated states use the TDB instant supplied by the caller. Raw states are Earth-centered TEME in kilometers and kilometers per second. The default world transport uses the same approximate mean Earth equator as the surface view and aligns TEME with Greenwich using the original sidereal rotation.
+
+The near-Earth branch retains the existing Vallado SGP4 implementation and its original reference cases. For periods of at least 225 minutes, the deep-space branch uses the original NORAD SDP4 equations including lunar-solar terms and resonances. It copies the initialized integrator and periodic cache before each evaluation. The propagation window is 365 days either side of the element epoch.
+
+The retained deep-space arithmetic comes from the NORAD package distributed by T. S. Kelso, as preserved in [the pinned upstream `thirdparty/noradtle` source](https://github.com/claurel/cosmographia/tree/171462736a30c06594dfc45ad2daf85d024b20e2/thirdparty/noradtle). The C# port retains only the SDP4 code and the common operations it calls. Verification uses the independent original C++ runner outputs and all four archived local TLE groups.

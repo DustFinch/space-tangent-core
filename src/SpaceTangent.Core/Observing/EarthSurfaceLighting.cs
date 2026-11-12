@@ -35,11 +35,7 @@ public static class EarthSurfaceLighting
         if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));
 
-        JulianInstant tt = TimeConversion.Convert(system.Epoch, TimeScale.Tt);
-        double ttDays = (double)tt.DifferenceNanoseconds(new(JulianInstant.J2000Day, 0, TimeScale.Tt)) /
-            JulianInstant.NanosecondsPerDay;
-        double ut1Days = ttDays - DeltaT.Seconds(tt, deltaT) / JulianInstant.SecondsPerDay;
-        double angle = SiderealAngle(ut1Days, ttDays / 36_525);
+        double angle = GreenwichSiderealAngle(system.Epoch, deltaT);
         double longitude = angle + site.LongitudeDegrees * (Math.PI / 180);
         double latitude = site.LatitudeDegrees * (Math.PI / 180);
         var (sinLongitude, cosLongitude) = Math.SinCos(longitude);
@@ -80,6 +76,15 @@ public static class EarthSurfaceLighting
         double scale = MeanLunarDistanceKilometers / moonDistance *
             AstronomicalUnits.KilometersPerAstronomicalUnit / solarDistance;
         return reflection * visible * scale * scale;
+    }
+
+    internal static double GreenwichSiderealAngle(JulianInstant epoch, DeltaTModel deltaT)
+    {
+        JulianInstant tt = TimeConversion.Convert(epoch, TimeScale.Tt);
+        double ttDays = (double)tt.DifferenceNanoseconds(new(JulianInstant.J2000Day, 0, TimeScale.Tt)) /
+            JulianInstant.NanosecondsPerDay;
+        double ut1Days = ttDays - DeltaT.Seconds(tt, deltaT) / JulianInstant.SecondsPerDay;
+        return SiderealAngle(ut1Days, ttDays / 36_525);
     }
 
     private static double SiderealAngle(double ut1Days, double ttCenturies)
