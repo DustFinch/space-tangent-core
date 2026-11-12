@@ -162,7 +162,10 @@ public sealed class De440EphemerisTests
 
         Assert.Equal(moscowDate.AddDays(1),
             EarthObserving.LocalMeanDate(TimeConversion.FromUtc(new(moscowDate, 23, 30)), moscow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => EarthObserving.Twilight(Ephemeris.Value, new(1900, 1, 1), moscow, model));
+        var early = EarthObserving.Twilight(Ephemeris.Value, new(1900, 1, 1), moscow, model);
+        Assert.Equal(TimeScale.Tdb, early.Horizon.Rising!.Value.Scale);
+        Assert.Equal(TimeScale.Tdb, early.Horizon.Setting!.Value.Scale);
+        Assert.True(early.Horizon.Setting.Value.CompareTo(early.Horizon.Rising.Value) > 0);
     }
 
     private static void CheckTime(JulianInstant? actual, DateOnly date, int hour, int minute, int toleranceMinutes)

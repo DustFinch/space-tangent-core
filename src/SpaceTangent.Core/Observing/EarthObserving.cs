@@ -8,7 +8,7 @@ namespace SpaceTangent.Core.Observing;
 /// <summary>Geometric altitude and azimuth measured eastward from north.</summary>
 public readonly record struct HorizontalCoordinates(double AltitudeDegrees, double? AzimuthDegrees);
 
-/// <summary>Crossings on a local mean solar date. Returned instants use TAI.</summary>
+/// <summary>Crossings on a local mean solar date. Uses TAI for dated UTC or TDB for modeled Earth time.</summary>
 public readonly record struct SolarAltitudeCrossings(JulianInstant? Rising, JulianInstant? Setting, bool StartsAbove)
 {
     public bool AlwaysAbove => StartsAbove && Rising is null && Setting is null;
@@ -44,15 +44,26 @@ public static class EarthObserving
             horizontal < 1e-12 ? null : bearing < 0 ? bearing + 360 : bearing);
     }
 
-    public static DateOnly LocalMeanDate(JulianInstant epoch, EarthSite site)
+    public static DateOnly LocalMeanDate(JulianInstant epoch, EarthSite site) =>
+        LocalMeanDate(epoch, site, DeltaTModel.MorrisonStephenson2004);
+
+    public static DateOnly LocalMeanDate(JulianInstant epoch, EarthSite site, DeltaTModel model)
     {
         if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));
 
-        UtcDateTime utc = TimeConversion.ToUtc(epoch);
-        DateTime clock = utc.Date.ToDateTime(new(utc.Hour, utc.Minute, Math.Min(utc.Second, 59)))
-            .AddTicks(utc.Nanosecond / 100);
-        return DateOnly.FromDateTime(clock.AddSeconds(site.LongitudeDegrees * 240));
+        try
+        {
+            UtcDateTime utc = TimeConversion.ToUtc(epoch);
+            DateTime clock = utc.Date.ToDateTime(new(utc.Hour, utc.Minute, Math.Min(utc.Second, 59)))
+                .AddTicks(utc.Nanosecond / 100);
+            return DateOnly.FromDateTime(clock.AddSeconds(site.LongitudeDegrees * 240));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return EarthCivilTime.ModeledLocalTime(epoch, model, site.LongitudeDegrees)?.Date ??
+                throw new ArgumentOutOfRangeException(nameof(epoch), "Epoch is outside the civil calendar.");
+        }
     }
 
     /// <summary>Estimates crossings using five-minute samples refined to one second. Uses a level horizon.</summary>
@@ -64,8 +75,19 @@ public static class EarthObserving
         if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));
 
-        JulianInstant start = LocalMidnight(date, site.LongitudeDegrees);
-        JulianInstant end = LocalMidnight(date.AddDays(1), site.LongitudeDegrees);
+        JulianInstant start, end;
+        try
+        {
+            start = LocalMidnight(date, site.LongitudeDegrees);
+            end = LocalMidnight(date.AddDays(1), site.LongitudeDegrees);
+            _ = TimeConversion.Convert(start, TimeScale.Tdb);
+            _ = TimeConversion.Convert(end, TimeScale.Tdb);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            start = EarthCivilTime.ModelMidnight(date, site.LongitudeDegrees, deltaT);
+            end = EarthCivilTime.ModelMidnight(date.AddDays(1), site.LongitudeDegrees, deltaT);
+        }
         JulianInstant previous = start;
         double previousAltitude = Altitude(start);
         var civil = new SolarAltitudeCrossings(null, null, previousAltitude >= CivilLimit);

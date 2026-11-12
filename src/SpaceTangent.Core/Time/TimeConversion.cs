@@ -63,17 +63,25 @@ public static class TimeConversion
     private static JulianInstant FromTdb(JulianInstant tdb)
     {
         ValidateTdb(tdb);
-        return Relabel(tdb.AddNanoseconds(-PeriodicCorrection(tdb)), TimeScale.Tt);
+        return ApproximateTtForEarth(tdb);
     }
 
+    internal static JulianInstant ApproximateTtForEarth(JulianInstant epoch) => epoch.Scale == TimeScale.Tdb
+        ? Relabel(epoch.AddNanoseconds(-PeriodicCorrection(epoch)), TimeScale.Tt) : Convert(epoch, TimeScale.Tt);
+
     private static JulianInstant ToTdb(JulianInstant tt)
+    {
+        JulianInstant tdb = ApproximateTdbForEarth(tt);
+        ValidateTdb(tdb);
+        return tdb;
+    }
+
+    internal static JulianInstant ApproximateTdbForEarth(JulianInstant tt)
     {
         JulianInstant ttCoordinate = Relabel(tt, TimeScale.Tdb);
         JulianInstant estimate = ttCoordinate.AddNanoseconds(PeriodicCorrection(ttCoordinate));
         // Evaluate the correction on the TDB axis for both directions. The slope is < 4e-10.
-        JulianInstant tdb = ttCoordinate.AddNanoseconds(PeriodicCorrection(estimate));
-        ValidateTdb(tdb);
-        return tdb;
+        return ttCoordinate.AddNanoseconds(PeriodicCorrection(estimate));
     }
 
     private static long PeriodicCorrection(JulianInstant tdb)

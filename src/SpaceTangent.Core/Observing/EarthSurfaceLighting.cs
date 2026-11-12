@@ -80,7 +80,7 @@ public static class EarthSurfaceLighting
 
     internal static double GreenwichSiderealAngle(JulianInstant epoch, DeltaTModel deltaT)
     {
-        JulianInstant tt = TimeConversion.Convert(epoch, TimeScale.Tt);
+        JulianInstant tt = TimeConversion.ApproximateTtForEarth(epoch);
         double ttDays = (double)tt.DifferenceNanoseconds(new(JulianInstant.J2000Day, 0, TimeScale.Tt)) /
             JulianInstant.NanosecondsPerDay;
         double ut1Days = ttDays - DeltaT.Seconds(tt, deltaT) / JulianInstant.SecondsPerDay;
