@@ -13,17 +13,20 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     double RadiusKilometers, Vector3d Color, string? Mesh, Vector3d MeshCenter, Basis3d MeshRotation,
     SscBodyOrientation? Orientation, Func<JulianInstant, CartesianState?> Sample)
 {
+    public Func<JulianInstant, FrameKinematics?>? SampleRotation { get; init; }
+
     public string Name => Names.Split(':')[0];
 }
 
 /// <summary>Local SSC bodies with conic or cubic XYZV orbits and static or two-vector attitudes.</summary>
-public static class SscBodyCatalogue
+public static partial class SscBodyCatalogue
 {
     private const double AuKilometers = 149_597_870.7;
     private static readonly FrameId Icrs = new("icrf3");
     private static readonly Basis3d Ecliptic = Rotation(new(1, 0, 0), 23.4392911);
 
-    public static IReadOnlyList<SscBodyDefinition> Load(string root, CancellationToken cancellation = default)
+    public static IReadOnlyList<SscBodyDefinition> Load(string root, CancellationToken cancellation = default,
+        ISscScriptModels? scripts = null, Action<string>? warning = null)
     {
         root = Path.GetFullPath(root);
         if (!AddonDependencies.DirectoryExists(root))
@@ -35,24 +38,45 @@ public static class SscBodyCatalogue
         string[] files = paths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length > 64)
             throw new InvalidDataException("A body catalogue source contains more than 64 SSC files.");
+        var definitions = SscDefinitions.Load(files, root, cancellation);
+        if (definitions.Count > 512)
+            throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
+        var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
         var result = new List<SscBodyDefinition>();
-        foreach (SscDefinition item in SscDefinitions.Load(files, root, cancellation))
+        var visited = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var reading = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in definitions)
+            Read(item);
+        return result.AsReadOnly();
+
+        bool Read(SscDefinition item)
         {
             cancellation.ThrowIfCancellationRequested();
-            if (result.Count >= 512)
-                throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
-            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root)));
+            string path = item.Parent + "/" + item.Name;
+            if (visited.TryGetValue(path, out bool installed))
+                return installed;
+            if (!reading.Add(path))
+                throw new InvalidDataException($"SSC parent cycle at {path}.");
+            if (!byPath.TryGetValue(item.Parent, out var parent) || Read(parent))
+            {
+                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning));
+                installed = body is not null;
+                if (body is not null)
+                    result.Add(body);
+            }
+            reading.Remove(path);
+            visited[path] = installed;
+            return installed;
         }
-        return result.AsReadOnly();
     }
 
     /// <summary>Reads a local body pack and its optional fixed-column MPC selections.</summary>
     public static IReadOnlyList<SscBodyDefinition> LoadWithMpc(string root, Action<string> warning,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default, ISscScriptModels? scripts = null)
     {
         ArgumentNullException.ThrowIfNull(warning);
         root = Path.GetFullPath(root);
-        var bodies = Load(root, cancellation).ToList();
+        var bodies = Load(root, cancellation, scripts, warning).ToList();
         if (!AddonDependencies.DirectoryExists(root))
             return bodies.AsReadOnly();
 
@@ -100,7 +124,7 @@ public static class SscBodyCatalogue
         SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
 
-    private static SscBodyDefinition ReadBody(SscDefinition item, string root)
+    private static SscBodyDefinition? ReadBody(SscDefinition item, string root, ISscScriptModels? scripts, Action<string>? warning)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -117,16 +141,28 @@ public static class SscBodyCatalogue
         if (beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
-        if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
+        bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
+        SscScriptOrbit? scripted = usesScriptOrbit
+            ? TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) : null;
+        if (scripted is not null)
+            raw = ScriptOrbit(scripted);
+        else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {
             var context = new SscOrbitContext(Icrs, heliocentric ? AuKilometers : 1,
                 heliocentric ? 31_557_600 : 86_400);
             var curve = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
             raw = epoch => curve.Evaluate(epoch);
         }
+        else if (fields.Fields.TryGetValue("FixedPosition", out var position))
+        {
+            var state = new CartesianState(ReadVector(position), default);
+            raw = _ => state;
+        }
         else
         {
             string key = fields.Fields.ContainsKey("SampledTrajectory") ? "SampledTrajectory" : "SampledOrbit";
+            if (usesScriptOrbit && !fields.Fields.ContainsKey(key))
+                return null;
             SscValue data = fields.Get(key);
             string name;
             if (data is SscValue.Map sample)
@@ -137,8 +173,17 @@ public static class SscBodyCatalogue
             }
             else
                 name = data.AsText();
-            string file = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root, item.DirectoryFor(key), name,
-                Path.Combine("models", "trajectories"), "data");
+            string file;
+            try
+            {
+                file = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root, item.DirectoryFor(key), name,
+                    Path.Combine("models", "trajectories"), "data", "trajectories");
+            }
+            catch (FileNotFoundException) when (usesScriptOrbit)
+            {
+                Warn($"The alternate {key} resource is unavailable.");
+                return null;
+            }
             if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
                 throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
             var curve = SampledStateTrajectory.ReadXyzv(file, Icrs);
@@ -148,7 +193,7 @@ public static class SscBodyCatalogue
                 curve.TrySample(epoch, out CartesianState state) ? state : null;
         }
 
-        double radius = Number(fields.Get("Radius"));
+        double radius = fields.Fields.TryGetValue("Radius", out var radiusValue) ? Number(radiusValue) : 1;
         if (radius is <= 0 or > 2_000_000)
             throw new InvalidDataException("SSC body radius is out of range.");
         string? mesh = Text("Mesh") is { } fileName
@@ -164,20 +209,78 @@ public static class SscBodyCatalogue
             meshRotation = Rotation(new(rotation[1], rotation[2], rotation[3]), rotation[0]);
         }
         SscBodyOrientation? orientation = null;
+        Basis3d spinFrame = Ecliptic;
         if (fields.Fields.ContainsKey("BodyFrame"))
         {
-            SscValue.Map frame = fields.Object("BodyFrame").Object("TwoVector");
-            orientation = new(ReadAxis(frame.Object("Primary")), ReadAxis(frame.Object("Secondary")));
+            var frame = fields.Object("BodyFrame");
+            if (frame.Fields.Count != 1)
+                throw new InvalidDataException("SSC BodyFrame requires one frame definition.");
+            if (frame.Fields.ContainsKey("TwoVector"))
+            {
+                var vectors = frame.Object("TwoVector");
+                orientation = new(ReadAxis(vectors.Object("Primary")), ReadAxis(vectors.Object("Secondary")));
+            }
+            else if (frame.Fields.ContainsKey("EquatorJ2000"))
+                spinFrame = Basis3d.Identity;
+            else if (!frame.Fields.ContainsKey("EclipticJ2000"))
+                throw new NotSupportedException("This SSC body frame is unavailable.");
         }
-        if (fields.Fields.TryGetValue("FixedRotation", out var fixedRotation) &&
-            fixedRotation is not SscValue.Map { Fields.Count: 0 })
-            throw new NotSupportedException("Only an identity fixed rotation is available for SSC body frames.");
-        if (fields.Fields.Keys.Any(key => key is "UniformRotation" or "CustomRotation" or "ScriptedRotation" or
-                "SpiceRotation" or "SampledOrientation"))
+
+        Func<JulianInstant, FrameKinematics?>? spin = null;
+        bool usesScriptRotation = fields.Fields.ContainsKey("ScriptedRotation");
+        if (usesScriptRotation &&
+            TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
+            spin = ScriptRotation(scriptedRotation, spinFrame);
+        else if (fields.Fields.ContainsKey("SampledOrientation"))
+        {
+            string name = Text("SampledOrientation")!;
+            try
+            {
+                string file = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root,
+                    item.DirectoryFor("SampledOrientation"), name, "data", "trajectories");
+                spin = ReadSampledSpin(file, spinFrame);
+            }
+            catch (FileNotFoundException) when (usesScriptRotation)
+            {
+                Warn("The alternate sampled orientation is unavailable.");
+                return null;
+            }
+        }
+        else if (fields.Fields.TryGetValue("FixedRotation", out var fixedRotation))
+        {
+            if (fixedRotation is not SscValue.Map fixedSpin || fixedSpin.Fields.Any(pair => Number(pair.Value) != 0))
+                throw new NotSupportedException("Only an identity fixed rotation is available for SSC body frames.");
+        }
+        else if (usesScriptRotation)
+            return null;
+        else if (fields.Fields.Keys.Any(key => key is "UniformRotation" or "CustomRotation" or "SpiceRotation"))
             throw new NotSupportedException("This body catalogue needs a different rotation model.");
+        if (spin is not null && orientation is not null)
+            throw new NotSupportedException("Scripted and sampled rotations currently need an inertial body frame.");
 
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
-            mesh, meshCenter, meshRotation, orientation, Sample);
+            mesh, meshCenter, meshRotation, orientation, Sample) { SampleRotation = spin };
+
+        T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
+        {
+            if (make is not null)
+            {
+                try
+                {
+                    if (make(ScriptRequest(item, field, root)) is { } model)
+                        return model;
+                }
+                catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException)
+                {
+                    Warn($"{field} initialization failed. {error.Message}");
+                    return null;
+                }
+            }
+            Warn($"{field} initialization failed: factory unavailable or rejected its model.");
+            return null;
+        }
+
+        void Warn(string message) => warning?.Invoke($"{item.Parent}/{item.Name}: {message}");
 
         string? Text(string field) => fields.Fields.TryGetValue(field, out SscValue? value) ? value.AsText() : null;
 

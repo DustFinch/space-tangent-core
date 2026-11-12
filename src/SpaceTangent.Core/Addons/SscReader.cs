@@ -8,7 +8,7 @@ internal enum SscDisposition { Add, Modify, Replace }
 
 internal abstract record SscValue
 {
-    internal sealed record Atom(string Text) : SscValue;
+    internal sealed record Atom(string Text, bool Quoted = false) : SscValue;
     internal sealed record List(SscValue[] Items) : SscValue;
     internal sealed record Map(Dictionary<string, SscValue> Fields) : SscValue
     {
@@ -121,7 +121,7 @@ internal sealed class SscReader(string input, string path)
             return ReadObject(depth);
         if (next == '[')
             return ReadArray(depth);
-        return new SscValue.Atom(ReadText());
+        return new SscValue.Atom(ReadText(), next == '"');
     }
 
     private SscValue.Map ReadObject(int depth)
