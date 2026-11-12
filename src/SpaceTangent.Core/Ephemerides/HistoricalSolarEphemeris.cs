@@ -54,12 +54,7 @@ public sealed class HistoricalSolarEphemeris : ISolarSystemEphemeris
 
         double signed = OffsetFromBoundary(tdb);
         var (exact, approximate) = signed < 0 ? _lower.Value : _upper.Value;
-        double direction = Math.Sign(signed);
-        double u = Math.Abs(signed) / TransitionSeconds, left = 1 - u;
-        double positionWeight = (1 + 2 * u) * left * left;
-        double velocityWeight = direction * TransitionSeconds * u * left * left;
-        double positionRate = direction * (-6 * u * left) / TransitionSeconds;
-        double velocityRate = left * (1 - 3 * u);
+
         return new(tdb, Match(sample.Sun, exact.Sun, approximate.Sun),
             Match(sample.Earth, exact.Earth, approximate.Earth),
             Match(sample.Moon, exact.Moon, approximate.Moon),
@@ -75,15 +70,8 @@ public sealed class HistoricalSolarEphemeris : ISolarSystemEphemeris
             PlutoBarycenter = Match(sample.PlutoBarycenter, exact.PlutoBarycenter, approximate.PlutoBarycenter)
         };
 
-        // Cubic Hermite correction preserves the precise position and velocity at the coverage boundary.
-        CartesianState Match(CartesianState state, CartesianState modern, CartesianState theory)
-        {
-            CartesianState difference = modern - theory;
-            return new(state.PositionKilometers + difference.PositionKilometers * positionWeight +
-                difference.VelocityKilometersPerSecond * velocityWeight,
-                state.VelocityKilometersPerSecond + difference.PositionKilometers * positionRate +
-                difference.VelocityKilometersPerSecond * velocityRate);
-        }
+        CartesianState Match(CartesianState state, CartesianState modern, CartesianState theory) =>
+            KernelBackedTrajectory.ApplyBoundaryCorrection(state, modern - theory, signed, TransitionSeconds);
     }
 
     private double OffsetFromBoundary(JulianInstant epoch)

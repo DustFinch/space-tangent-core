@@ -19,6 +19,21 @@ public sealed class SpkKernel
         _segments = _file.Segments().Select(Prepare).ToArray();
     }
 
+    /// <summary>Returns the union of coverage intervals for the specified primitive target and centre.</summary>
+    public IReadOnlyList<(JulianInstant Start, JulianInstant End)> GetCoverage(int target, int center)
+    {
+        var ranges = new List<(JulianInstant Start, JulianInstant End)>();
+        foreach (Segment segment in _segments.Where(segment => segment.Descriptor.FirstId == target &&
+                     segment.Descriptor.SecondId == center).OrderBy(segment => segment.Start))
+        {
+            if (ranges.Count == 0 || segment.Start.CompareTo(ranges[^1].End) > 0)
+                ranges.Add((segment.Start, segment.End));
+            else if (segment.End.CompareTo(ranges[^1].End) > 0)
+                ranges[^1] = (ranges[^1].Start, segment.End);
+        }
+        return ranges.AsReadOnly();
+    }
+
     /// <summary>Returns a target relative to the segment's centre. Later segments take precedence.</summary>
     public bool TryState(int target, int center, JulianInstant tdb, out CartesianState state)
     {
