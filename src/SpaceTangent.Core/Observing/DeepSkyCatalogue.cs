@@ -3,11 +3,19 @@ using SpaceTangent.Contracts;
 
 namespace SpaceTangent.Core.Observing;
 
-public enum DeepSkyKind { Galaxy, Nebula, OpenCluster }
+public enum DeepSkyKind { Galaxy, Nebula, OpenCluster, GlobularCluster }
 
 public sealed record DeepSkyObject(ObjectId Id, string Designation, string Name, DeepSkyKind Kind,
     double RightAscensionDegrees, double DeclinationDegrees, double DistanceLightYears, double RadiusLightYears)
 {
+    public IReadOnlyList<string> Aliases { get; init; } = [];
+    public double? AbsoluteMagnitude { get; init; }
+    public string? Morphology { get; init; }
+    public Basis3d Orientation { get; init; } = Basis3d.Identity;
+    public double KingConcentration { get; init; }
+    public double CoreRadiusArcminutes { get; init; }
+    public string? Mesh { get; init; }
+
     public double RadiusKilometers => RadiusLightYears * StellarEntry.KilometersPerLightYear;
 
     public Vector3d PositionKilometers

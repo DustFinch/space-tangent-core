@@ -67,6 +67,20 @@ internal sealed class SscReader(string input, string path)
         }
     }
 
+    internal IEnumerable<(string Kind, string Name, SscValue.Map Properties)> ReadTypedRecords(string defaultKind)
+    {
+        while (SkipSpace())
+        {
+            string kind = input[_offset] == '"' ? defaultKind : ReadText();
+            if (kind == "Add")
+                kind = SkipSpace() && input[_offset] == '"' ? defaultKind : ReadText();
+            string name = ReadText();
+            if (!SkipSpace() || input[_offset] != '{')
+                throw Error("Expected catalogue object properties.");
+            yield return (kind, name, ReadObject(0));
+        }
+    }
+
     private SscValue ReadValue(int depth)
     {
         if (depth >= 16 || !SkipSpace())
