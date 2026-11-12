@@ -5,7 +5,10 @@ using SpaceTangent.Core.Orbits;
 namespace SpaceTangent.Core.Addons;
 
 public readonly record struct ScienceSatelliteSample(CartesianState EarthRelativeState, Basis3d BodyToTrajectory,
-    Basis3d MeshToBody);
+    Basis3d MeshToBody)
+{
+    public Basis3d InstrumentToTrajectory { get; init; }
+}
 
 public sealed class ScienceSatellite
 {
@@ -15,7 +18,7 @@ public sealed class ScienceSatellite
     private readonly Basis3d _meshToBody;
 
     internal ScienceSatellite(string name, TwoLineElements elements, SignedAxis nadir, SignedAxis relativeVelocity,
-        Basis3d meshToBody, string meshPath, double sizeKilometers)
+        Basis3d meshToBody, Basis3d instrumentToFrame, string meshPath, double sizeKilometers)
     {
         Name = name;
         Id = new($"norad/{elements.CatalogNumber}");
@@ -23,6 +26,8 @@ public sealed class ScienceSatellite
         _nadir = nadir;
         _relativeVelocity = relativeVelocity;
         _meshToBody = meshToBody;
+        InstrumentToFrame = instrumentToFrame;
+        MeshToOrientedBody = SampledMissionCatalog.Multiply(instrumentToFrame.Transpose(), meshToBody);
         MeshPath = meshPath;
         SizeKilometers = sizeKilometers;
     }
@@ -32,6 +37,9 @@ public sealed class ScienceSatellite
     public string MeshPath { get; }
     public double SizeKilometers { get; }
     public Basis3d MeshToBody => _meshToBody;
+    /// <summary>Mesh transform to apply after the world graph's physical spacecraft attitude.</summary>
+    public Basis3d MeshToOrientedBody { get; }
+    internal Basis3d InstrumentToFrame { get; }
     public JulianInstant Epoch => _orbit.Epoch;
     internal SignedAxis NadirAxis => _nadir;
     internal SignedAxis RelativeVelocityAxis => _relativeVelocity;
@@ -50,7 +58,10 @@ public sealed class ScienceSatellite
                 state.VelocityKilometersPerSecond * -1, out var bodyToTrajectory))
             return false;
 
-        sample = new(state, bodyToTrajectory, _meshToBody);
+        sample = new(state, bodyToTrajectory, _meshToBody)
+        {
+            InstrumentToTrajectory = SampledMissionCatalog.Multiply(bodyToTrajectory, InstrumentToFrame)
+        };
         return true;
     }
 }

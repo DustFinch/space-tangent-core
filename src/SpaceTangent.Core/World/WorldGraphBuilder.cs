@@ -90,7 +90,11 @@ public sealed partial class WorldGraphBuilder
     }
 
     public void AddTwoVectorOrientation(ObjectId id, FrameAxis primaryAxis, RelativeDirection primary,
-        FrameAxis secondaryAxis, RelativeDirection secondary)
+        FrameAxis secondaryAxis, RelativeDirection secondary) =>
+        AddTwoVectorOrientation(id, primaryAxis, primary, secondaryAxis, secondary, null);
+
+    private void AddTwoVectorOrientation(ObjectId id, FrameAxis primaryAxis, RelativeDirection primary,
+        FrameAxis secondaryAxis, RelativeDirection secondary, Basis3d? bodyToFrame)
     {
         SignedAxis first = ResolveAxis(primaryAxis), second = ResolveAxis(secondaryAxis);
         if (first.Index == second.Index)
@@ -106,6 +110,8 @@ public sealed partial class WorldGraphBuilder
             if (!TwoVectorBasis.TryCreate(first, ReadDirection(input, primary), second, ReadDirection(input, secondary),
                     out var basis))
                 return default;
+            if (bodyToFrame is { } local)
+                basis = SampledMissionCatalog.Multiply(basis, local);
             return WorldValue.FromOrientation(new(basis, null));
         }));
     }
@@ -145,7 +151,7 @@ public sealed partial class WorldGraphBuilder
         AddTwoVectorOrientation(satellite.Id, ToAxis(satellite.NadirAxis),
             new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Position),
             ToAxis(satellite.RelativeVelocityAxis),
-            new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Velocity));
+            new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Velocity), satellite.InstrumentToFrame);
     }
 
     public void AddSampledSpacecraft(SscSampledSpacecraft spacecraft)

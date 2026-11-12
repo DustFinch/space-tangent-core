@@ -87,13 +87,13 @@ public static class ScienceSatelliteCatalog
         if (!double.IsFinite(size) || size <= 0)
             throw new FormatException("Mesh size must be finite and positive.");
 
-        Basis3d fixedRotation = item.TryGetProperty("rotationModel", out JsonElement rotation)
+        var (meshToFrame, instrumentToFrame) = item.TryGetProperty("rotationModel", out JsonElement rotation)
             ? ReadFixedRotation(rotation)
-            : Basis3d.Identity;
-        return new(name, elements, nadir, velocity, fixedRotation, meshPath, size);
+            : (Basis3d.Identity, Basis3d.Identity);
+        return new(name, elements, nadir, velocity, meshToFrame, instrumentToFrame, meshPath, size);
     }
 
-    private static Basis3d ReadFixedRotation(JsonElement model)
+    private static (Basis3d MeshToFrame, Basis3d InstrumentToFrame) ReadFixedRotation(JsonElement model)
     {
         Require(model, "type", "Fixed");
         JsonElement quaternion = model.GetProperty("quaternion");
@@ -105,7 +105,8 @@ public static class ScienceSatelliteCatalog
             throw new FormatException("Fixed rotation coefficients must be finite.");
 
         // Source files use the raw WXYZ matrix expression. Keep it distinct from the rigid two-vector basis.
-        return QuaternionBasis.FromRaw(w, x, y, z);
+        var rigid = new RigidQuaternion(w, x, y, z).Normalize();
+        return (QuaternionBasis.FromRaw(w, x, y, z), QuaternionBasis.FromRaw(rigid.W, rigid.X, rigid.Y, rigid.Z));
     }
 
     private static void ReadDirection(JsonElement element, string type, string name)

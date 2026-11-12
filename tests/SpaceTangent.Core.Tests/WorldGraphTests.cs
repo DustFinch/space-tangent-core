@@ -129,8 +129,8 @@ public sealed class WorldGraphTests
             Assert.True(track.TrySample(snapshot.Epoch, out var expected));
             Assert.InRange((state.PositionKilometers - earth.PositionKilometers -
                 expected.EarthRelativeState.PositionKilometers).Length, 0, 3e-8);
-            Assert.InRange((frame.ToWorld.X - expected.BodyToTrajectory.X).Length, 0, 1e-11);
-            Assert.InRange((frame.ToWorld.Y - expected.BodyToTrajectory.Y).Length, 0, 1e-11);
+            Assert.InRange((frame.ToWorld.X - expected.InstrumentToTrajectory.X).Length, 0, 1e-11);
+            Assert.InRange((frame.ToWorld.Y - expected.InstrumentToTrajectory.Y).Length, 0, 1e-11);
         }
     }
 

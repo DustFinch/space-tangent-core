@@ -30,6 +30,9 @@ public sealed class PackedSatelliteCatalogTests
             Assert.True(compiled.TrySample(epoch, out var b));
             Assert.Equal(a.EarthRelativeState, b.EarthRelativeState);
             Assert.Equal(a.BodyToTrajectory, b.BodyToTrajectory);
+            Compare(a.InstrumentToTrajectory.X, b.InstrumentToTrajectory.X);
+            Compare(a.InstrumentToTrajectory.Y, b.InstrumentToTrajectory.Y);
+            Compare(a.InstrumentToTrajectory.Z, b.InstrumentToTrajectory.Z);
             Compare(a.MeshToBody.X, b.MeshToBody.X);
             Compare(a.MeshToBody.Y, b.MeshToBody.Y);
             Compare(a.MeshToBody.Z, b.MeshToBody.Z);
