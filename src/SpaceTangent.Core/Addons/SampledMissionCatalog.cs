@@ -12,6 +12,7 @@ public sealed record SampledMission(ObjectId Id, string Name, string? MeshPath, 
 {
     public JulianInstant Start => Arcs[0].Start;
     public JulianInstant End => Arcs[^1].End;
+    public IReadOnlyList<MissionGeometrySpan>? Geometry { get; init; }
 }
 
 public sealed record MissionArc(JulianInstant Start, JulianInstant End, ObjectId Center,
@@ -23,6 +24,7 @@ public abstract record MissionFrame
 
     public sealed record Inertial(Basis3d ToWorld) : MissionFrame;
     public sealed record BodyFixed(ObjectId Body) : MissionFrame;
+    public sealed record Rotating(MissionFrame Parent, Func<JulianInstant, FrameKinematics> Local) : MissionFrame;
     public sealed record TwoVector(FrameAxis PrimaryAxis, RelativeDirection Primary,
         FrameAxis SecondaryAxis, RelativeDirection Secondary) : MissionFrame;
 }
@@ -70,7 +72,7 @@ public static partial class SampledMissionCatalog
         foreach (var item in items.EnumerateArray())
         {
             string name = Text(item, "name");
-            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") != "Mesh")
+            if (item.TryGetProperty("geometry", out var geometry) && Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched"))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
                 continue;
@@ -94,26 +96,10 @@ public static partial class SampledMissionCatalog
         Action<string>? warning, CancellationToken cancellation)
     {
         string name = Text(item, "name");
-        string? mesh = null;
-        double radius = .005;
-        if (item.TryGetProperty("geometry", out var geometry))
-        {
-            radius = Distance(geometry, "size");
-            if (!double.IsFinite(radius) || radius <= 0)
-                throw new InvalidDataException($"{name}: the mesh size must be finite and positive.");
-            string source = Text(geometry, "source");
-            try
-            {
-                mesh = LocalAddonFiles.ResolveRelative(root, directory, source);
-            }
-            catch (FileNotFoundException)
-            {
-                warning?.Invoke($"{name}: mesh {source} is missing; its trajectory is available.");
-            }
-        }
-
         JulianInstant start = Date(item, "startTime", Minimum);
         JulianInstant finish = Date(item, "endTime", Maximum);
+        IReadOnlyList<MissionGeometrySpan>? geometry = item.TryGetProperty("geometry", out var shown)
+            ? ReadGeometry(shown, root, directory, name, start, finish, warning) : null;
         var arcs = item.TryGetProperty("arcs", out var sequence) ? sequence.EnumerateArray().ToArray() : [item];
         if (arcs.Length is < 1 or > 128)
             throw new InvalidDataException($"{name}: a mission must contain one to 128 arcs.");
@@ -125,16 +111,16 @@ public static partial class SampledMissionCatalog
             var end = Date(arc, "endTime", finish);
             if (begins.CompareTo(start) < 0 || end.CompareTo(begins) <= 0 || end.CompareTo(finish) > 0)
                 throw new InvalidDataException($"{name}: mission arcs must be ordered and non-overlapping within the mission window.");
-            if (arc.TryGetProperty("rotationModel", out _))
-                throw new NotSupportedException($"{name}: a separate mission rotation model is not supported.");
             var center = resolve(Text(arc, "center"));
             var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center);
-            var bodyFrame = Frame(arc, "bodyFrame", resolve, name, center);
+            var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center), arc);
             var trajectory = arc.GetProperty("trajectory");
             result.Add(new(begins, end, center, ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame), trajectoryFrame, bodyFrame));
             start = end;
         }
-        return new(resolve(name), name, mesh, radius, result.AsReadOnly());
+        double radius = geometry is { Count: > 0 } ? geometry.Max(span => span.Shape.RadiusKilometers) : .005;
+        return new(resolve(name), name, geometry?.FirstOrDefault()?.Shape.MeshPath, radius, result.AsReadOnly())
+            { Geometry = geometry };
     }
 
     private static MissionFrame Frame(JsonElement arc, string property, Func<string, ObjectId> resolve,

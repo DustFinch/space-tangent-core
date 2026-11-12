@@ -2,11 +2,28 @@
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.Observing;
+using SpaceTangent.Core.Time;
 
 namespace SpaceTangent.Core.World;
 
 public sealed partial class WorldGraphBuilder
 {
+    public void AddMeanEarthRotation()
+    {
+        AddOrientation(SolarSystemSample.EarthId, epoch =>
+        {
+            try
+            {
+                var (sin, cos) = Math.SinCos(EarthSurfaceLighting.GreenwichSiderealAngle(epoch, DeltaTModel.MorrisonStephenson2004));
+                return new(new(new(cos, sin, 0), new(-sin, cos, 0), new(0, 0, 1)),
+                    new Vector3d(0, 0, Math.Tau / 86164.0905));
+            }
+            catch (ArgumentOutOfRangeException) { return null; }
+        });
+    }
+
     public void AddSampledMission(SampledMission mission)
     {
         ArgumentNullException.ThrowIfNull(mission);
@@ -79,7 +96,8 @@ public sealed partial class WorldGraphBuilder
     private static IEnumerable<WorldKey> FrameKeys(MissionFrame frame) => frame switch
     {
         MissionFrame.BodyFixed fixedFrame => [StateKey(fixedFrame.Body), new(fixedFrame.Body, WorldChannel.Orientation)],
-        MissionFrame.TwoVector two => [StateKey(two.Primary.Observer), StateKey(two.Primary.Target),
+        MissionFrame.Rotating rotating => FrameKeys(rotating.Parent),
+        MissionFrame.TwoVector two =>  [StateKey(two.Primary.Observer), StateKey(two.Primary.Target),
             StateKey(two.Secondary.Observer), StateKey(two.Secondary.Target)],
         _ => []
     };
@@ -95,7 +113,14 @@ public sealed partial class WorldGraphBuilder
                 var value = input.Read(new(fixedFrame.Body, WorldChannel.Orientation));
                 frame = value.Orientation;
                 return value.Available;
-            case MissionFrame.TwoVector two when DirectionAvailable(input, two.Primary) && DirectionAvailable(input, two.Secondary) &&
+            case MissionFrame.Rotating rotating when TryMissionFrame(input, rotating.Parent, out var parent):
+                var local = rotating.Local(input.Epoch);
+                Vector3d? angularVelocity = parent.AngularVelocityRadiansPerSecond is { } parentRate &&
+                    local.AngularVelocityRadiansPerSecond is { } localRate
+                        ? parentRate + parent.ToWorld.Transform(localRate) : null;
+                frame = new(SampledMissionCatalog.Multiply(parent.ToWorld, local.ToWorld), angularVelocity);
+                return true;
+            case MissionFrame.TwoVector two when  DirectionAvailable(input, two.Primary) && DirectionAvailable(input, two.Secondary) &&
                 TwoVectorBasis.TryCreate(ResolveAxis(two.PrimaryAxis), ReadDirection(input, two.Primary),
                     ResolveAxis(two.SecondaryAxis), ReadDirection(input, two.Secondary), out var basis):
                 frame = new(basis, null);
