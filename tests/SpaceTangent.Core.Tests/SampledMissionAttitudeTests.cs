@@ -69,7 +69,7 @@ public sealed class SampledMissionAttitudeTests
         var messages = new List<string>();
         var missions = SampledMissionCatalog.Load(Path.Combine(root, "catalog", "test.json"), root,
             name => name == "Sun" ? SolarSystemSample.SunId : null, messages.Add);
-        Assert.Equal(4, missions.Count);
+        Assert.Equal(6, missions.Count);
         var craft = Assert.Single(missions, mission => mission.Name == "CubeSat");
         var cassini = Assert.Single(missions, mission => mission.Name == "Cassini");
         var ceres = Assert.Single(missions, mission => mission.Name == "Ceres");

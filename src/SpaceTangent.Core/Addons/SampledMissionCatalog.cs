@@ -216,14 +216,15 @@ public static partial class SampledMissionCatalog
 
         void Register(JsonElement item, string path, bool packed = false)
         {
-            if (!packed && item.TryGetProperty("type", out var type) && type.GetString() == "Visualizer")
+            bool visualizer = !packed && IsVisualizer(item);
+            if (visualizer && Text(item.GetProperty("style"), "type") is not ("BodyAxes" or "FrameAxes"))
             {
                 warning?.Invoke($"Mission visualizer {Text(item, "tag")} will be unavailable.");
                 return;
             }
-            string name = Text(item, "name");
+            string name = Text(item, visualizer ? "tag" : "name");
             if (!packed && item.TryGetProperty("geometry", out var geometry) &&
-                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem") &&
+                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem" or "Axes") &&
                 !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
@@ -261,6 +262,8 @@ public static partial class SampledMissionCatalog
     private static SampledMission ReadItem(JsonElement item, Func<string, ObjectId> resolve, string root, string directory,
         SpiceResources resources, Func<string, string?> instrumentFrame, Action<string>? warning, CancellationToken cancellation)
     {
+        if (IsVisualizer(item))
+            return ReadAxesVisualizer(item, resolve);
         string name = Text(item, "name");
         JulianInstant start = Date(item, "startTime", Minimum);
         JulianInstant finish = Date(item, "endTime", Maximum);
@@ -279,6 +282,9 @@ public static partial class SampledMissionCatalog
         }
         IReadOnlyList<MissionGeometrySpan>? geometry = item.TryGetProperty("geometry", out var shown)
             ? ReadGeometry(shown, root, directory, name, start, finish, resolve, warning) : null;
+        if (geometry is not null && item.TryGetProperty("visible", out var visible) && !visible.GetBoolean())
+            geometry = Array.AsReadOnly(geometry.Select(span => span.Shape.Axes is { } axes
+                ? span with { Shape = span.Shape with { Axes = axes with { Visible = false } } } : span).ToArray());
         var arcs = item.TryGetProperty("arcs", out var sequence) ? sequence.EnumerateArray().ToArray() : [item];
         if (arcs.Length is < 1 or > 128)
             throw new InvalidDataException($"{name}: a mission must contain one to 128 arcs.");

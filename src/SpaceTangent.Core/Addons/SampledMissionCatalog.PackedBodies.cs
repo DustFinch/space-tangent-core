@@ -60,9 +60,16 @@ public static partial class SampledMissionCatalog
 
         double radius = PackedPositive(body, "radiusKm");
         MissionShape? shape = ReadPackedShape(body, root, name, radius, warning);
+        var shown = body.TryGetProperty("shown", out var interval) ? interval : default;
+        var visibleFrom = shown.ValueKind == JsonValueKind.Object ? Date(shown, "fromJdTdb", start) : start;
+        var visibleTo = shown.ValueKind == JsonValueKind.Object ? Date(shown, "untilJdTdb", end) : end;
+        if (visibleFrom.CompareTo(start) < 0)
+            visibleFrom = start;
+        if (visibleTo.CompareTo(end) > 0)
+            visibleTo = end;
         return new(id, name, shape?.MeshPath, radius, arcs.AsReadOnly())
         {
-            Geometry = shape is null ? [] : [new(start, end, shape)]
+            Geometry = shape is null || visibleTo.CompareTo(visibleFrom) <= 0 ? [] : [new(visibleFrom, visibleTo, shape)]
         };
 
         void AddArc(JulianInstant from, JulianInstant until, string center, JsonElement orbit)
@@ -188,8 +195,20 @@ public static partial class SampledMissionCatalog
 
     private static MissionShape? ReadPackedShape(JsonElement body, string root, string name, double radius, Action<string>? warning)
     {
-        if (body.TryGetProperty("axesGeometry", out _))
-            warning?.Invoke($"{name}: the packed visualizer frame is available; its axis lines are unavailable.");
+        if (body.TryGetProperty("axesGeometry", out var axes))
+        {
+            var kind = Text(axes, "kind") switch
+            {
+                "geometry" => MissionAxesKind.Geometry,
+                "bodyVisualizer" => MissionAxesKind.BodyVisualizer,
+                "frameVisualizer" => MissionAxesKind.FrameVisualizer,
+                var unknown => throw new NotSupportedException($"Unknown packed axes type {unknown}.")
+            };
+            double size = PackedPositive(axes, "scale");
+            if (!float.IsFinite((float)size))
+                throw new InvalidDataException("A packed axes size exceeds its finite rendering range.");
+            return AxesShape(new(kind, size, axes.GetProperty("naturalAxes").GetBoolean(), axes.GetProperty("catalogVisible").GetBoolean()));
+        }
         if (!body.TryGetProperty("appearance", out var appearance))
             return null;
         if (appearance.TryGetProperty("model", out var model))
