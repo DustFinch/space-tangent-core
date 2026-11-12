@@ -39,31 +39,54 @@ public sealed partial class SpkKernel
     {
         if (tdb.Scale != TimeScale.Tdb)
             throw new ArgumentException("SPK requires a TDB epoch.", nameof(tdb));
-        double et = (tdb.Day - JulianInstant.J2000Day) * (double)JulianInstant.SecondsPerDay +
-                    tdb.NanosecondsOfDay / (double)JulianInstant.NanosecondsPerSecond;
+        if (!TrySelect(target, center, tdb, out var segment))
+        {
+            state = default;
+            return false;
+        }
+        if (segment.Frame != 1)
+            throw new NotSupportedException("The selected SPK segment requires the J2000 frame.");
+        state = segment.Sample(tdb);
+        return true;
+    }
+
+    internal readonly record struct SelectedSegment(SpkKernel Kernel, int Index)
+    {
+        internal int Center => Kernel._segments[Index].Descriptor.SecondId;
+        internal int Frame => Kernel._segments[Index].Descriptor.ThirdId;
+        internal CartesianState Sample(JulianInstant tdb) => Kernel.Evaluate(Kernel._segments[Index], tdb);
+    }
+
+    internal bool TrySelect(int target, int? center, JulianInstant tdb, out SelectedSegment selected)
+    {
         for (int index = _segments.Length - 1; index >= 0; index--)
         {
-            Segment segment = _segments[index];
-            DafSegment descriptor = segment.Descriptor;
-            if (descriptor.FirstId != target || descriptor.SecondId != center ||
-                tdb.CompareTo(segment.Start) < 0 || tdb.CompareTo(segment.End) > 0)
-                continue;
-            if (descriptor.ThirdId != 1)
-                throw new NotSupportedException("The selected SPK segment requires the J2000 frame.");
-
-            double evaluationTime = Math.Clamp(et, descriptor.Begin, descriptor.End);
-            state = descriptor.FourthId switch
+            var segment = _segments[index];
+            if (segment.Descriptor.FirstId == target && (!center.HasValue || segment.Descriptor.SecondId == center) &&
+                tdb.CompareTo(segment.Start) >= 0 && tdb.CompareTo(segment.End) <= 0)
             {
-                1 or 21 => SampleDifferences(segment, evaluationTime),
-                2 or 3 => SampleChebyshev(segment, evaluationTime),
-                8 or 9 or 12 or 13 => SampleSlidingWindow(segment, evaluationTime),
-                17 => SampleEquinoctial(segment, evaluationTime),
-                _ => throw new NotSupportedException($"Unsupported SPK record type {descriptor.FourthId}.")
-            };
-            return true;
+                selected = new(this, index);
+                return true;
+            }
         }
-        state = default;
+        selected = default;
         return false;
+    }
+
+    private CartesianState Evaluate(Segment segment, JulianInstant tdb)
+    {
+        var descriptor = segment.Descriptor;
+        double et = (tdb.Day - JulianInstant.J2000Day) * (double)JulianInstant.SecondsPerDay +
+            tdb.NanosecondsOfDay / (double)JulianInstant.NanosecondsPerSecond;
+        double evaluationTime = Math.Clamp(et, descriptor.Begin, descriptor.End);
+        return descriptor.FourthId switch
+        {
+            1 or 21 => SampleDifferences(segment, evaluationTime),
+            2 or 3 => SampleChebyshev(segment, evaluationTime),
+            8 or 9 or 12 or 13 => SampleSlidingWindow(segment, evaluationTime),
+            17 => SampleEquinoctial(segment, evaluationTime),
+            _ => throw new NotSupportedException($"Unsupported SPK record type {descriptor.FourthId}.")
+        };
     }
 
     private Segment Prepare(DafSegment descriptor)

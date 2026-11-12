@@ -16,15 +16,15 @@ public sealed class SpicePolynomialBodyFrame
     public int BodyId { get; }
     public Vector3d RadiiKilometers { get; }
 
-    public SpicePolynomialBodyFrame(string pck, int bodyId)
+    public SpicePolynomialBodyFrame(string pck, int bodyId) : this(Read(pck), bodyId, requireRadii: true) { }
+
+    internal SpicePolynomialBodyFrame(SpiceTextKernel pool, int bodyId, bool requireRadii)
     {
-        if (bodyId < 100)
+        if (bodyId <= 0)
             throw new ArgumentOutOfRangeException(nameof(bodyId));
         BodyId = bodyId;
         string prefix = "BODY" + bodyId.ToString(CultureInfo.InvariantCulture);
         string system = "BODY" + (bodyId / 100).ToString(CultureInfo.InvariantCulture);
-        var pool = new SpiceTextKernel();
-        pool.Furnish(pck);
         if (new[] { "_CONSTANTS_REF_FRAME", "_CONSTANTS_JED_EPOCH" }.Any(key =>
                 pool.Contains(prefix + key) || pool.Contains(system + key)))
             throw new NotSupportedException("This body frame requires the standard J2000 text PCK model.");
@@ -48,10 +48,13 @@ public sealed class SpicePolynomialBodyFrame
             if (_phases.Length % _phaseStride != 0 || _phases.Length / _phaseStride < termCount)
                 throw new InvalidDataException("PCK nutation coefficients do not match the phase angles.");
         }
-        double[] radii = Triple(pool, prefix + "_RADII");
-        if (radii.Any(radius => radius <= 0))
-            throw new InvalidDataException("PCK body radii must be positive.");
-        RadiiKilometers = new(radii[0], radii[1], radii[2]);
+        if (requireRadii || pool.Contains(prefix + "_RADII"))
+        {
+            double[] radii = Triple(pool, prefix + "_RADII");
+            if (radii.Any(radius => radius <= 0))
+                throw new InvalidDataException("PCK body radii must be positive.");
+            RadiiKilometers = new(radii[0], radii[1], radii[2]);
+        }
 
         double[] Terms(string suffix)
         {
@@ -62,6 +65,13 @@ public sealed class SpicePolynomialBodyFrame
             int last = Array.FindLastIndex(values, value => value != 0);
             return values[..(last + 1)];
         }
+    }
+
+    private static SpiceTextKernel Read(string path)
+    {
+        var pool = new SpiceTextKernel();
+        pool.Furnish(path);
+        return pool;
     }
 
     public FrameKinematics Sample(JulianInstant tdb) => Sample(tdb, includeMeridian: true);

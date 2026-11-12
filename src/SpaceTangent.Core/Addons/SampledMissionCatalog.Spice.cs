@@ -32,14 +32,8 @@ public static partial class SampledMissionCatalog
         int target = ResolveSpiceId(value.GetProperty("target"), resources);
         int center = value.TryGetProperty("center", out var selected) ? ResolveSpiceId(selected, resources) :
             ResolveSpiceId(arcCenter, resources);
-        var kernels = resources.TrajectoryKernels();
-        return epoch =>
-        {
-            for (int index = kernels.Length - 1; index >= 0; index--)
-                if (kernels[index].TryState(target, center, epoch, out var state))
-                    return state;
-            return null;
-        };
+        var states = resources.States;
+        return epoch => states.TryState(target, center, epoch, out var state) ? state : null;
     }
 
     private static int ResolveSpiceId(JsonElement value, SpiceResources resources) => value.ValueKind switch

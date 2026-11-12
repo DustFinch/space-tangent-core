@@ -6,7 +6,7 @@ namespace SpaceTangent.Core.Addons;
 
 public sealed class SpiceSpacecraft
 {
-    private readonly SpkKernel[] _kernels;
+    private readonly SpiceStatePool _states;
     private readonly SpiceAttitude? _attitude;
 
     internal SpiceSpacecraft(string name, string parent, int target, int center, string meshPath, double radius,
@@ -20,7 +20,7 @@ public sealed class SpiceSpacecraft
         RadiusKilometers = radius;
         AttitudeFrame = attitudeFrame;
         AttitudeBaseFrame = attitudeBaseFrame;
-        _kernels = resources.TrajectoryKernels();
+        _states = resources.States;
         _attitude = attitudeFrame is null ? null : new SpiceAttitude(attitudeFrame, attitudeBaseFrame!, resources);
     }
 
@@ -34,16 +34,7 @@ public sealed class SpiceSpacecraft
     public string? AttitudeBaseFrame { get; }
     public static FrameId Frame { get; } = new("icrf3");
 
-    public bool TrySample(JulianInstant tdb, out CartesianState state)
-    {
-        for (int index = _kernels.Length - 1; index >= 0; index--)
-        {
-            if (_kernels[index].TryState(Target, Center, tdb, out state))
-                return true;
-        }
-        state = default;
-        return false;
-    }
+    public bool TrySample(JulianInstant tdb, out CartesianState state) => _states.TryState(Target, Center, tdb, out state);
 
     public bool TryAttitude(JulianInstant tdb, out Basis3d bodyToReference)
     {

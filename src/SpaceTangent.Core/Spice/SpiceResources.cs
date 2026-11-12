@@ -14,6 +14,7 @@ internal sealed class SpiceResources
     private readonly Lazy<SpiceTextKernel> _text;
     private readonly Lazy<SpkKernel[]> _trajectories;
     private readonly Lazy<CkKernel[]> _attitudes;
+    private readonly Lazy<SpiceStatePool> _states;
 
     internal SpiceResources(string root, string directory, IEnumerable<string> names)
         : this(root, names.Select(name => (directory, name))) { }
@@ -35,6 +36,7 @@ internal sealed class SpiceResources
         });
         _trajectories = new(() => Load(KernelKind.Trajectory, path => new SpkKernel(path)));
         _attitudes = new(() => Load(KernelKind.Attitude, path => new CkKernel(path)));
+        _states = new(() => new SpiceStatePool(TrajectoryKernels(), Text));
 
         T[] Load<T>(KernelKind wanted, Func<string, T> parse)
         {
@@ -54,7 +56,9 @@ internal sealed class SpiceResources
 
     internal SpiceTextKernel Text => _text.Value;
 
-    internal SpkKernel[] TrajectoryKernels() => _trajectories.Value is { Length: > 0 } kernels ? kernels :
+    internal SpiceStatePool States => _states.Value;
+
+    private SpkKernel[] TrajectoryKernels() => _trajectories.Value is { Length: > 0 } kernels ? kernels :
         throw new InvalidDataException("SPICE trajectory has no SPK file.");
 
     internal CkKernel[] AttitudeKernels() => _attitudes.Value is { Length: > 0 } kernels ? kernels :

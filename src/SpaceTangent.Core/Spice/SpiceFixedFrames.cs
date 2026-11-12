@@ -48,7 +48,7 @@ internal static class SpiceFixedFrames
     internal static Basis3d Compose(Basis3d parent, Basis3d local) =>
         new(parent.Transform(local.X), parent.Transform(local.Y), parent.Transform(local.Z));
 
-    private static Basis3d Transform(SpiceTextKernel pool, string key)
+    internal static Basis3d Transform(SpiceTextKernel pool, string key)
     {
         string kind = Text(pool, key + "_SPEC");
         if (kind == "ANGLES")
