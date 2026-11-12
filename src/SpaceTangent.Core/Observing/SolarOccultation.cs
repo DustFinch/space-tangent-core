@@ -9,11 +9,15 @@ public static class SolarOccultation
     public const double SunRadiusKilometers = 695_700;
 
     /// <summary>Vectors are from the same receiving point to the Sun and the occluder, in kilometers.</summary>
-    public static double VisibleFraction(Vector3d toSun, Vector3d toOccluder, double occluderRadiusKilometers)
+    public static double VisibleFraction(Vector3d toSun, Vector3d toOccluder, double occluderRadiusKilometers) =>
+        VisibleFraction(toSun, SunRadiusKilometers, toOccluder, occluderRadiusKilometers);
+
+    /// <summary>Geometric occultation for an emitter with an authored physical radius.</summary>
+    public static double VisibleFraction(Vector3d toSun, double starRadiusKilometers, Vector3d toOccluder, double occluderRadiusKilometers)
     {
         double sunDistance = toSun.Length, foregroundDistance = toOccluder.Length;
         if (!double.IsFinite(sunDistance) || !double.IsFinite(foregroundDistance) ||
-            !double.IsFinite(occluderRadiusKilometers) || sunDistance <= SunRadiusKilometers || occluderRadiusKilometers <= 0)
+            !double.IsFinite(occluderRadiusKilometers) || !(starRadiusKilometers > 0 && starRadiusKilometers < sunDistance) || occluderRadiusKilometers <= 0)
             throw new ArgumentOutOfRangeException(nameof(occluderRadiusKilometers), "The occultation needs finite, exterior solar geometry and a positive foreground radius.");
         if (foregroundDistance <= occluderRadiusKilometers)
             return 0;
@@ -22,7 +26,7 @@ public static class SolarOccultation
 
         Vector3d sun = toSun / sunDistance, foreground = toOccluder / foregroundDistance;
         double separation = Math.Atan2(Vector3d.Cross(sun, foreground).Length, Vector3d.Dot(sun, foreground));
-        double r = Math.Asin(SunRadiusKilometers / sunDistance), q = Math.Asin(occluderRadiusKilometers / foregroundDistance);
+        double r = Math.Asin(starRadiusKilometers / sunDistance), q = Math.Asin(occluderRadiusKilometers / foregroundDistance);
         if (separation >= r + q)
             return 1;
         if (separation <= Math.Abs(r - q))
