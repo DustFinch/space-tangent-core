@@ -134,7 +134,7 @@ public static class EarthObserving
         }
     }
 
-    private static JulianInstant LocalMidnight(DateOnly date, double longitudeDegrees)
+    internal static JulianInstant LocalMidnight(DateOnly date, double longitudeDegrees)
     {
         DateTime utc = date.ToDateTime(TimeOnly.MinValue).AddSeconds(-longitudeDegrees * 240);
         int nanosecond = (int)(utc.Ticks % TimeSpan.TicksPerSecond) * 100;
