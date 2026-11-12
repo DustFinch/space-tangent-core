@@ -52,6 +52,29 @@ public sealed class EarthPlaceCatalogueTests
         finally { folder.Delete(recursive: true); }
     }
 
+    [Fact]
+    public void UserLocationListsRetainStableIdsAndUseTheLastSavedSource()
+    {
+        const string old = "Дача\t54.25\t37.75\t100\t3\tEurope/Moscow\ninvalid\t999\t0\t0\t0\n";
+        const string current = "Дача\t54.26\t37.75\t101\t3\tEurope/Moscow\n";
+        var parsed = Assert.Single(EarthPlaceCatalogue.ParseSavedText(old));
+        var folder = Directory.CreateTempSubdirectory();
+        try
+        {
+            string baseline = Path.Combine(folder.FullName, "saved-base.tsv");
+            string user = Path.Combine(folder.FullName, "saved-user.tsv");
+            File.WriteAllText(baseline, old);
+            File.WriteAllText(user, current);
+            var places = EarthPlaceCatalogue.LoadWithSavedSources(Path.Combine(folder.FullName, "absent.tsv"), [baseline, user]);
+            var site = Assert.Single(places.Places);
+            Assert.Equal(parsed.Id, site.Id);
+            Assert.Equal(54.26, site.LatitudeDegrees);
+            Assert.Equal(101, site.AltitudeMeters);
+            Assert.Equal("Europe/Moscow", site.TimeZone);
+        }
+        finally { folder.Delete(recursive: true); }
+    }
+
     private sealed class OriginalPlacesFactAttribute : FactAttribute
     {
         public OriginalPlacesFactAttribute()

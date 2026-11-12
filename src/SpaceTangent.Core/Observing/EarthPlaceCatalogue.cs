@@ -39,9 +39,16 @@ public sealed class EarthPlaceCatalogue
     public static EarthPlaceCatalogue Load(string archivePath, string? savedPath = null,
         Action<string>? warning = null, CancellationToken cancellation = default)
     {
+        return LoadWithSavedSources(archivePath, string.IsNullOrEmpty(savedPath) ? [] : [savedPath], warning, cancellation);
+    }
+
+    public static EarthPlaceCatalogue LoadWithSavedSources(string archivePath, IEnumerable<string> savedPaths,
+        Action<string>? warning = null, CancellationToken cancellation = default)
+    {
+        ArgumentNullException.ThrowIfNull(savedPaths);
         var places = new Dictionary<ObjectId, EarthPlace>();
         Read(archivePath, saved: false);
-        if (!string.IsNullOrEmpty(savedPath))
+        foreach (string savedPath in savedPaths)
             Read(savedPath, saved: true);
         return new(places.Values);
 
@@ -109,6 +116,25 @@ public sealed class EarthPlaceCatalogue
         string identity = FormattableString.Invariant($"{english.ToUpperInvariant()}|{row[2].ToUpperInvariant()}|{latitude:R}|{longitude:R}");
         return new(Id("archive", identity), row[0], english, row[2], row[3][0], population,
             latitude, longitude, altitude, bortle, row[9] == "-" ? "" : row[9]);
+    }
+
+    public static IReadOnlyList<EarthPlace> ParseSavedText(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return [];
+        if (Encoding.UTF8.GetByteCount(text) > MaximumBytes)
+            throw new InvalidDataException("A saved Earth place list exceeds 4 MiB.");
+        var places = new Dictionary<ObjectId, EarthPlace>();
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line)
+        {
+            if (line.Length == 0 || line.StartsWith('#') || ParseSaved(line.Split('\t')) is not { } place)
+                continue;
+            if (places.Count == 16_384 && !places.ContainsKey(place.Id))
+                throw new InvalidDataException("A saved Earth place list exceeds 16,384 distinct entries.");
+            places[place.Id] = place;
+        }
+        return Array.AsReadOnly(places.Values.ToArray());
     }
 
     private static EarthPlace? ParseSaved(string[] row)
