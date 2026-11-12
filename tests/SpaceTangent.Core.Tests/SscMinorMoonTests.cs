@@ -19,7 +19,11 @@ public sealed class SscMinorMoonTests
         var check = JulianInstant.FromJulianDate(2460600.5, TimeScale.Tdb);
         Assert.All(bodies, body => Assert.True(body.Sample(check) is { PositionKilometers.IsFinite: true, VelocityKilometersPerSecond.IsFinite: true }, body.Name));
 
+        Assert.Equal(new Vector3d(102.8, 102.8, 70.7), Body("Himalia").EllipsoidRadiiKilometers);
+        Assert.Equal(102.8, Body("Himalia").RadiusKilometers);
+        Assert.EndsWith("asteroid.jpg", Body("Himalia").SurfaceMap, StringComparison.OrdinalIgnoreCase);
         var metis = Body("Metis");
+        Assert.EndsWith("metis.jpg", metis.SurfaceMap, StringComparison.OrdinalIgnoreCase);
         const double period = .2947795 * 86400;
         var epoch = JulianInstant.FromJulianDate(2451891, TimeScale.Tdb);
         var first = Assert.IsType<CartesianState>(metis.Sample(epoch));

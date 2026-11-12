@@ -15,6 +15,8 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     SscBodyOrientation? Orientation, Func<JulianInstant, CartesianState?> Sample)
 {
     public Func<JulianInstant, FrameKinematics?>? SampleRotation { get; init; }
+    public Vector3d? EllipsoidRadiiKilometers { get; init; }
+    public string? SurfaceMap { get; init; }
 
     public string Name => Names.Split(':')[0];
 }
@@ -207,7 +209,16 @@ public static partial class SscBodyCatalogue
                 curve.TrySample(epoch, out CartesianState state) ? state : null;
         }
 
-        double radius = fields.Fields.TryGetValue("Radius", out var radiusValue) ? Number(radiusValue) : 1;
+        Vector3d? radii = null;
+        if (fields.Fields.TryGetValue("SemiAxes", out var dimensions))
+        {
+            var axes = ReadVector(dimensions);
+            if (axes.X <= 0 || axes.Y <= 0 || axes.Z <= 0 || Math.Max(axes.X, Math.Max(axes.Y, axes.Z)) > 2_000_000)
+                throw new InvalidDataException("SSC semiaxes must be positive and within the size limit.");
+            radii = axes;
+        }
+        double radius = fields.Fields.TryGetValue("Radius", out var radiusValue) ? Number(radiusValue) :
+            radii is { } ellipsoid ? Math.Max(ellipsoid.X, Math.Max(ellipsoid.Y, ellipsoid.Z)) : 1;
         if (radius is <= 0 or > 2_000_000)
             throw new InvalidDataException("SSC body radius is out of range.");
 
@@ -290,8 +301,28 @@ public static partial class SscBodyCatalogue
             throw new NotSupportedException("This SSC spin model currently needs an inertial body frame.");
 
         string? mesh = Text("Mesh") is { } fileName ? resolve(item, "Mesh", AddonStage.Mesh, fileName, "models") : null;
+        string? surfaceMap = null;
+        if (Text("Texture") is { } texture)
+        {
+            string[] candidates = texture.EndsWith(".*", StringComparison.Ordinal)
+                ? new[] { ".png", ".jpg", ".dds" }.Select(extension => texture[..^2] + extension).ToArray()
+                : [texture];
+            foreach (string candidate in candidates)
+            {
+                try
+                {
+                    surfaceMap = resolve(item, "Texture", AddonStage.Texture, candidate,
+                        Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
+                    break;
+                }
+                catch (FileNotFoundException) { }
+            }
+            if (surfaceMap is null)
+                Warn($"Texture {texture} is unavailable; using the catalogue color.");
+        }
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
-            mesh, meshCenter, meshRotation, orientation, Sample) { SampleRotation = spin };
+            mesh, meshCenter, meshRotation, orientation, Sample)
+        { SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap };
 
         T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
         {
