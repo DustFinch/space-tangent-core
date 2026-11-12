@@ -112,13 +112,25 @@ public static partial class SampledMissionCatalog
         return new(path, radius, rotation, offset);
     }
 
-    private static MissionFrame Rotation(MissionFrame parent, JsonElement item, SpiceResources resources)
+    private static MissionFrame Rotation(MissionFrame parent, JsonElement item, SpiceResources resources,
+        string root, string directory, CancellationToken cancellation)
     {
         if (!item.TryGetProperty("rotationModel", out var model))
             return parent;
         string kind = Text(model, "type");
         if (kind == "Spice")
             return SpiceOrientation(model.TryGetProperty("frame", out _) ? Text(model, "frame") : Text(model, "name"), resources);
+        if (kind == "Interpolated")
+        {
+            string path = LocalAddonFiles.ResolveRelative(root, directory, Text(model, "source"));
+            if (!Path.GetExtension(path).Equals(".q", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Interpolated mission attitude requires a local Q file.");
+            string? convention = model.TryGetProperty("compatibility", out var compatibility) ? compatibility.GetString() : null;
+            if (convention is not (null or "celestia"))
+                throw new NotSupportedException($"Unsupported sampled mission compatibility {convention}.");
+            var attitude = SampledMissionAttitude.Read(path, convention is not null, cancellation);
+            return new MissionFrame.Rotating(parent, attitude.Sample);
+        }
         double ascending = Angle(model, "ascendingNode"), inclination = Angle(model, "inclination"), meridian = Angle(model, "meridianAngle");
         var mean = Multiply(RotateZ(ascending), RotateX(inclination));
         if (kind == "Fixed")

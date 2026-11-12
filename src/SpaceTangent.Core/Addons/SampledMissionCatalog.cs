@@ -164,6 +164,11 @@ public static partial class SampledMissionCatalog
 
         void Register(JsonElement item, string path, bool packedParticle = false)
         {
+            if (!packedParticle && item.TryGetProperty("type", out var type) && type.GetString() == "Visualizer")
+            {
+                warning?.Invoke($"Mission visualizer {Text(item, "tag")} will be unavailable.");
+                return;
+            }
             string name = Text(item, "name");
             if (!packedParticle && item.TryGetProperty("geometry", out var geometry) &&
                 Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem") &&
@@ -236,7 +241,8 @@ public static partial class SampledMissionCatalog
             string centerName = Text(arc, "center");
             var center = resolve(centerName);
             var trajectoryFrame = Frame(arc, "trajectoryFrame", resolve, name, center, resources);
-            var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center, resources), arc, resources);
+            var bodyFrame = Rotation(Frame(arc, "bodyFrame", resolve, name, center, resources), arc,
+                resources, root, directory, cancellation);
             var sample = arc.TryGetProperty("trajectory", out var trajectory)
                 ? ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame, resources, centerName)
                 : geometry?.Any(span => span.Shape.ParticleEmitters is not null) == true
