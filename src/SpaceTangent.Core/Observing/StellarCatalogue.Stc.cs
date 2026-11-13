@@ -247,7 +247,7 @@ public sealed partial class StellarCatalogue
         if (temperature <= 0)
             throw new InvalidDataException("The star has a nonpositive temperature.");
         double? radius = StcNumber(fields, "Radius", ("rS", SolarRadius), ("rJ", 71_492), ("cm", .00001), ("km", 1));
-        if (radius is < 0 or > 3e9)
+        if (radius is < 0 or > 1e11 || radius >= distance * StellarEntry.KilometersPerParsec)
             throw new InvalidDataException("The star radius is out of range.");
         double estimated = previous is not null && radius is null && spectral is null && !fields.Fields.ContainsKey("Temperature")
             ? previous.RadiusKilometers : EstimateRadius(absolute ?? 30, temperature);
@@ -282,9 +282,10 @@ public sealed partial class StellarCatalogue
 
     private static Vector3d Equatorial(double ra, double dec, double distance)
     {
-        if (ra is < 0 or > 360 || dec is < -90 or > 90)
-            throw new InvalidDataException("STC right ascension or declination is out of range.");
-        var (sinRa, cosRa) = Math.SinCos(ra * Degrees);
+        if (dec is < -90 or > 90)
+            throw new InvalidDataException("STC declination is out of range.");
+        // Legacy catalogues can express right ascension across several turns.
+        var (sinRa, cosRa) = Math.SinCos(ra % 360 * Degrees);
         var (sinDec, cosDec) = Math.SinCos(dec * Degrees);
         return new Vector3d(cosDec * cosRa, cosDec * sinRa, sinDec) * distance;
     }

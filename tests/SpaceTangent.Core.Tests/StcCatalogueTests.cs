@@ -34,6 +34,15 @@ public sealed class StcCatalogueTests(ITestOutputHelper output)
         StellarEntry errai = Assert.IsType<StellarEntry>(catalogue.FindByName("GAM Cep A"));
         Assert.Equal(new ObjectId("hip/116727"), errai.BarycenterId);
         Assert.True(catalogue.Find(new("hip/116727"))?.IsBarycenter);
+        StellarEntry kepler = Assert.IsType<StellarEntry>(catalogue.FindByName("Kepler-931"));
+        Assert.True(kepler.IsBarycenter);
+        foreach (var entry in new[] { kepler, catalogue.FindByName("Kepler-931 A")!, catalogue.FindByName("Kepler-931 B")! })
+        {
+            var vector = Assert.IsType<StellarEntry>(entry).PositionParsecs;
+            double rightAscension = (Math.Atan2(vector.Y, vector.X) * 180 / Math.PI + 360) % 360;
+            Assert.Equal(117.13269625, rightAscension, 7);
+        }
+        Assert.Equal(3_498_000_000, catalogue.Find(new("hip/102276"))?.RadiusKilometers);
         var date = JulianInstant.FromJulianDate(2460600.5, TimeScale.Tdb);
         Assert.InRange(Math.Abs((a.StateAt(date) - b.StateAt(date)).PositionKilometers.Length - 4563718784.429464), 0, .05);
     }
