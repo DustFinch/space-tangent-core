@@ -21,6 +21,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public string? SurfaceMap { get; init; }
     public SscRings? Rings { get; init; }
     public string? MeshRoot { get; init; }
+    public Func<bool, Func<JulianInstant, CartesianState?>>? BindExtrasolarOrbit { get; init; }
     public Func<ObjectId, Func<string, ObjectId>, SampledMission>? BindTimeline { get; init; }
 
     public string Name => Names.Split(':')[0];
@@ -192,6 +193,7 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
         double? orbitPeriodSeconds = null;
+        Func<bool, Func<JulianInstant, CartesianState?>>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, resolve, cancellation) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit") && !fields.Fields.ContainsKey("SpiceOrbit");
@@ -214,6 +216,24 @@ public static partial class SscBodyCatalogue
             var curve = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
             orbitPeriodSeconds = Number(((SscValue.Map)orbit).Get("Period")) * context.SecondsPerPeriodUnit;
             raw = epoch => curve.Evaluate(epoch);
+            if (!starScale && !item.Parent.StartsWith("Sol/", StringComparison.OrdinalIgnoreCase))
+            {
+                extrasolarOrbit = orbitsStar =>
+                {
+                    var units = new SscOrbitContext(Icrs, orbitsStar ? AuKilometers : 1,
+                        orbitsStar ? 31_557_600 : 86_400);
+                    var externalOrbit = SscConicOrbits.ReadOrbit(item, orbit, units).Orbit;
+                    var axes = reference.Axes == SscConicAxes.ParentDefault ? Ecliptic : orbitFrame;
+                    return epoch =>
+                    {
+                        if (beginning is { } start && epoch.CompareTo(start) < 0 ||
+                            ending is { } end && epoch.CompareTo(end) > 0)
+                            return null;
+                        var state = externalOrbit.Evaluate(epoch);
+                        return new(axes.Transform(state.PositionKilometers), axes.Transform(state.VelocityKilometersPerSecond));
+                    };
+                };
+            }
         }
         else if (fields.Fields.TryGetValue("FixedPosition", out var position))
         {
@@ -394,7 +414,7 @@ public static partial class SscBodyCatalogue
             mesh, meshCenter, meshRotation, orientation, Sample)
         {
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
-            Rings = rings,
+            Rings = rings, BindExtrasolarOrbit = extrasolarOrbit,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
             BindTimeline = timeline is null ? null : (id, find) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find)).ToArray()))
