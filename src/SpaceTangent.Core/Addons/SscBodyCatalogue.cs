@@ -69,11 +69,18 @@ public static partial class SscBodyCatalogue
 
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
         Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
-        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> kernels)
+        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> kernels) =>
+        ReadBodyDefinitions(definitions, root, scripts, warning, resolve, cancellation, roots, kernels, out _, null);
+
+    private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
+        Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
+        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> kernels, out SpiceResources resources,
+        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads)
     {
         if (definitions.Count > 512)
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
-        var spice = ReadSpiceResources(definitions, root, resolve, cancellation, roots, kernels);
+        var spice = ReadSpiceResources(definitions, root, resolve, cancellation, roots, kernels, missionLoads);
+        resources = spice.Pool;
         var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
         var result = new List<SscBodyDefinition>();
         var visited = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);

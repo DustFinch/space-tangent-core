@@ -23,12 +23,14 @@ public static partial class SscBodyCatalogue
 
     private static SscSpiceInput ReadSpiceResources(IReadOnlyList<SscDefinition> definitions,
         Func<string, string> root, SscResource resolve, CancellationToken cancellation,
-        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> furnished)
+        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> furnished,
+        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads)
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
         var unavailable = new Dictionary<(SscValue.Map Properties, string Field), Exception>();
         var supplied = furnished.Select(item => new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]));
-        var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Root].First()));
+        var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Root].First())
+            .Concat(missionLoads ?? []));
         return new(pool, unavailable);
 
         IEnumerable<SpiceResources.KernelGroup> Sources()

@@ -74,7 +74,12 @@ public static partial class SampledMissionCatalog
         LoadContent(catalogPaths, assetRoot, resolveBody, warning, cancellation).Missions;
 
     public static SampledMissionContent LoadContent(IEnumerable<string> catalogPaths, string assetRoot,
-        Func<string, ObjectId?> resolveBody, Action<string>? warning = null, CancellationToken cancellation = default)
+        Func<string, ObjectId?> resolveBody, Action<string>? warning = null, CancellationToken cancellation = default) =>
+        LoadContent(catalogPaths, assetRoot, resolveBody, warning, cancellation, null);
+
+    internal static SampledMissionContent LoadContent(IEnumerable<string> catalogPaths, string assetRoot,
+        Func<string, ObjectId?> resolveBody, Action<string>? warning, CancellationToken cancellation,
+        Func<IReadOnlyList<SpiceResources.KernelGroup>, SpiceResources>? bindPool)
     {
         ArgumentNullException.ThrowIfNull(catalogPaths);
         ArgumentNullException.ThrowIfNull(resolveBody);
@@ -95,7 +100,8 @@ public static partial class SampledMissionCatalog
         {
             foreach (string entry in catalogPaths)
                 Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
-            var resources = new SpiceResources(root, kernelLoads);
+            var resources = bindPool is null ? new SpiceResources(root, kernelLoads) :
+                bindPool(kernelLoads.Select(load => new SpiceResources.KernelGroup(root, [load])).ToArray());
             var rejected = new HashSet<ObjectId>();
             var loaded = new List<(SampledMission Mission, HashSet<ObjectId> References)>();
             foreach (var definition in definitions)

@@ -105,6 +105,58 @@ public sealed class OrderedSpiceCatalogueTests
         void Copy(string source, string name) => File.Copy(Path.Combine(source, name), Path.Combine(folder.FullName, name));
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void SscAndJsonShareTheFinalPoolWithoutSharingPhysicalResourcePaths()
+    {
+        string global = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        string mission = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_SPK_ARCHIVE")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string bodies = scratch.CreateSubdirectory("bodies").FullName;
+            string missions = scratch.CreateSubdirectory("missions").FullName;
+            foreach (var name in new[] { "cassini-catalog.json", "late.dat" })
+                File.Copy(Path.Combine(global, name), Path.Combine(missions, name));
+            foreach (var name in new[] { "040615AP_SK_04167_04186.bsp", "04182_04183pa_soi_itl.bc", "cas_iss_v10.ti", "cassini.3ds" })
+                File.Copy(Path.Combine(mission, name), Path.Combine(missions, name));
+            File.Copy(Path.Combine(archive, "naif0012.tls"), Path.Combine(missions, "naif0012.tls"));
+            File.Move(Path.Combine(missions, "late.dat"), Path.Combine(bodies, "late.dat"));
+            File.WriteAllText(Path.Combine(bodies, "pack.json"), """
+                {"formatVersion":19,"spiceLoads":[{"policy":"furnish","files":["late.dat"]}],
+                 "sscCatalogs":[{"name":"body.ssc","text":"\"SSC Cassini\" \"Sol/Saturn\" { OrbitFrame { EclipticJ2000 {} } SpiceOrbit { Target \"CASSINI\" Origin \"6\" BoundingRadius 10000000 } BodyFrame { EquatorJ2000 {} } SpiceRotation { Frame \"META_CASSINI\" BaseFrame \"J2000\" } }"}]}
+                """);
+            ObjectId saturn = new("sol/saturn");
+            ObjectId? Resolve(string name) => name.Equals("Saturn", StringComparison.OrdinalIgnoreCase) ? saturn : null;
+            string[] catalogues = ["cassini-catalog.json"];
+            Assert.Throws<InvalidDataException>(() => SampledMissionCatalog.Load(catalogues, missions, Resolve));
+            var combined = SscBodyCatalogue.LoadWithMissions([bodies], catalogues, missions, Resolve, _ => { });
+            var ssc = Assert.Single(combined.Bodies);
+            var craft = Assert.Single(combined.Missions.Missions, item => item.Name == "Cassini SOI");
+            Assert.Equal(3, combined.Missions.Missions.Count);
+            var graph = new WorldGraphBuilder();
+            graph.AddTrajectory(saturn, _ => new(default, default));
+            graph.AddSampledMission(craft);
+            var world = graph.Build();
+            foreach (double second in new[] { 141917558.4203589, 141918830.41202343 })
+            {
+                var epoch = JulianInstant.FromTdbSeconds(second);
+                var snapshot = world.Evaluate(epoch);
+                Assert.True(snapshot.TryState(craft.Id, out var state));
+                Assert.True(snapshot.TryOrientation(craft.Id, out var attitude));
+                var fromSsc = ssc.Sample(epoch)!.Value;
+                Assert.InRange((fromSsc.PositionKilometers - state.PositionKilometers).Length, 0, .001);
+                Assert.InRange((fromSsc.VelocityKilometersPerSecond - state.VelocityKilometersPerSecond).Length, 0, 1e-8);
+                Assert.Equal(attitude, ssc.SampleRotation!(epoch)!.Value);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()
