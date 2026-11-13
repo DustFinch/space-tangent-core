@@ -38,6 +38,18 @@ public sealed class GalacticLightTests
         Assert.Throws<InvalidDataException>(() => GalacticDustGrid.Read(new byte[64]));
     }
 
+    [Fact]
+    public void NeighbourMaskControlsTheVolumeIndependentlyOfTheMilkyWay()
+    {
+        var galaxy = GalacticLight.Neighbours.Single(item => item.Name == "M 31");
+        var eye = galaxy.CentreKiloparsecs + galaxy.Normal * 120;
+        Assert.True(GalacticLight.IsVolumetric(galaxy, eye));
+        Assert.False(GalacticLight.IsVolumetric(galaxy, GalacticLight.SunKiloparsecs));
+        float[] visible = GalacticLight.Bake(eye, 128, 64, neighbourMask: 4);
+        float[] hidden = GalacticLight.Bake(eye, 128, 64, neighbourMask: 0);
+        Assert.True(visible.Sum() > hidden.Sum());
+    }
+
     [DustArchiveFact]
     [Trait("Category", "ExternalData")]
     public void ReadsTheArchivedDustCubeAndReproducesItsUnequalColumns()

@@ -374,9 +374,10 @@ public static class GalacticLight
     /// column 0 at l = -180, longitude growing with the column), linear R, G, B per texel. Rows run on at most
     /// maximumThreads threads. Includes the neighbours that are volumetric from there (IsVolumetric).
     /// </summary>
-    public static float[] Bake(Vector3d observerKpc, int width, int height, int maximumThreads = 2, GalacticDustGrid? map = null, CancellationToken cancellation = default)
+    public static float[] Bake(Vector3d observerKpc, int width, int height, int maximumThreads = 2, GalacticDustGrid? map = null, CancellationToken cancellation = default, int neighbourMask = -1)
     {
-        var neighbours = Neighbours.Where(neighbour => IsVolumetric(neighbour, observerKpc)).ToArray();
+        var neighbours = Neighbours.Where((neighbour, index) =>
+            neighbourMask < 0 ? IsVolumetric(neighbour, observerKpc) : (neighbourMask & (1 << index)) != 0).ToArray();
         if (width is < 8 or > 4096 || height is < 4 or > 2048 || maximumThreads < 1) throw new ArgumentOutOfRangeException(nameof(width));
         var rgb = new float[3 * width * height];
         Parallel.For(0, height, new ParallelOptions { MaxDegreeOfParallelism = maximumThreads, CancellationToken = cancellation }, row =>
