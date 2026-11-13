@@ -182,7 +182,8 @@ public static partial class SampledMissionCatalog
 
     private static Func<JulianInstant, CartesianState?> PackedSamples(JsonElement orbit, string root)
     {
-        string path = PackedAsset(root, "trajectories", Text(orbit, "file"));
+        string path = AddonDiagnostics.Read(AddonStage.Trajectory, null,
+            () => PackedAsset(root, "trajectories", Text(orbit, "file")));
         var samples = Text(orbit, "sampleConvention") switch
         {
             "cosmographiaXyz" => SampledStateTrajectory.ReadXyz(path, MissionSource),

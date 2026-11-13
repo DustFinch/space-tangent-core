@@ -122,7 +122,8 @@ public static partial class SampledMissionCatalog
                     loaded.Add((mission, references));
                 }
                 catch (Exception error) when (definition.Packed && !definition.Item.TryGetProperty("particles", out _) &&
-                    (error is NotSupportedException or FileNotFoundException ||
+                    (error is NotSupportedException ||
+                    error is FileNotFoundException && AddonDiagnostics.Get(error)?.Stage != AddonStage.Trajectory ||
                     AddonDiagnostics.Get(error) is { Stage: AddonStage.Trajectory, Code: AddonIssue.InvalidInput }))
                 {
                     string name = Text(definition.Item, "name");

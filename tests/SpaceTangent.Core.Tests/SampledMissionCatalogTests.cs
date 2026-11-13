@@ -126,6 +126,20 @@ public sealed class SampledMissionCatalogTests
         }
         var engine = Assert.Single(packed, item => item.Name == "_Dawn Engine 1");
         Assert.Equal(2000, Assert.Single(Assert.Single(engine.Geometry!).Shape.ParticleEmitters!).SpawnRate);
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string manifest = Path.Combine(scratch.FullName, "pack.json");
+            File.Copy(Path.Combine(root, "dawn-pack", "pack.json"), manifest);
+            var error = Assert.Throws<FileNotFoundException>(() =>
+                SampledMissionCatalog.Load(manifest, scratch.FullName, Resolve));
+            Assert.Equal(AddonStage.Trajectory, AddonDiagnostics.Get(error)?.Stage);
+            Assert.EndsWith(".xyzv", error.FileName);
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
 
         static ObjectId? Resolve(string name) => name switch
         {
