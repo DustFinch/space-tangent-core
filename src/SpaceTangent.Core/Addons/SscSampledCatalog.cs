@@ -77,7 +77,7 @@ public sealed class SscSampledSpacecraft
 
 public static class SscSampledCatalog
 {
-    private static readonly string[] DateFormats = ["yyyy M d H:mm:ss.FFFFFFF", "yyyy M d H:mm:ss", "yyyy M d"];
+    private static readonly string[] DateFormats = ["yyyy M d H:mm:ss.FFFFFFF", "yyyy M d H:mm:ss", "yyyy M d H:mm", "yyyy M d"];
     private static readonly JulianInstant UnixEpoch = JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb);
 
     public static SscSampledSpacecraft Load(string catalogPath, string assetRoot, string objectPath,

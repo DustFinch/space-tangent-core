@@ -67,6 +67,55 @@ public sealed class SscBodyCatalogueTests
         Assert.InRange(state.VelocityKilometersPerSecond.Length, 19, 21);
     }
 
+    [OriginalSpacecraftFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalConicSpacecraftKeepMissionWindowsAndModels()
+    {
+        var bodies = SscBodyCatalogue.Load(Environment.GetEnvironmentVariable("SPACETANGENT_STANDARD_CONIC")!);
+        var hubble = Check("Hubble", "Sol/Earth", "hubble.cmod", "2020-01-01T00:00:00Z", 6900, 6950);
+        Assert.Equal("Hubble:HST:1990-037B", hubble.Names);
+        var launch = At("1990-04-25T02:02:00Z");
+        Assert.Null(hubble.Sample(launch.AddSeconds(-1)));
+        Assert.NotNull(hubble.Sample(launch));
+
+        var mir = Check("Mir", "Sol/Earth", "mir.cmod", "2000-01-01T00:00:00Z", 6768, 6770);
+        Assert.NotNull(mir.Sample(At("2001-03-23T06:00:28Z")));
+        Assert.Null(mir.Sample(At("2001-03-23T06:00:29Z")));
+
+        Assert.Equal(7, bodies.Count(body => body.Name.StartsWith("Apollo ", StringComparison.Ordinal)));
+        var apollo = Check("Apollo 11", "Sol/Earth/Moon", "apollo.3ds", "1969-07-20T12:00:00Z", 1700, 2100);
+        Assert.Null(apollo.Sample(At("1969-07-19T17:21:49Z")));
+        Assert.Null(apollo.Sample(At("1969-07-22T04:55:43Z")));
+
+        var odyssey = Check("Mars Odyssey", "Sol/Mars", "marsodyssey.3ds", "2002-12-15T00:00:00Z", 3760, 3840);
+        Assert.Equal(FrameAxis.Y, odyssey.Orientation!.Primary.Axis);
+        Assert.Equal(DirectionQuantity.Velocity, odyssey.Orientation.Secondary.Quantity);
+        Check("MGS", "Sol/Mars", "marsglobalsurvr.3ds", "2001-03-04T18:12:26Z", 3720, 3810);
+
+        SscBodyDefinition Check(string name, string center, string mesh, string time, double minRadius, double maxRadius)
+        {
+            var body = Assert.Single(bodies, item => item.Name == name);
+            Assert.Equal(center, body.Center);
+            Assert.Equal(mesh, Path.GetFileName(body.Mesh));
+            var state = Assert.IsType<CartesianState>(body.Sample(At(time)));
+            Assert.InRange(state.PositionKilometers.Length, minRadius, maxRadius);
+            Assert.InRange(state.VelocityKilometersPerSecond.Length, 1, 9);
+            return body;
+        }
+
+        static JulianInstant At(string value) => JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb)
+            .AddSeconds(DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).ToUnixTimeSeconds());
+    }
+
+    private sealed class OriginalSpacecraftFactAttribute : FactAttribute
+    {
+        public OriginalSpacecraftFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_STANDARD_CONIC")))
+                Skip = "Set SPACETANGENT_STANDARD_CONIC to the original conic spacecraft catalogues.";
+        }
+    }
+
     private static JulianInstant Epoch(double day) => JulianInstant.FromJulianDate(day, TimeScale.Tdb);
 
     private sealed class LocalBodyPackFactAttribute : FactAttribute
