@@ -52,6 +52,8 @@ internal sealed class SpiceTextKernel
             _values[name] = append && _values.TryGetValue(name, out var previous) ? [.. previous, .. values] : values;
     }
 
+    internal IEnumerable<string> ValuesOrEmpty(string name) => _values.GetValueOrDefault(name) ?? [];
+
     internal bool Contains(string name) => _values.ContainsKey(name);
 
     internal string[] Get(string name) => _values.TryGetValue(name, out var values) && values.Length > 0

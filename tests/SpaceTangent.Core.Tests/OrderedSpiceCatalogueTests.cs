@@ -1162,6 +1162,66 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void MetakernelJoinsContinuedPathsAndRejectsOverlongNamesInOrder()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            string kernels = Directory.CreateDirectory(Path.Combine(source, "kernels")).FullName;
+            File.Copy(Path.Combine(corpus, "a.bsp"), Path.Combine(kernels, "a.bsp"));
+            File.Copy(Path.Combine(corpus, "b.bsp"), Path.Combine(kernels, "b.bsp"));
+            string tooLong = new('x', 256);
+            File.WriteAllText(Path.Combine(source, "paths.tm"), $$"""
+                KPL/MK
+                \begindata
+                PATH_SYMBOLS = ( 'K' 'KERNEL' )
+                PATH_VALUES = ( 'absent' 'ker+ ' 'nels' )
+                KERNELS_TO_LOAD = ( '$KERNEL/a.+' 'bsp' '{{tooLong}}' '$KERNEL/b.bsp' )
+                """);
+            File.WriteAllText(Path.Combine(source, "last.tm"), """
+                KPL/MK
+                \begindata
+                KERNELS_TO_LOAD = ( 'kernels/b.bsp+' )
+                """);
+            File.WriteAllText(Path.Combine(source, "paths.ssc"), """
+                "Too long" "Sol" {
+                    SpiceOrbit { Kernel "paths.tm" Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "First dependency" "Sol" {
+                    SpiceOrbit { Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 4 0 0 ]
+                }
+                "Trailing continuation" "Sol" {
+                    SpiceOrbit { Kernel "last.tm" Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 5 0 0 ]
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(3, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string root in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                Assert.Contains("SPICE(FILENAMETOOLONG)", Assert.Single(warnings));
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(new[] { 3d, 222d, 222d }, bodies.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+            }
+            // Without the independent second load the failed list must leave only its first dependency active.
+            File.WriteAllText(Path.Combine(source, "last.tm"), "KPL/MK\n\\begindata\nKERNELS_TO_LOAD = ()\n");
+            var earlier = SscBodyCatalogue.Load(source);
+            Assert.Equal(111d, earlier[1].Sample(JulianInstant.FromTdbSeconds(5))!.Value.PositionKilometers.X);
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);

@@ -184,28 +184,16 @@ internal sealed class SpiceResources
 
             var text = new SpiceTextKernel();
             text.Apply(assignments);
-            var symbols = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (text.Contains("PATH_SYMBOLS") || text.Contains("PATH_VALUES"))
+            foreach (string relative in KernelPaths(text))
             {
-                string[] labels = text.Get("PATH_SYMBOLS"), values = text.Get("PATH_VALUES");
-                if (labels.Length != values.Length)
-                    throw new InvalidDataException("SPICE metakernel path labels and values must match.");
-                for (int index = 0; index < labels.Length; index++)
-                    if (!symbols.TryAdd(labels[index], values[index]))
-                        throw new InvalidDataException("Duplicate SPICE metakernel path symbol.");
+                string owner = Path.GetDirectoryName(file)!;
+                // Archived pack tools can place a metakernel in data/ while leaving data/ prefixes in its children.
+                if (FileNames.Equals(owner, Path.Combine(root, "data")) &&
+                    relative.Replace('\\', '/').StartsWith("data/", StringComparison.OrdinalIgnoreCase) &&
+                    !AddonDependencies.FileExists(Path.Combine(owner, relative)))
+                    owner = root;
+                Expand(root, owner, relative, result, ref visits, dependency: true, validate, readText);
             }
-            if (text.Contains("KERNELS_TO_LOAD"))
-                foreach (string item in text.Get("KERNELS_TO_LOAD"))
-                {
-                    string relative = Substitute(item, symbols);
-                    string owner = Path.GetDirectoryName(file)!;
-                    // Archived pack tools can place a metakernel in data/ while leaving data/ prefixes in its children.
-                    if (FileNames.Equals(owner, Path.Combine(root, "data")) &&
-                        relative.Replace('\\', '/').StartsWith("data/", StringComparison.OrdinalIgnoreCase) &&
-                        !AddonDependencies.FileExists(Path.Combine(owner, relative)))
-                        owner = root;
-                    Expand(root, owner, relative, result, ref visits, dependency: true, validate, readText);
-                }
         }
         catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, file))
         {
@@ -240,14 +228,61 @@ internal sealed class SpiceResources
         };
     }
 
-    private static string Substitute(string item, Dictionary<string, string> symbols)
+    private static IEnumerable<string> KernelPaths(SpiceTextKernel text)
     {
-        if (!item.StartsWith('$'))
-            return item;
-        int separator = item.IndexOfAny(['/', '\\']);
-        string symbol = separator < 0 ? item[1..] : item[1..separator];
-        if (!symbols.TryGetValue(symbol, out string? value))
-            throw new InvalidDataException($"Unknown SPICE metakernel path symbol {symbol}.");
-        return separator < 0 ? value : Path.Combine(value, item[(separator + 1)..]);
+        const int pathLimit = 255;
+        var names = Entries("PATH_SYMBOLS").Select(value => value.TrimEnd()).ToArray();
+        var values = Continue(Entries("PATH_VALUES")).ToArray();
+        if (names.Length > 0 && values.Any(value => value.Length > pathLimit))
+            throw new InvalidDataException("SPICE(PATHTOOLONG): a metakernel path value exceeds 255 characters.");
+        if (names.Length > 0 && names.Length != values.Length)
+            throw new InvalidDataException("SPICE(PATHMISMATCH): metakernel path labels and values must match.");
+        var symbols = names.Zip(values).OrderByDescending(pair => pair.First.Length).ToArray();
+        foreach (string listed in Continue(Entries("KERNELS_TO_LOAD")))
+        {
+            if (listed.Length > pathLimit)
+                throw new InvalidDataException("SPICE(FILENAMETOOLONG): a metakernel filename exceeds 255 characters.");
+            string file = listed;
+            for (int offset = 0; offset < file.Length;)
+            {
+                int dollar = file.IndexOf('$', offset);
+                if (dollar < 0)
+                    break;
+                foreach (var (symbol, value) in symbols)
+                {
+                    if (symbol.Length == 0 || !file.AsSpan(dollar + 1).StartsWith(symbol, StringComparison.Ordinal))
+                        continue;
+                    if (listed.Length + value.Length - symbol.Length - 1 > pathLimit)
+                        throw new InvalidDataException("SPICE(FILENAMETOOLONG): the expanded metakernel filename exceeds 255 characters.");
+                    file = string.Concat(file.AsSpan(0, dollar), value, file.AsSpan(dollar + 1 + symbol.Length));
+                    if (file.Length > pathLimit)
+                        file = file[..pathLimit];
+                    break;
+                }
+                offset = dollar + 1;
+            }
+            yield return file;
+        }
+
+        IEnumerable<string> Entries(string name) => text.ValuesOrEmpty(name);
+
+        static IEnumerable<string> Continue(IEnumerable<string> entries)
+        {
+            var joined = new StringBuilder();
+            foreach (string entry in entries)
+            {
+                string part = entry.TrimEnd();
+                if (part.EndsWith('+'))
+                {
+                    joined.Append(part.AsSpan(0, part.Length - 1));
+                    continue;
+                }
+                joined.Append(part);
+                yield return joined.ToString();
+                joined.Clear();
+            }
+            if (joined.Length > 0)
+                yield return joined.ToString();
+        }
     }
 }
