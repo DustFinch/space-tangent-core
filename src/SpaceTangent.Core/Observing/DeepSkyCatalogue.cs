@@ -15,6 +15,7 @@ public sealed record DeepSkyObject(ObjectId Id, string Designation, string Name,
     public double KingConcentration { get; init; }
     public double CoreRadiusArcminutes { get; init; }
     public string? Mesh { get; init; }
+    internal string? CatalogueFile { get; init; }
 
     public double RadiusKilometers => RadiusLightYears * StellarEntry.KilometersPerLightYear;
 

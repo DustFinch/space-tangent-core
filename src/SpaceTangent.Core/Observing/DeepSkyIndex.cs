@@ -28,6 +28,14 @@ public sealed class DeepSkyIndex
     public IReadOnlyList<DeepSkyObject> Objects { get; }
     public DeepSkyObject? Find(ObjectId id) => _byId.GetValueOrDefault(id);
 
+    public static string ResolveMesh(string root, DeepSkyObject item)
+    {
+        if (item.Mesh is not { Length: > 0 } name || item.CatalogueFile is not { } catalogue)
+            throw new ArgumentException("The deep-sky object has no local model reference.", nameof(item));
+        return SscSampledCatalog.FindAsset(AddonStage.Mesh, Path.GetFullPath(root),
+            Path.GetDirectoryName(catalogue)!, name, "models");
+    }
+
     public static DeepSkyIndex Load(string root, CancellationToken cancellation = default)
     {
         root = Path.GetFullPath(root);
@@ -57,7 +65,7 @@ public sealed class DeepSkyIndex
                     cancellation.ThrowIfCancellationRequested();
                     if (++records > MaximumObjects)
                         throw new InvalidDataException("The local deep-sky source exceeds 100,000 objects.");
-                    DeepSkyObject item = ReadObject(kind, names, properties);
+                    DeepSkyObject item = ReadObject(kind, names, properties) with { CatalogueFile = file };
                     ObjectId id = item.Id;
                     string key = FormattableString.Invariant($"{kind}\0{names}\0{item.RightAscensionDegrees:R}\0{item.DeclinationDegrees:R}\0{item.DistanceLightYears:R}");
                     if (primaryKeys.TryAdd(id, key))
