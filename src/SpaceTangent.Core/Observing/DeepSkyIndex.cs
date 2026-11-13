@@ -39,7 +39,9 @@ public sealed class DeepSkyIndex
         if (files.Length > 64)
             throw new InvalidDataException("A local deep-sky source contains more than 64 DSC catalogues.");
         var objects = new Dictionary<ObjectId, DeepSkyObject>(Default._byId);
-        var installed = new HashSet<ObjectId>();
+        var primaryKeys = new Dictionary<ObjectId, string>();
+        var duplicates = new Dictionary<ObjectId, DeepSkyObject>();
+        int records = 0;
         foreach (string path in files.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             cancellation.ThrowIfCancellationRequested();
@@ -53,20 +55,36 @@ public sealed class DeepSkyIndex
                 foreach (var (kind, names, properties) in new SscReader(reader.ReadToEnd(), file).ReadTypedRecords("Galaxy"))
                 {
                     cancellation.ThrowIfCancellationRequested();
-                    if (objects.Count >= MaximumObjects)
+                    if (++records > MaximumObjects)
                         throw new InvalidDataException("The local deep-sky source exceeds 100,000 objects.");
                     DeepSkyObject item = ReadObject(kind, names, properties);
                     ObjectId id = item.Id;
-                    if (installed.Contains(id))
+                    string key = FormattableString.Invariant($"{kind}\0{names}\0{item.RightAscensionDegrees:R}\0{item.DeclinationDegrees:R}\0{item.DistanceLightYears:R}");
+                    if (primaryKeys.TryAdd(id, key))
                     {
-                        string data = FormattableString.Invariant($"{kind}\0{names}\0{item.RightAscensionDegrees:R}\0{item.DeclinationDegrees:R}\0{item.DistanceLightYears:R}");
-                        id = new(id.Value + "-" + ShortHash(data));
+                        objects[id] = item;
+                        continue;
                     }
-                    if (installed.Add(id))
-                        objects[id] = item with { Id = id };
+
+                    string primary = primaryKeys[id];
+                    int order = StringComparer.Ordinal.Compare(key, primary);
+                    if (order == 0)
+                        continue;
+                    if (order < 0)
+                    {
+                        (item, objects[id]) = (objects[id], item);
+                        (key, primaryKeys[id]) = (primary, key);
+                    }
+                    var distinctId = new ObjectId(id.Value + "-" + ShortHash(key));
+                    duplicates.TryAdd(distinctId, item with { Id = distinctId });
                 }
                 return true;
             });
+        }
+        foreach (var (id, duplicate) in duplicates)
+        {
+            if (!objects.TryAdd(id, duplicate))
+                throw new InvalidDataException($"Conflicting DSC identifier {id.Value}.");
         }
         return new(objects);
     }

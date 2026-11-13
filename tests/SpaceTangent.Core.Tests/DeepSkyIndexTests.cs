@@ -41,6 +41,34 @@ public sealed class DeepSkyIndexTests
         Assert.Equal(DeepSkyKind.Nebula, index.Find(new("dso/m42"))?.Kind);
     }
 
+    [RealDscFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalSameNameClustersKeepTheirIdsWhenFilesChangeOrder()
+    {
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_DSC_ROOT")!;
+        var before = DeepSkyIndex.Load(source).Objects.Where(body => body.Designation == "FSR 1735").ToArray();
+        Assert.Equal(2, before.Length);
+        Assert.Equal(new ObjectId("dso/fsr-1735"), Assert.Single(before, body => body.Kind == DeepSkyKind.GlobularCluster).Id);
+        var reordered = Directory.CreateTempSubdirectory("space-tangent-dsc-");
+        try
+        {
+            File.Copy(Path.Combine(source, "openclusters.dsc"), Path.Combine(reordered.FullName, "01-open.dsc"));
+            File.Copy(Path.Combine(source, "globulars.dsc"), Path.Combine(reordered.FullName, "02-globular.dsc"));
+            var after = DeepSkyIndex.Load(reordered.FullName);
+            foreach (var expected in before)
+            {
+                var actual = Assert.IsType<DeepSkyObject>(after.Find(expected.Id));
+                Assert.Equal(expected.Kind, actual.Kind);
+                Assert.Equal(expected.PositionKilometers, actual.PositionKilometers);
+                Assert.Equal(expected.Aliases, actual.Aliases);
+            }
+        }
+        finally
+        {
+            reordered.Delete(recursive: true);
+        }
+    }
+
     private sealed class RealDscFactAttribute : FactAttribute
     {
         public RealDscFactAttribute()
