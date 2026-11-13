@@ -180,7 +180,7 @@ public static partial class SampledMissionCatalog
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
-                            body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _))
+                            body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _))
                             Register(body, path, packed: true);
                     return true;
                 }
@@ -225,7 +225,7 @@ public static partial class SampledMissionCatalog
             }
             string name = Text(item, visualizer ? "tag" : "name");
             if (!packed && item.TryGetProperty("geometry", out var geometry) &&
-                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem" or "Axes" or "PlaneVisualizer" or "DirectionVisualizer") &&
+                Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem" or "Axes" or "PlaneVisualizer" or "DirectionVisualizer" or "KeplerianSwarm") &&
                 !(Text(geometry, "type") == "Spice" && geometry.TryGetProperty("instrName", out _)))
             {
                 warning?.Invoke($"{name}: {Text(geometry, "type")} geometry is not supported by the sampled mission reader.");
@@ -282,10 +282,14 @@ public static partial class SampledMissionCatalog
                 { Geometry = [], Observation = observation };
         }
         IReadOnlyList<MissionGeometrySpan>? geometry = item.TryGetProperty("geometry", out var shown)
-            ? ReadGeometry(shown, root, directory, name, start, finish, resolve, warning) : null;
+            ? ReadGeometry(shown, root, directory, name, start, finish, resolve, warning, cancellation) : null;
         if (geometry is not null && item.TryGetProperty("visible", out var visible) && !visible.GetBoolean())
-            geometry = Array.AsReadOnly(geometry.Select(span => span.Shape.Axes is { } axes
-                ? span with { Shape = span.Shape with { Axes = axes with { Visible = false } } } : span).ToArray());
+            geometry = Array.AsReadOnly(geometry.Select(span => span with { Shape = span.Shape switch
+            {
+                { Axes: { } axes } shape => shape with { Axes = axes with { Visible = false } },
+                { Swarm: { } swarm } shape => shape with { Swarm = swarm with { Visible = false } },
+                _ => span.Shape
+            } }).ToArray());
         var arcs = item.TryGetProperty("arcs", out var sequence) ? sequence.EnumerateArray().ToArray() : [item];
         if (arcs.Length is < 1 or > 128)
             throw new InvalidDataException($"{name}: a mission must contain one to 128 arcs.");
@@ -305,7 +309,7 @@ public static partial class SampledMissionCatalog
                 resources, root, directory, cancellation);
             var sample = arc.TryGetProperty("trajectory", out var trajectory)
                 ? ReadTrajectory(trajectory, root, directory, begins, end, trajectoryFrame, resources, centerName)
-                : geometry?.Any(span => span.Shape.ParticleEmitters is not null) == true
+                : geometry?.Any(span => span.Shape is { ParticleEmitters: not null } or { Swarm: not null }) == true
                     ? Constant(default)
                     : throw new InvalidDataException($"{name}: a mission arc requires a trajectory.");
             result.Add(new(begins, end, center, sample, trajectoryFrame, bodyFrame)

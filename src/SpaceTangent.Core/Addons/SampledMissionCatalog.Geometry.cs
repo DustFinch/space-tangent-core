@@ -14,13 +14,14 @@ public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Bas
     public string? GlobeTexturePath { get; init; }
     public MissionAxesStyle? Axes { get; init; }
     public MissionVectorStyle? VectorOverlay { get; init; }
+    public MissionSwarmStyle? Swarm { get; init; }
 }
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
 
 public static partial class SampledMissionCatalog
 {
     private static IReadOnlyList<MissionGeometrySpan> ReadGeometry(JsonElement value, string root, string directory,
-        string name, JulianInstant start, JulianInstant end, Func<string, ObjectId> resolve, Action<string>? warning, int depth = 0)
+        string name, JulianInstant start, JulianInstant end, Func<string, ObjectId> resolve, Action<string>? warning, CancellationToken cancellation, int depth = 0)
     {
         if (depth >= 16)
             throw new InvalidDataException("Mission geometry exceeds 16 nested levels.");
@@ -34,6 +35,8 @@ public static partial class SampledMissionCatalog
             return [new(start, end, ReadVectorShape(value, type == "PlaneVisualizer", resolve))];
         if (type == "Sensor")
             return [new(start, end, new(null, .001, Basis3d.Identity, default, ReadSensor(value, resolve)))];
+        if (type == "KeplerianSwarm")
+            return [new(start, end, ReadSwarm(value, root, directory, cancellation))];
         if (type == "ParticleSystem")
             return [new(start, end, ReadParticles(value, root, directory, warning))];
         if (type == "Mesh")
@@ -64,7 +67,7 @@ public static partial class SampledMissionCatalog
                 throw new InvalidDataException("A mission geometry step is missing its start time.");
             times[index] = Date(step, "startTime", start);
             shapes[index] = step.TryGetProperty("geometry", out var geometry) && geometry.ValueKind == JsonValueKind.Object
-                ? ReadGeometry(geometry, root, directory, name, start, end, resolve, warning, depth + 1) : [];
+                ? ReadGeometry(geometry, root, directory, name, start, end, resolve, warning, cancellation, depth + 1) : [];
         }
 
         // The source selects the first matching adjacent interval, or its last item when none match.

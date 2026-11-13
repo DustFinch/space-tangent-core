@@ -93,5 +93,10 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedFrames.cs",
     "sha256": "02f15211bdfa5f7fa95400f0bc5e7531dd557f834d861bb8890781e7998cacf4",
     "reason": "Exact B1950 frame tag in the archived mission pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.Swarms.cs",
+    "sha256": "f14f07e30429a1c8d79ef8f807c37cdb3789a323f403e665639ca3a110c2d60f",
+    "reason": "Exact convention value in the archived native swarm pack schema."
   }
 ]
