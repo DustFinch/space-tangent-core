@@ -50,8 +50,21 @@ internal static class SpiceFixedFrames
         string numeric = FormattableString.Invariant($"TKFRAME_{classId}");
         if (pool.Contains(numeric + "_SPEC"))
             return numeric;
-        string nameKey = FormattableString.Invariant($"FRAME_{frameId}_NAME");
-        return pool.Contains(nameKey) && pool.Get(nameKey) is [string name] ? "TKFRAME_" + name : numeric;
+        string? className = NameKey(classId);
+        if (className is not null && pool.Contains(className + "_SPEC"))
+            return className;
+        string frame = FormattableString.Invariant($"TKFRAME_{frameId}");
+        if (pool.Contains(frame + "_SPEC"))
+            return frame;
+        return NameKey(frameId) ?? numeric;
+
+        string? NameKey(int id)
+        {
+            if (id == 10081)
+                return "TKFRAME_EARTH_FIXED";
+            string key = FormattableString.Invariant($"FRAME_{id}_NAME");
+            return pool.Contains(key) && pool.Get(key) is [string name] ? "TKFRAME_" + name : null;
+        }
     }
 
     internal static string Parent(SpiceTextKernel pool, string key) =>

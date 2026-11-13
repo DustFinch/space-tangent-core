@@ -103,7 +103,11 @@ internal sealed class SpiceFramePool(SpiceTextKernel definitions, Func<CkKernel[
         if (SpiceReferenceFrames.Body(id).Body is > 0 and var body)
             return Pck(body);
         if (id == 10081)
-            return new FrameModel.Fixed(10013, Basis3d.Identity);
+        {
+            string earth = SpiceFixedFrames.Key(definitions, id, id);
+            return definitions.Contains(earth + "_SPEC") ? ReadFixed(earth) :
+                new FrameModel.Fixed(10013, Basis3d.Identity);
+        }
 
         string key = FormattableString.Invariant($"FRAME_{id}");
         if (!definitions.Contains(key + "_CLASS") || !definitions.Contains(key + "_CLASS_ID"))
@@ -118,12 +122,16 @@ internal sealed class SpiceFramePool(SpiceTextKernel definitions, Func<CkKernel[
                 int clock = definitions.Contains(clockKey) ? definitions.GetInteger(clockKey) : classId / 1000;
                 return new FrameModel.Attitude(classId, new(definitions, clock));
             case 4:
-                string tk = SpiceFixedFrames.Key(definitions, id, classId);
-                int parent = Id(SpiceFixedFrames.Parent(definitions, tk));
-                return parent == 0 ? new FrameModel.Missing() : new FrameModel.Fixed(parent, SpiceFixedFrames.Transform(definitions, tk));
+                return ReadFixed(SpiceFixedFrames.Key(definitions, id, classId));
             default:
                 return new FrameModel.Missing();
         }
+    }
+
+    private FrameModel ReadFixed(string key)
+    {
+        int parent = Id(SpiceFixedFrames.Parent(definitions, key));
+        return parent == 0 ? new FrameModel.Missing() : new FrameModel.Fixed(parent, SpiceFixedFrames.Transform(definitions, key));
     }
 
     private FrameModel Pck(int body)

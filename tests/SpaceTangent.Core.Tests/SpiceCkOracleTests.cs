@@ -244,6 +244,71 @@ public sealed class SpiceCkOracleTests
         }
     }
 
+    [Theory]
+    [InlineData("1001011", false)]
+    [InlineData("1001010", false)]
+    [InlineData("PROBE_CLASS", false)]
+    [InlineData("PROBE_FK", false)]
+    [InlineData("1001011", true)]
+    [InlineData("10081", false)]
+    [InlineData("EARTH_FIXED", false)]
+    public void FixedFrameKeysSupportNativeAndArchivedIdentifiers(string key, bool conflictingFrameKey)
+    {
+        var scratch = Directory.CreateTempSubdirectory("st-tk-ids-");
+        try
+        {
+            string source = Directory.CreateDirectory(Path.Combine(scratch.FullName, "source")).FullName;
+            bool earth = key is "10081" or "EARTH_FIXED";
+            string frame = earth ? "EARTH_FIXED" : "PROBE_FK";
+            string definitions = earth ? "" : """
+                FRAME_PROBE_FK = 1001010
+                FRAME_1001010_NAME = 'PROBE_FK'
+                FRAME_1001010_CLASS = 4
+                FRAME_1001010_CLASS_ID = 1001011
+                FRAME_1001010_CENTER = 399
+                FRAME_PROBE_CLASS = 1001011
+                FRAME_1001011_NAME = 'PROBE_CLASS'
+                FRAME_1001011_CLASS = 4
+                FRAME_1001011_CLASS_ID = 1001011
+                FRAME_1001011_CENTER = 399
+                """;
+            string alternate = conflictingFrameKey ? Transform("1001010", 90) : "";
+            File.WriteAllText(Path.Combine(source, "frames.tf"),
+                "KPL/FK\n\\begindata\n" + definitions + "\n" + Transform(key, 30) + "\n" + alternate + "\n\\begintext\n");
+            File.WriteAllText(Path.Combine(source, "frame.ssc"), $$"""
+                "Probe" "Sol/Earth" {
+                    FixedPosition [ 7000 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "{{frame}}" BaseFrame "J2000" Kernel "frames.tf" }
+                }
+                """);
+            Verify(SscBodyCatalogue.Load(source));
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Verify(SscBodyCatalogue.Load(packed));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        static string Transform(string key, int degrees) => FormattableString.Invariant($$"""
+            TKFRAME_{{key}}_SPEC = 'ANGLES'
+            TKFRAME_{{key}}_RELATIVE = 'J2000'
+            TKFRAME_{{key}}_ANGLES = ({{degrees}} 0 0)
+            TKFRAME_{{key}}_AXES = (3 2 1)
+            TKFRAME_{{key}}_UNITS = 'DEGREES'
+            """);
+
+        static void Verify(IReadOnlyList<SscBodyDefinition> bodies)
+        {
+            var epoch = JulianInstant.FromTdbSeconds(0);
+            var actual = Assert.IsType<FrameKinematics>(Assert.Single(bodies).SampleRotation!(epoch));
+            Assert.InRange((actual.ToWorld.X - new Vector3d(Math.Sqrt(3) / 2, -.5, 0)).Length, 0, 1e-14);
+            Assert.Equal(default(Vector3d), actual.AngularVelocityRadiansPerSecond);
+        }
+    }
+
     private static Dictionary<string, MissionFrame.Spice> Load(string root, string group) =>
         SampledMissionCatalog.Load([$"catalogue-{group}.json"], root, _ => new ObjectId("sol/sun"))
             .ToDictionary(mission => mission.Name, mission => Assert.IsType<MissionFrame.Spice>(Assert.Single(mission.Arcs).BodyFrame));
