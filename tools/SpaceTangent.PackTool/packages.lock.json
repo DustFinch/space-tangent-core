@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0": {
+      "spacetangent.contracts": {
+        "type": "Project"
+      },
+      "spacetangent.core": {
+        "type": "Project",
+        "dependencies": {
+          "SpaceTangent.Contracts": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}

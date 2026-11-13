@@ -11,6 +11,41 @@ namespace SpaceTangent.Core.Tests;
 public sealed class CassiniSpiceCatalogTests
 {
     [CassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void BuiltPackKeepsOriginalCassiniStatesAndPointingAfterRelocation()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        DirectoryInfo workspace = Directory.CreateTempSubdirectory("space-tangent-pack-");
+        try
+        {
+            string source = workspace.CreateSubdirectory("source").FullName;
+            foreach (string file in Directory.EnumerateFiles(original))
+                File.Copy(file, Path.Combine(source, Path.GetFileName(file)));
+            string output = Path.Combine(workspace.FullName, "pack");
+            string moved = Path.Combine(workspace.FullName, "relocated pack");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, output, _ => { }));
+            var expected = Assert.Single(SscBodyCatalogue.Load(source));
+            Directory.Move(output, moved);
+            Directory.Delete(source, recursive: true);
+            var actual = Assert.Single(SscBodyCatalogue.Load(moved));
+            Assert.Equal(expected.Name, actual.Name);
+            Assert.Equal(Path.Combine(moved, "cassini.3ds"), actual.Mesh);
+            foreach (double seconds in new[] { 140556964.18453318, 141917558.4203589, 141918830.41202343, 141955264.18408903 })
+            {
+                var epoch = JulianInstant.FromTdbSeconds(seconds);
+                Assert.NotNull(expected.Sample(epoch));
+                Assert.Equal(expected.Sample(epoch), actual.Sample(epoch));
+                Assert.Equal(expected.SampleRotation!(epoch), actual.SampleRotation!(epoch));
+            }
+            Assert.NotNull(actual.SampleRotation!(JulianInstant.FromTdbSeconds(141917558.4203589)));
+        }
+        finally
+        {
+            workspace.Delete(recursive: true);
+        }
+    }
+
+    [CassiniFact]
     public void LoadsOriginalSscAndMatchesCassiniStatesThroughCoverageEdges()
     {
         string directory = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;

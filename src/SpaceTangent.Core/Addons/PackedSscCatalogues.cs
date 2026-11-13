@@ -89,18 +89,11 @@ public static partial class SscBodyCatalogue
 
         string Resolve(SscDefinition definition, string field, AddonStage stage, string name, params string[] ignored)
         {
-            var (kind, directory) = field switch
-            {
-                "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),
-                "Mesh" => ("model", "models"),
-                "Texture" or "Rings" => ("texture", "textures"),
-                "SpiceOrbit" or "SpiceRotation" => ("data", "data"),
-                "SampledOrbit" or "SampledTrajectory" or "SampledOrientation" or "Timeline" => ("trajectory", "trajectories"),
-                _ => throw new NotSupportedException($"Packed SSC resource kind for {field} is unavailable.")
-            };
+            var (kind, directory) = PackedResourceKind(field);
             var index = assets[definition.DirectoryFor(field)];
             string logical = name.Replace('\\', '/');
             if (!index.TryGetValue((kind, logical), out string? asset) &&
+                (kind != "texture" || !index.TryGetValue(("map", logical), out asset)) &&
                 (kind != "script" || !index.TryGetValue((kind, logical.EndsWith(".lua", StringComparison.Ordinal)
                     ? logical[..^4].Replace('/', '.') : logical), out asset)))
                 throw new FileNotFoundException($"Packed SSC {kind} resource {name} is not declared.", name);
@@ -111,4 +104,14 @@ public static partial class SscBodyCatalogue
             item.GetProperty(property).GetString() is { Length: > 0 } value ? value :
                 throw new InvalidDataException($"Packed SSC field {property} is missing.");
     }
+
+    private static (string Kind, string Directory) PackedResourceKind(string field) => field switch
+    {
+        "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),
+        "Mesh" => ("model", "models"),
+        "Texture" or "Rings" => ("texture", "textures"),
+        "SpiceOrbit" or "SpiceRotation" => ("data", "data"),
+        "SampledOrbit" or "SampledTrajectory" or "SampledOrientation" or "Timeline" => ("trajectory", "trajectories"),
+        _ => throw new NotSupportedException($"Packed SSC resource kind for {field} is unavailable.")
+    };
 }
