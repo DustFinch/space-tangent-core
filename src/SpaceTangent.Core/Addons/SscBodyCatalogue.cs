@@ -216,6 +216,8 @@ public static partial class SscBodyCatalogue
         else if (usesScriptOrbit &&
             TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) is { } scripted)
             raw = ScriptOrbit(scripted);
+        else if (ReadLegacySampledOrbit(item, fields, "SampledOrbit", resolve, Warn) is { } legacyCurve)
+            raw = epoch => legacyCurve.TrySample(epoch, out var state) ? state : null;
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {
             var context = new SscOrbitContext(Icrs, starScale ? AuKilometers : 1,
@@ -269,8 +271,8 @@ public static partial class SscBodyCatalogue
         }
         else
         {
-            string key = fields.Fields.ContainsKey("SampledTrajectory") ? "SampledTrajectory" : "SampledOrbit";
-            if (usesScriptOrbit && !fields.Fields.ContainsKey(key))
+            const string key = "SampledTrajectory";
+            if (!fields.Fields.ContainsKey(key) && (usesScriptOrbit || fields.Fields.ContainsKey("SampledOrbit")))
                 return null;
             SscValue data = fields.Get(key);
             string name;
@@ -484,6 +486,31 @@ public static partial class SscBodyCatalogue
                 raw(epoch) is not { } state)
                 return null;
             return new(orbitFrame.Transform(state.PositionKilometers), orbitFrame.Transform(state.VelocityKilometersPerSecond));
+        }
+    }
+
+    private static SampledStateTrajectory? ReadLegacySampledOrbit(SscDefinition item, SscValue.Map fields,
+        string field, SscResource resolve, Action<string> warn,
+        Func<string, SampledStateTrajectory>? read = null)
+    {
+        if (fields.Fields.ContainsKey("SampledTrajectory") || !fields.Fields.TryGetValue("SampledOrbit", out var data))
+            return null;
+
+        string name = data is SscValue.Map source ? source.Text("Source") : data.AsText();
+        try
+        {
+            if (data is SscValue.Map options && options.Fields.TryGetValue("Interpolation", out var interpolation) &&
+                interpolation.AsText() != "cubic")
+                throw new NotSupportedException("Only cubic SampledOrbit interpolation is available.");
+            string file = resolve(item, field, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"),
+                "data", "trajectories");
+            return read is null ? SampledStateTrajectory.ReadLegacy(file, Icrs) : read(file);
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or
+                                      FormatException or ArgumentException or OverflowException or NotSupportedException)
+        {
+            warn($"SampledOrbit initialization failed: {name}: {error.Message}");
+            return null;
         }
     }
 

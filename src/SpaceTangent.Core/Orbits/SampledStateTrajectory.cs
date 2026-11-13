@@ -6,8 +6,8 @@ using SpaceTangent.Contracts;
 
 namespace SpaceTangent.Core.Orbits;
 
-public enum SampledEndpointPolicy { Reject, ClampState }
-public enum SampledClockPolicy { ExactNanoseconds, SourceJulianDouble }
+public enum SampledEndpointPolicy { Reject, ClampState, ClampPosition }
+public enum SampledClockPolicy { ExactNanoseconds, SourceJulianDouble, JulianDays }
 public readonly record struct TimedState(JulianInstant Epoch, CartesianState State);
 
 /// <summary>A sampled position/velocity curve with explicit clock and endpoint policies.</summary>
@@ -15,7 +15,7 @@ public sealed class SampledStateTrajectory
 {
     private const int MaximumSamples = 1_000_000;
     private readonly TimedState[] _samples;
-    private readonly double[] _sourceSeconds;
+    private readonly double[] _sourceTimes;
     private readonly SampledEndpointPolicy _endpoints;
     private readonly SampledClockPolicy _clock;
 
@@ -26,18 +26,21 @@ public sealed class SampledStateTrajectory
     {
     }
 
-    private SampledStateTrajectory(TimedState[] samples, double[]? sourceSeconds, FrameId frame,
+    private SampledStateTrajectory(TimedState[] samples, double[]? sourceTimes, FrameId frame,
         SampledEndpointPolicy endpoints, SampledClockPolicy clock)
     {
-        if (frame == default || endpoints is < SampledEndpointPolicy.Reject or > SampledEndpointPolicy.ClampState ||
-            clock is < SampledClockPolicy.ExactNanoseconds or > SampledClockPolicy.SourceJulianDouble)
+        if (frame == default || endpoints is < SampledEndpointPolicy.Reject or > SampledEndpointPolicy.ClampPosition ||
+            clock is < SampledClockPolicy.ExactNanoseconds or > SampledClockPolicy.JulianDays)
             throw new ArgumentException("Sampled trajectory policies and reference frame must be defined.");
         if (samples.Length > MaximumSamples || (samples.Length == 0 && clock != SampledClockPolicy.SourceJulianDouble))
             throw new ArgumentException("Invalid sampled trajectory count.", nameof(samples));
         _samples = samples;
-        _sourceSeconds = clock == SampledClockPolicy.SourceJulianDouble
-            ? sourceSeconds ?? samples.Select(sample => SourceSeconds(sample.Epoch)).ToArray()
-            : [];
+        _sourceTimes = clock switch
+        {
+            SampledClockPolicy.SourceJulianDouble => sourceTimes ?? samples.Select(sample => SourceSeconds(sample.Epoch)).ToArray(),
+            SampledClockPolicy.JulianDays => sourceTimes ?? samples.Select(sample => sample.Epoch.ToJulianDate()).ToArray(),
+            _ => []
+        };
         _endpoints = endpoints;
         _clock = clock;
         Frame = frame;
@@ -50,9 +53,12 @@ public sealed class SampledStateTrajectory
                 throw new ArgumentException("Samples require finite TDB states.", nameof(samples));
             if (i == 0)
                 continue;
-            bool ordered = clock == SampledClockPolicy.SourceJulianDouble
-                ? _sourceSeconds[i] >= _sourceSeconds[i - 1]
-                : sample.Epoch.CompareTo(samples[i - 1].Epoch) > 0;
+            bool ordered = clock switch
+            {
+                SampledClockPolicy.SourceJulianDouble => _sourceTimes[i] >= _sourceTimes[i - 1],
+                SampledClockPolicy.JulianDays => _sourceTimes[i] > _sourceTimes[i - 1],
+                _ => sample.Epoch.CompareTo(samples[i - 1].Epoch) > 0
+            };
             if (!ordered)
                 throw new ArgumentException("Sample epochs are not ordered according to the clock policy.", nameof(samples));
         }
@@ -69,47 +75,81 @@ public sealed class SampledStateTrajectory
     public static SampledStateTrajectory ReadXyz(string path, FrameId frame) =>
         AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadCoordinates(path, frame, positionsOnly: true));
 
-    private static SampledStateTrajectory ReadCoordinates(string path, FrameId frame, bool positionsOnly)
+    internal static SampledStateTrajectory ReadLegacy(string path, FrameId frame) =>
+        AddonDiagnostics.Read(AddonStage.Trajectory, path, () => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".xyz" => ReadCoordinates(path, frame, positionsOnly: true, legacy: true),
+            ".xyzv" => ReadCoordinates(path, frame, positionsOnly: false, legacy: true),
+            _ => throw new NotSupportedException("An SSC SampledOrbit needs XYZ or XYZV samples.")
+        });
+
+    private static SampledStateTrajectory ReadCoordinates(string path, FrameId frame, bool positionsOnly, bool legacy = false)
     {
         using FileStream file = AddonDependencies.OpenRead(path, 64L * 1024 * 1024);
         if (file.Length > 64L * 1024 * 1024)
             throw new InvalidDataException("Sampled trajectory exceeds 64 MiB.");
         using var reader = new StreamReader(file, new UTF8Encoding(false, true));
         var samples = new List<TimedState>();
-        var seconds = new List<double>();
+        var times = new List<double>();
         double[] values = new double[positionsOnly ? 4 : 7];
         int field = 0;
         while (reader.ReadLine() is { } line)
         {
             int comment = line.IndexOf('#');
-            foreach (string token in (comment < 0 ? line : line[..comment])
-                         .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            string[] tokens = (comment < 0 ? line : line[..comment])
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (legacy && tokens.Length != 0 && tokens.Length != values.Length)
+                throw new InvalidDataException("Each legacy trajectory line requires a complete sample.");
+            foreach (string token in tokens)
             {
-                if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ||
-                    !double.IsFinite(value))
-                    throw new InvalidDataException("A sampled trajectory contains an invalid number.");
-                values[field++] = value;
+                values[field] = ReadValue(token, field, legacy);
+                field++;
                 if (field != values.Length)
                     continue;
                 if (samples.Count == MaximumSamples)
                     throw new InvalidDataException("A trajectory contains too many samples.");
                 samples.Add(new(JulianInstant.FromJulianDate(values[0], TimeScale.Tdb),
                     new(new(values[1], values[2], values[3]), positionsOnly ? default : new(values[4], values[5], values[6]))));
-                seconds.Add((values[0] - JulianInstant.J2000Day) * JulianInstant.SecondsPerDay);
+                times.Add(legacy ? values[0] : (values[0] - JulianInstant.J2000Day) * JulianInstant.SecondsPerDay);
                 field = 0;
             }
         }
         if (field != 0)
             throw new InvalidDataException("A sampled trajectory contains an incomplete sample.");
+        if (legacy && samples.Count == 0)
+            throw new InvalidDataException("The legacy trajectory has no samples.");
         if (positionsOnly && samples.Count != 0)
-            DeriveVelocities(samples, seconds);
-        return new([.. samples], [.. seconds], frame, SampledEndpointPolicy.ClampState, SampledClockPolicy.SourceJulianDouble);
+        {
+            if (!legacy && samples.Count < 2)
+                throw new InvalidDataException("A nonempty XYZ file requires at least two positions.");
+            if (samples.Count > 1)
+                DeriveVelocities(samples, times, legacy ? JulianInstant.SecondsPerDay : 1);
+        }
+        return new([.. samples], [.. times], frame,
+            legacy ? SampledEndpointPolicy.ClampPosition : SampledEndpointPolicy.ClampState,
+            legacy ? SampledClockPolicy.JulianDays : SampledClockPolicy.SourceJulianDouble);
     }
 
-    private static void DeriveVelocities(List<TimedState> samples, List<double> seconds)
+    private static double ReadValue(string token, int field, bool legacy)
     {
-        if (samples.Count < 2)
-            throw new InvalidDataException("A nonempty XYZ file requires at least two positions.");
+        if (legacy && field != 0)
+        {
+            if (float.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
+            {
+                if (field >= 4)
+                    value *= 86_400f; // Legacy velocities are stored as float kilometers per day.
+                if (float.IsFinite(value))
+                    return field >= 4 ? value / 86_400d : value;
+            }
+        }
+        else if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && double.IsFinite(value))
+            return value;
+
+        throw new InvalidDataException("A sampled trajectory contains an invalid number.");
+    }
+
+    private static void DeriveVelocities(List<TimedState> samples, List<double> times, double secondsPerUnit)
+    {
         Vector3d next = Slope(1);
         for (int i = 0; i < samples.Count; i++)
         {
@@ -122,7 +162,7 @@ public sealed class SampledStateTrajectory
 
         Vector3d Slope(int later)
         {
-            double duration = seconds[later] - seconds[later - 1];
+            double duration = (times[later] - times[later - 1]) * secondsPerUnit;
             if (duration <= 0)
                 throw new InvalidDataException("XYZ source times must increase.");
             Vector3d slope = (samples[later].State.PositionKilometers - samples[later - 1].State.PositionKilometers) / duration;
@@ -140,22 +180,27 @@ public sealed class SampledStateTrajectory
         if (_samples.Length == 0)
             return _clock == SampledClockPolicy.SourceJulianDouble;
 
-        double sourceTime = _clock == SampledClockPolicy.SourceJulianDouble ? SourceSeconds(epoch) : 0;
-        int Comparison(int index) => _clock == SampledClockPolicy.SourceJulianDouble
-            ? sourceTime.CompareTo(_sourceSeconds[index])
-            : epoch.CompareTo(_samples[index].Epoch);
+        double sourceTime = _clock switch
+        {
+            SampledClockPolicy.SourceJulianDouble => SourceSeconds(epoch),
+            SampledClockPolicy.JulianDays => epoch.ToJulianDate(),
+            _ => 0
+        };
+        int Comparison(int index) => _clock == SampledClockPolicy.ExactNanoseconds
+            ? epoch.CompareTo(_samples[index].Epoch)
+            : sourceTime.CompareTo(_sourceTimes[index]);
 
         int first = Comparison(0), last = Comparison(_samples.Length - 1);
         if ((first < 0 || last > 0) && _endpoints == SampledEndpointPolicy.Reject)
             return false;
         if (first <= 0)
         {
-            state = _samples[0].State;
+            state = Endpoint(0);
             return true;
         }
         if (last > 0)
         {
-            state = _samples[^1].State;
+            state = Endpoint(_samples.Length - 1);
             return true;
         }
 
@@ -175,20 +220,26 @@ public sealed class SampledStateTrajectory
         }
 
         int previous = lower - 1;
-        double duration, elapsed;
-        if (_clock == SampledClockPolicy.SourceJulianDouble)
-        {
-            duration = _sourceSeconds[lower] - _sourceSeconds[previous];
-            elapsed = sourceTime - _sourceSeconds[previous];
-        }
-        else
+        double duration, fraction;
+        if (_clock == SampledClockPolicy.ExactNanoseconds)
         {
             duration = (double)_samples[lower].Epoch.DifferenceNanoseconds(_samples[previous].Epoch) /
                 JulianInstant.NanosecondsPerSecond;
-            elapsed = (double)epoch.DifferenceNanoseconds(_samples[previous].Epoch) / JulianInstant.NanosecondsPerSecond;
+            double elapsed = (double)epoch.DifferenceNanoseconds(_samples[previous].Epoch) / JulianInstant.NanosecondsPerSecond;
+            fraction = elapsed / duration;
         }
-        state = Interpolate(_samples[previous].State, _samples[lower].State, duration, elapsed / duration);
+        else
+        {
+            double interval = _sourceTimes[lower] - _sourceTimes[previous];
+            duration = interval * (_clock == SampledClockPolicy.JulianDays ? JulianInstant.SecondsPerDay : 1);
+            fraction = (sourceTime - _sourceTimes[previous]) / interval;
+        }
+        state = Interpolate(_samples[previous].State, _samples[lower].State, duration, fraction);
         return state.PositionKilometers.IsFinite && state.VelocityKilometersPerSecond.IsFinite;
+
+        CartesianState Endpoint(int index) => _endpoints == SampledEndpointPolicy.ClampPosition
+            ? new(_samples[index].State.PositionKilometers, default)
+            : _samples[index].State;
     }
 
     private static CartesianState Interpolate(CartesianState first, CartesianState last, double duration, double t)

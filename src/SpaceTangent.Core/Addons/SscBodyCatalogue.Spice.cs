@@ -68,12 +68,12 @@ public static partial class SscBodyCatalogue
     private static bool HasSpiceAlternative(SscValue.Map properties, string field, bool timeline = false)
     {
         string[] keys = field == "SpiceOrbit"
-            ? ["EllipticalOrbit", "FixedPosition", "SampledTrajectory"]
+            ? ["EllipticalOrbit", "FixedPosition", "SampledTrajectory", "SampledOrbit"]
             : ["SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation"];
         if (keys.Any(properties.Fields.ContainsKey))
             return true;
         return !timeline && (field == "SpiceOrbit"
-            ? properties.Fields.ContainsKey("ScriptedOrbit") || properties.Fields.ContainsKey("SampledOrbit")
+            ? properties.Fields.ContainsKey("ScriptedOrbit")
             : properties.Fields.ContainsKey("ScriptedRotation") || properties.Fields.ContainsKey("CustomRotation"));
     }
 

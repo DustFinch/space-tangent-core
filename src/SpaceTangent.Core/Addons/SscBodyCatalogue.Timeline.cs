@@ -23,6 +23,7 @@ public static partial class SscBodyCatalogue
 
         var curves = new Dictionary<string, SampledStateTrajectory>(OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var legacyCurves = new Dictionary<string, SampledStateTrajectory>(curves.Comparer);
         var attitudes = new Dictionary<string, Func<JulianInstant, FrameKinematics?>>(curves.Comparer);
         long totalBytes = 0;
         var result = new List<TimelinePhaseBinder>(phases.Items.Length);
@@ -55,7 +56,7 @@ public static partial class SscBodyCatalogue
             var state = TrySpiceModel(phase, spice, "SpiceOrbit", ReadSpiceOrbit, WarnPhase, timeline: true);
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
-            state ??= ReadTimelineState(phase, center, out orbitPeriodSeconds, out surfaceCoordinates);
+            state ??= ReadTimelineState(phase, center, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
             if (surfaceCoordinates.HasValue)
                 trajectory = find => new MissionFrame.BodyFixed(find(center));
             MissionFrameFactory bodyFrame = _ => new MissionFrame.Inertial(TimelineEcliptic);
@@ -123,7 +124,7 @@ public static partial class SscBodyCatalogue
         }
 
         Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center,
-            out double? orbitPeriodSeconds, out Vector3d? surfaceCoordinates)
+            Action<string> warnPhase, out double? orbitPeriodSeconds, out Vector3d? surfaceCoordinates)
         {
             orbitPeriodSeconds = null;
             surfaceCoordinates = null;
@@ -152,6 +153,12 @@ public static partial class SscBodyCatalogue
                 }
                 return epoch => curve.TrySample(epoch, out var sample) ? sample : null;
             }
+            string? loadedLegacyPath = null;
+            var legacy = ReadLegacySampledOrbit(item, phase, "Timeline", resolve, warnPhase, ReadLegacyCurve);
+            if (loadedLegacyPath is not null)
+                CountBytes(loadedLegacyPath);
+            if (legacy is not null)
+                return epoch => legacy.TrySample(epoch, out var sample) ? sample : null;
             if (phase.Fields.TryGetValue("EllipticalOrbit", out var orbit))
             {
                 bool heliocentric = center.Equals("Sol", StringComparison.OrdinalIgnoreCase);
@@ -175,6 +182,16 @@ public static partial class SscBodyCatalogue
                 return _ => state;
             }
             throw new NotSupportedException("This SSC Timeline has no supported trajectory.");
+
+            SampledStateTrajectory ReadLegacyCurve(string path)
+            {
+                if (legacyCurves.TryGetValue(path, out var curve))
+                    return curve;
+                curve = SampledStateTrajectory.ReadLegacy(path, Icrs);
+                legacyCurves.Add(path, curve);
+                loadedLegacyPath = path;
+                return curve;
+            }
         }
     }
 
