@@ -94,7 +94,7 @@ public static partial class SscBodyCatalogue
                 "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),
                 "Mesh" => ("model", "models"),
                 "SpiceOrbit" or "SpiceRotation" => ("data", "data"),
-                "SampledOrbit" or "SampledTrajectory" or "SampledOrientation" => ("trajectory", "trajectories"),
+                "SampledOrbit" or "SampledTrajectory" or "SampledOrientation" or "Timeline" => ("trajectory", "trajectories"),
                 _ => throw new NotSupportedException($"Packed SSC resource kind for {field} is unavailable.")
             };
             var index = assets[definition.DirectoryFor(field)];

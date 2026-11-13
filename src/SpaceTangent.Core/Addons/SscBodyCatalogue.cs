@@ -18,6 +18,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? SurfaceMap { get; init; }
     public string? MeshRoot { get; init; }
+    public Func<ObjectId, Func<string, ObjectId>, SampledMission>? BindTimeline { get; init; }
 
     public string Name => Names.Split(':')[0];
 }
@@ -82,7 +83,7 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException($"SSC parent cycle at {path}.");
             if (!byPath.TryGetValue(item.Parent, out var parent) || Read(parent))
             {
-                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning, resolve, spice));
+                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation));
                 installed = body is not null;
                 if (body is not null)
                     result.Add(body);
@@ -152,7 +153,8 @@ public static partial class SscBodyCatalogue
         SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
 
-    private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, SpiceResources spice)
+    private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts,
+        Action<string>? warning, SscResource resolve, SpiceResources spice, CancellationToken cancellation)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -171,10 +173,14 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
         double? orbitPeriodSeconds = null;
+        var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
+            ? ReadTimeline(item, timelineValue, resolve, cancellation) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit") && !fields.Fields.ContainsKey("SpiceOrbit");
         SscScriptOrbit? scripted = usesScriptOrbit
             ? TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) : null;
-        if (fields.Fields.TryGetValue("SpiceOrbit", out var spiceOrbit))
+        if (timeline is not null)
+            raw = _ => null; // A timeline needs its bound graph to select a center and frame.
+        else if (fields.Fields.TryGetValue("SpiceOrbit", out var spiceOrbit))
         {
             if (spiceOrbit is not SscValue.Map parameters)
                 throw new InvalidDataException("SSC SpiceOrbit must be an object.");
@@ -347,7 +353,9 @@ public static partial class SscBodyCatalogue
             mesh, meshCenter, meshRotation, orientation, Sample)
         {
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
-            MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh"))
+            MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
+            BindTimeline = timeline is null ? null : (id, find) =>
+                new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find)).ToArray()))
         };
 
         T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
