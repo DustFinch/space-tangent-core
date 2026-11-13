@@ -237,18 +237,30 @@ public sealed class OrderedSpiceCatalogueTests
             var epoch = JulianInstant.FromTdbSeconds(5);
             Check("a.bsp", 222, 111);
             Check("a.tm", 111, 111);
+            Check("a.bsp", 111, 111, "./a.bsp");
+            if (File.Exists(Path.Combine(scratch.FullName, "A.BSP")))
+                Check("a.bsp", 111, 111, "A.BSP");
 
-            void Check(string first, double expectedSsc, double expectedFurnish)
+            void Check(string first, double expectedSsc, double expectedFurnish, string last = "a.bsp")
             {
                 File.WriteAllText(path, $$"""
                     "Test" "Sol" {
                         OrbitFrame { EclipticJ2000 {} }
-                        SpiceOrbit { Kernel [ "{{first}}" "b.bsp" "a.bsp" ]
+                        SpiceOrbit { Kernel [ "{{first}}" "b.bsp" "{{last}}" ]
                             Target "1999999" Origin "0" BoundingRadius 300 }
                     }
                     """);
                 var ssc = Assert.Single(SscBodyCatalogue.Load(scratch.FullName));
                 Assert.Equal(expectedSsc, ssc.Sample(epoch)!.Value.PositionKilometers.X);
+                string pack = Path.Combine(scratch.FullName, "pack-" + Guid.NewGuid().ToString("N"));
+                string externalPack = pack + "-output";
+                // BuildPack keeps the input tree, so stage the source files in their own directory.
+                Directory.CreateDirectory(pack);
+                foreach (string input in new[] { "priority.ssc", "a.bsp", "b.bsp", "a.tm" })
+                    File.Copy(Path.Combine(scratch.FullName, input), Path.Combine(pack, input));
+                Assert.Equal(1, SscBodyCatalogue.BuildPack(pack, externalPack, _ => { }));
+                var packed = Assert.Single(SscBodyCatalogue.Load(externalPack));
+                Assert.Equal(expectedSsc, packed.Sample(epoch)!.Value.PositionKilometers.X);
 
                 File.WriteAllText(Path.Combine(scratch.FullName, "kernels.json"),
                     """{"version":"1.0","spiceKernels":["a.bsp"]}""");

@@ -48,11 +48,11 @@ public static partial class SscBodyCatalogue
                 string owner = root(directory);
                 var key = (properties, field);
                 bool optional = HasSpiceAlternative(properties, field, timeline);
+                string[] authored = (kernel is SscValue.List list ? list.Items : [kernel]).Select(name => name.AsText()).ToArray();
                 string[] files;
                 try
                 {
-                    files = (kernel is SscValue.List list ? list.Items : [kernel])
-                        .Select(name => resolve(item, ownerField, AddonStage.Kernel, name.AsText(), "data")).ToArray();
+                    files = authored.Select(name => resolve(item, ownerField, AddonStage.Kernel, name, "data")).ToArray();
                 }
                 catch (FileNotFoundException error) when (optional)
                 {
@@ -61,7 +61,8 @@ public static partial class SscBodyCatalogue
                 }
                 yield return (new SpiceResources.KernelGroup(owner,
                     files.Select(file => (Path.GetDirectoryName(file)!, Path.GetFileName(file))).ToArray(),
-                    optional ? error => unavailable.Add(key, error) : null, SkipRepeatedExplicit: true), kernelOrder?.GetValueOrDefault(directory) ?? 0);
+                    optional ? error => unavailable.Add(key, error) : null, SkipRepeatedExplicit: true)
+                    { AuthoredNames = authored }, kernelOrder?.GetValueOrDefault(directory) ?? 0);
             }
         }
     }

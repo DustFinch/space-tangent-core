@@ -24,7 +24,10 @@ internal sealed class SpiceResources
         : this(sources.Select(source => (root, source.Directory, source.Name))) { }
 
     internal sealed record KernelGroup(string Root, IReadOnlyList<(string Directory, string Name)> Files,
-        Action<Exception>? Unavailable = null, bool SkipRepeatedExplicit = false);
+        Action<Exception>? Unavailable = null, bool SkipRepeatedExplicit = false)
+    {
+        internal IReadOnlyList<string>? AuthoredNames { get; init; }
+    }
 
     internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
         : this(sources.Select(source => new KernelGroup(source.Root, [(source.Directory, source.Name)]))) { }
@@ -35,16 +38,21 @@ internal sealed class SpiceResources
         var ordered = new List<(string Path, KernelKind Kind)>();
         var parsedSpk = new Dictionary<string, SpkKernel>(FileNames);
         var parsedCk = new Dictionary<string, CkKernel>(FileNames);
-        var explicitSscLoads = new HashSet<string>(StringComparer.Ordinal);
+        var explicitSscLoads = new HashSet<(string File, string Authored)>();
         int visits = 0;
         foreach (var group in groups)
         {
             int first = ordered.Count;
-            HashSet<string>? pending = group.SkipRepeatedExplicit ? new(StringComparer.Ordinal) : null;
+            HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
             try
             {
-                foreach (var (directory, name) in group.Files)
-                    Expand(group.Root, directory, name, active, ordered, ref visits, 0, explicitSscLoads, pending);
+                for (int index = 0; index < group.Files.Count; index++)
+                {
+                    var (directory, name) = group.Files[index];
+                    // Keep authored spelling for explicit SSC residency and resolve the physical file separately.
+                    string? authored = pending is null ? null : group.AuthoredNames?[index] ?? name;
+                    Expand(group.Root, directory, name, active, ordered, ref visits, 0, explicitSscLoads, pending, authored);
+                }
             }
             catch (FileNotFoundException error) when (group.Unavailable is not null)
             {
@@ -126,13 +134,14 @@ internal sealed class SpiceResources
 
     private static void Expand(string root, string directory, string name, HashSet<string> active,
         List<(string Path, KernelKind Kind)> result, ref int visits, int depth,
-        HashSet<string>? previousExplicit = null, HashSet<string>? pending = null)
+        HashSet<(string File, string Authored)>? previousExplicit = null,
+        HashSet<(string File, string Authored)>? pending = null, string? authored = null)
     {
         string file = Path.Combine(directory, name);
         try
         {
             file = LocalAddonFiles.ResolveRelative(root, directory, name);
-            if (pending is not null && (previousExplicit!.Contains(file) || !pending.Add(file)))
+            if (authored is not null && (previousExplicit!.Contains((file, authored)) || !pending!.Add((file, authored))))
                 return;
             if (++visits > MaximumLoads || depth > MaximumDepth)
                 throw new InvalidDataException("SPICE metakernel load limit exceeded.");
