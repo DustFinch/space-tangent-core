@@ -1222,6 +1222,59 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void NonzeroSscSelfOrbitRequiresCoverageEvenWithAnotherTargetInThePool()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            File.Copy(Path.Combine(corpus, "linear.bsp"), Path.Combine(source, "linear.bsp"));
+            const string valid = """
+                "Covered" "Sol" {
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "1999999" BoundingRadius 500 }
+                }
+                "Barycenter" "Sol" {
+                    SpiceOrbit { Target "0" Origin "0" BoundingRadius 500 }
+                }
+                """;
+            const string unsupported = """
+                "Uncovered" "Sol" {
+                    SpiceOrbit { Target "399" Origin "399" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Outside window" "Sol" {
+                    SpiceOrbit { Target "1999999" Origin "1999999" BoundingRadius 500
+                        Beginning 2451545.001 Ending 2451545.002 }
+                    FixedPosition [ 4 0 0 ]
+                }
+                """;
+            string catalogue = Path.Combine(source, "self.ssc");
+            File.WriteAllText(catalogue, valid + "\n" + unsupported);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(4, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string root in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(new[] { 0d, 0d, 3d, 4d }, bodies.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+                Assert.Equal(2, warnings.Count);
+                Assert.Contains("No SPK coverage", warnings[0]);
+                Assert.Contains("not entirely covered", warnings[1]);
+            }
+
+            File.WriteAllText(catalogue, valid + "\n" + unsupported.Replace("FixedPosition [ 3 0 0 ]", "", StringComparison.Ordinal));
+            Assert.Contains("No SPK coverage", Assert.Throws<InvalidDataException>(() => SscBodyCatalogue.Load(source)).Message);
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);

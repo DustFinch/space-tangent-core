@@ -130,20 +130,25 @@ public static partial class SscBodyCatalogue
 
         var initialStates = initial.StatesAtInitialization;
         var intervals = initialStates.SscTargetIntervals(target);
+        // A nonzero self-orbit still needs a furnished ephemeris, even though its state is zero.
+        if (!preflight && target == origin && intervals.Count == 0)
+            intervals = resources.StatesAtInitialization.SscTargetIntervals(target);
+        if (intervals.Count == 0 && target != 0 && (preflight || target == origin))
+            throw new InvalidDataException("No SPK coverage for the requested target.");
+
         bool bounded = coverage is { Beginning: not null, Ending: not null };
         if (bounded)
             coverage = (Inset(coverage.Beginning!.Value, .001), Inset(coverage.Ending!.Value, -.001));
         else if (intervals.Count > 0)
             coverage = (Inset(intervals[0].Start, .001), Inset(intervals[0].End, -.001));
-        else if (preflight && target != 0)
-            throw new InvalidDataException("No SPK coverage for the requested target.");
+
+        if ((preflight || target == origin) && bounded && target != 0 && !intervals.Any(span =>
+            coverage.Beginning!.Value.CompareTo(span.Start) >= 0 && coverage.Ending!.Value.CompareTo(span.End) <= 0))
+            throw new InvalidDataException("The specified SSC interval is not entirely covered by SPK.");
 
         if (preflight)
         {
             var first = coverage.Beginning ?? (target == 0 ? initialStates.FirstTargetEpoch(origin) : null);
-            if (bounded && target != 0 && !intervals.Any(span =>
-                coverage.Beginning!.Value.CompareTo(span.Start) >= 0 && coverage.Ending!.Value.CompareTo(span.End) <= 0))
-                throw new InvalidDataException("The specified SSC interval is not entirely covered by SPK.");
             if (first is null || !initialStates.TryState(target, origin, first.Value, out _))
                 throw new InvalidDataException("No connected SPICE state at interval beginning.");
         }
