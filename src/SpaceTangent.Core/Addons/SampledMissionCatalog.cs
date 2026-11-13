@@ -56,7 +56,7 @@ public abstract record MissionDirection
 public static partial class SampledMissionCatalog
 {
     private static readonly string[] CalendarFormats = [
-        "yyyy-MM-dd", "yyyy-MM-dd HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF"
+        "yyyy-MM-dd", "yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF"
     ];
     private static readonly MissionFrame.Inertial Equatorial = new(Basis3d.Identity);
     private static readonly MissionFrame.Inertial Ecliptic = new(new(new(1, 0, 0),
@@ -69,11 +69,16 @@ public static partial class SampledMissionCatalog
         Load([catalogPath], assetRoot, resolveBody, warning, cancellation);
 
     public static IReadOnlyList<SampledMission> Load(IEnumerable<string> catalogPaths, string assetRoot,
+        Func<string, ObjectId?> resolveBody, Action<string>? warning = null, CancellationToken cancellation = default) =>
+        LoadContent(catalogPaths, assetRoot, resolveBody, warning, cancellation).Missions;
+
+    public static SampledMissionContent LoadContent(IEnumerable<string> catalogPaths, string assetRoot,
         Func<string, ObjectId?> resolveBody, Action<string>? warning = null, CancellationToken cancellation = default)
     {
         ArgumentNullException.ThrowIfNull(catalogPaths);
         ArgumentNullException.ThrowIfNull(resolveBody);
         string root = Path.GetFullPath(assetRoot);
+        var annotations = new List<MissionAnnotation>();
         var names = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<ObjectId>();
         var kernelLoads = new List<(string Directory, string Name)>();
@@ -142,7 +147,7 @@ public static partial class SampledMissionCatalog
             foreach (var mission in missions)
                 if (mission.Observation is { } observation && !sensors.Contains(observation.Sensor))
                     throw new InvalidDataException($"{mission.Name}: observation requires an installed sensor field.");
-            return Array.AsReadOnly(missions);
+            return new(Array.AsReadOnly(missions), annotations.AsReadOnly());
         }
         finally
         {
@@ -175,8 +180,16 @@ public static partial class SampledMissionCatalog
                     int version = packedVersion.GetInt32();
                     if (version is < 3 or > 19)
                         throw new NotSupportedException($"Packed mission format version {version} is outside 3–19.");
-                    var bodies = catalogue.GetProperty("bodies");
-                    if (bodies.GetArrayLength() is < 1 or > 512)
+                    if (catalogue.TryGetProperty("annotations", out var packedAnnotations))
+                        foreach (var annotation in packedAnnotations.EnumerateArray())
+                            AddAnnotation(annotation, packed: true);
+                    if (!catalogue.TryGetProperty("bodies", out var bodies))
+                    {
+                        if (packedAnnotations.ValueKind == JsonValueKind.Array)
+                            return true;
+                        throw new InvalidDataException("A packed mission catalogue requires bodies or annotations.");
+                    }
+                    if (bodies.GetArrayLength() > 512 || bodies.GetArrayLength() == 0 && packedAnnotations.ValueKind != JsonValueKind.Array)
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
@@ -217,6 +230,11 @@ public static partial class SampledMissionCatalog
 
         void Register(JsonElement item, string path, bool packed = false)
         {
+            if (!packed && item.TryGetProperty("type", out var type) && type.GetString() == "AnnotationScript")
+            {
+                AddAnnotation(item, packed: false);
+                return;
+            }
             bool visualizer = !packed && IsVisualizer(item);
             if (visualizer && Text(item.GetProperty("style"), "type") is not ("BodyAxes" or "FrameAxes" or "Plane" or "BodyDirection"))
             {
@@ -255,6 +273,13 @@ public static partial class SampledMissionCatalog
                 Text(attitude, "type") == "Spice")
                 instrumentFrames.Add(name, Text(attitude, "name"));
             definitions.Add((path, item, packed));
+        }
+
+        void AddAnnotation(JsonElement value, bool packed)
+        {
+            if (annotations.Count >= 128)
+                throw new InvalidDataException("A mission installation supports at most 128 annotation tracks.");
+            annotations.Add(ReadAnnotation(value, packed, cancellation));
         }
 
         ObjectId Resolve(string name) => names.TryGetValue(name, out var id) ? id :
