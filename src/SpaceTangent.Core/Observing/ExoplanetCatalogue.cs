@@ -40,6 +40,10 @@ public sealed class ExoplanetEntry
     public double MassEarths { get; }
     public double GeometricAlbedo { get; }
 
+    /// <summary>The catalogue orbit's semimajor axis, in kilometers.</summary>
+    public double SemiMajorAxisKilometers =>
+        _orbit.Curve.Elements.PeriapsisKilometers / (1 - _orbit.Curve.Elements.Eccentricity);
+
     public CartesianState ParentRelativeState(JulianInstant epoch)
     {
         var state = _orbit.Evaluate(epoch);

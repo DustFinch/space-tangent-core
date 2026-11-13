@@ -25,6 +25,7 @@ public sealed class ExoplanetCatalogueTests
         var dimidium = Assert.IsType<ExoplanetEntry>(catalogue.Find(new("exo/113357/dimidium")));
         Assert.Contains("51 Peg b", dimidium.Names);
         Assert.Equal("exo-class4", dimidium.TextureClass);
+        Assert.Equal(7_829_952.552, dimidium.SemiMajorAxisKilometers, 6);
         var date = JulianInstant.FromJulianDate(2460600.5008, TimeScale.Tdb);
         Check(b, 7264472.601, 47.23325308362595);
         Check(dimidium, 7826645.803237212, 134.64396381724777);
