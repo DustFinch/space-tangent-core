@@ -4,7 +4,7 @@ using SpaceTangent.Contracts;
 
 namespace SpaceTangent.Core.Addons;
 
-public sealed record SampledMissionContent(IReadOnlyList<SampledMission> Missions, IReadOnlyList<MissionAnnotation> Annotations);
+public sealed record SampledMissionContent(IReadOnlyList<SampledMission> Missions, IReadOnlyList<MissionAnnotation> Annotations, IReadOnlyList<MissionViewpoint> Viewpoints);
 
 public sealed record MissionAnnotation(string Name, double X, double Y, string Alignment, string Size,
     Vector3d Color, IReadOnlyList<MissionAnnotationLine> Lines);

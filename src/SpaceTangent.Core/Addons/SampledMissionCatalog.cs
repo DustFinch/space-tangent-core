@@ -79,6 +79,7 @@ public static partial class SampledMissionCatalog
         ArgumentNullException.ThrowIfNull(resolveBody);
         string root = Path.GetFullPath(assetRoot);
         var annotations = new List<MissionAnnotation>();
+        var viewpointItems = new List<(JsonElement Item, bool Packed)>();
         var names = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<ObjectId>();
         var kernelLoads = new List<(string Directory, string Name)>();
@@ -147,7 +148,26 @@ public static partial class SampledMissionCatalog
             foreach (var mission in missions)
                 if (mission.Observation is { } observation && !sensors.Contains(observation.Sensor))
                     throw new InvalidDataException($"{mission.Name}: observation requires an installed sensor field.");
-            return new(Array.AsReadOnly(missions), annotations.AsReadOnly());
+            var viewpoints = new List<MissionViewpoint>();
+            foreach (var (item, packed) in viewpointItems)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                try
+                {
+                    viewpoints.Add(ReadViewpoint(item, packed, ResolveViewpoint));
+                }
+                catch (Exception error) when (error is InvalidDataException or KeyNotFoundException or FormatException or InvalidOperationException)
+                {
+                    warning?.Invoke($"Mission viewpoint: {error.Message}");
+                }
+
+                ObjectId ResolveViewpoint(string body)
+                {
+                    ObjectId id = packed ? ResolvePacked(body) : Resolve(body);
+                    return rejected.Contains(id) ? throw new InvalidDataException($"Unavailable viewpoint body {body}.") : id;
+                }
+            }
+            return new(Array.AsReadOnly(missions), annotations.AsReadOnly(), viewpoints.AsReadOnly());
         }
         finally
         {
@@ -183,13 +203,17 @@ public static partial class SampledMissionCatalog
                     if (catalogue.TryGetProperty("annotations", out var packedAnnotations))
                         foreach (var annotation in packedAnnotations.EnumerateArray())
                             AddAnnotation(annotation, packed: true);
+                    if (catalogue.TryGetProperty("viewpoints", out var packedViewpoints))
+                        foreach (var viewpoint in packedViewpoints.EnumerateArray())
+                            AddViewpoint(viewpoint, packed: true);
+                    bool metadata = packedAnnotations.ValueKind == JsonValueKind.Array || packedViewpoints.ValueKind == JsonValueKind.Array;
                     if (!catalogue.TryGetProperty("bodies", out var bodies))
                     {
-                        if (packedAnnotations.ValueKind == JsonValueKind.Array)
+                        if (metadata)
                             return true;
-                        throw new InvalidDataException("A packed mission catalogue requires bodies or annotations.");
+                        throw new InvalidDataException("A packed mission catalogue requires bodies, annotations or viewpoints.");
                     }
-                    if (bodies.GetArrayLength() > 512 || bodies.GetArrayLength() == 0 && packedAnnotations.ValueKind != JsonValueKind.Array)
+                    if (bodies.GetArrayLength() > 512 || bodies.GetArrayLength() == 0 && !metadata)
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
@@ -233,6 +257,11 @@ public static partial class SampledMissionCatalog
             if (!packed && item.TryGetProperty("type", out var type) && type.GetString() == "AnnotationScript")
             {
                 AddAnnotation(item, packed: false);
+                return;
+            }
+            if (!packed && item.TryGetProperty("type", out type) && type.GetString() == "Viewpoint")
+            {
+                AddViewpoint(item, packed: false);
                 return;
             }
             bool visualizer = !packed && IsVisualizer(item);
@@ -280,6 +309,13 @@ public static partial class SampledMissionCatalog
             if (annotations.Count >= 128)
                 throw new InvalidDataException("A mission installation supports at most 128 annotation tracks.");
             annotations.Add(ReadAnnotation(value, packed, cancellation));
+        }
+
+        void AddViewpoint(JsonElement value, bool packed)
+        {
+            if (viewpointItems.Count >= 512)
+                throw new InvalidDataException("A mission installation supports at most 512 viewpoints.");
+            viewpointItems.Add((value, packed));
         }
 
         ObjectId Resolve(string name) => names.TryGetValue(name, out var id) ? id :
