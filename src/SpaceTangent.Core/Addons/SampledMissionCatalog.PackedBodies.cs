@@ -22,27 +22,14 @@ public static partial class SampledMissionCatalog
         if (end.CompareTo(start) <= 0)
             throw new InvalidDataException("A packed body has an empty lifetime.");
 
-        var spin = body.GetProperty("rotation");
-        bool follows = Text(spin, "kind") == "follow";
-        bool spiceAttitude = Text(spin, "kind") == "spice";
-        var reference = spiceAttitude ? PackedSpiceAxes(spin, "outputFrame") : follows ? new MissionFrame.BodyFixed(resolve(Text(spin, "body"))) :
-            PackedFrame(spin.GetProperty("frame"), resolve, id);
-        MissionFrame attitude;
-        if (spiceAttitude)
-            attitude = ReadPackedSpiceAttitude(spin, resources);
-        else if (body.TryGetProperty("bodyFrame", out var axes))
-        {
-            var dynamic = PackedFrame(axes, resolve, id);
-            if (reference is not MissionFrame.Inertial inertial)
-                throw new NotSupportedException("A packed rotation in a two-vector body frame needs inertial local axes.");
-            var relative = Multiply(Ecliptic.ToWorld.Transpose(), inertial.ToWorld);
-            var local = PackedRotation(spin, new MissionFrame.Inertial(relative), root, cancellation);
-            attitude = new MissionFrame.Rotating(dynamic, epoch => EvaluateLocalRotation(local, epoch));
-            reference = new MissionFrame.Rotating(dynamic, _ => new(relative, default(Vector3d)));
-        }
-        else
-            attitude = PackedRotation(spin, reference, root, cancellation);
-
+        var rotations = Text(body.GetProperty("rotation"), "kind") == "timeline"
+            ? ReadPhases(body.GetProperty("rotation").GetProperty("phases"), "rotation")
+            : [(end, body.GetProperty("rotation"))];
+        var bodyFrames = body.TryGetProperty("bodyFrames", out var framePhases)
+            ? ReadPhases(framePhases, "frame")
+            : [(end, body.TryGetProperty("bodyFrame", out var frame) ? frame : default)];
+        var attitudes = new Dictionary<(int Rotation, int Frame), (MissionFrame Attitude, MissionFrame Reference)>();
+        int rotationIndex = 0, frameIndex = 0;
         var arcs = new List<MissionArc>();
         if (body.TryGetProperty("timeline", out var phases))
         {
@@ -81,11 +68,67 @@ public static partial class SampledMissionCatalog
         void AddArc(JulianInstant from, JulianInstant until, string center, JsonElement orbit)
         {
             var trajectory = PackedTrajectory(orbit, center, resolve, id, root, resources);
-            arcs.Add(new(from, until, resolve(center), trajectory.Local, trajectory.Frame, attitude)
+            ObjectId centerId = resolve(center);
+            while (from.CompareTo(until) < 0)
             {
-                BodyReferenceFrame = reference, NativeVelocitySource = trajectory.NativeVelocitySource,
-                UsePhysicalBodyFixedVelocity = trajectory.PhysicalVelocity
-            });
+                cancellation.ThrowIfCancellationRequested();
+                while (rotationIndex + 1 < rotations.Length && rotations[rotationIndex].Until.CompareTo(from) <= 0)
+                    rotationIndex++;
+                while (frameIndex + 1 < bodyFrames.Length && bodyFrames[frameIndex].Until.CompareTo(from) <= 0)
+                    frameIndex++;
+                JulianInstant next = until;
+                if (rotationIndex + 1 < rotations.Length && rotations[rotationIndex].Until.CompareTo(next) < 0)
+                    next = rotations[rotationIndex].Until;
+                if (frameIndex + 1 < bodyFrames.Length && bodyFrames[frameIndex].Until.CompareTo(next) < 0)
+                    next = bodyFrames[frameIndex].Until;
+                var key = (rotationIndex, frameIndex);
+                if (!attitudes.TryGetValue(key, out var orientation))
+                {
+                    orientation = ReadAttitude(rotations[rotationIndex].Value, bodyFrames[frameIndex].Value);
+                    attitudes.Add(key, orientation);
+                }
+                arcs.Add(new(from, next, centerId, trajectory.Local, trajectory.Frame, orientation.Attitude)
+                {
+                    BodyReferenceFrame = orientation.Reference, NativeVelocitySource = trajectory.NativeVelocitySource,
+                    UsePhysicalBodyFixedVelocity = trajectory.PhysicalVelocity
+                });
+                from = next;
+            }
+        }
+
+        (MissionFrame Attitude, MissionFrame Reference) ReadAttitude(JsonElement spin, JsonElement axes)
+        {
+            string kind = Text(spin, "kind");
+            if (kind == "spice")
+                return (ReadPackedSpiceAttitude(spin, resources), PackedSpiceAxes(spin, "outputFrame"));
+            var reference = kind == "follow" ? new MissionFrame.BodyFixed(resolve(Text(spin, "body"))) :
+                PackedFrame(spin.GetProperty("frame"), resolve, id);
+            if (axes.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+                return (PackedRotation(spin, reference, root, cancellation), reference);
+            var dynamicFrame = PackedFrame(axes, resolve, id);
+            if (reference is not MissionFrame.Inertial inertial)
+                throw new NotSupportedException("A packed rotation in a two-vector body frame needs inertial local axes.");
+            var relative = Multiply(Ecliptic.ToWorld.Transpose(), inertial.ToWorld);
+            var local = PackedRotation(spin, new MissionFrame.Inertial(relative), root, cancellation);
+            return (new MissionFrame.Rotating(dynamicFrame, epoch => EvaluateLocalRotation(local, epoch)),
+                new MissionFrame.Rotating(dynamicFrame, _ => new(relative, default(Vector3d))));
+        }
+
+        (JulianInstant Until, JsonElement Value)[] ReadPhases(JsonElement phases, string property)
+        {
+            if (phases.GetArrayLength() is < 1 or > 128)
+                throw new InvalidDataException("A packed orientation needs one to 128 phases.");
+            var result = new List<(JulianInstant, JsonElement)>();
+            JulianInstant previous = Minimum;
+            foreach (var phase in phases.EnumerateArray())
+            {
+                JulianInstant until = Date(phase, "untilJdTdb", Maximum);
+                if (until.CompareTo(previous) <= 0)
+                    throw new InvalidDataException("Packed orientation phase ends must increase.");
+                result.Add((until, phase.TryGetProperty(property, out var value) ? value : default));
+                previous = until;
+            }
+            return result.ToArray();
         }
     }
 

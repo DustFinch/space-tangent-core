@@ -332,10 +332,24 @@ public static partial class SampledMissionCatalog
         ObjectId Resolve(string name) => names.TryGetValue(name, out var id) ? id :
             resolveBody(name) ?? throw new InvalidDataException($"Unknown mission reference {name}.");
 
-        ObjectId ResolvePacked(string path) => names.TryGetValue(path, out var id) ? id :
-            resolveBody(path) ?? (path.StartsWith("Sol/", StringComparison.OrdinalIgnoreCase)
-                ? resolveBody(path[(path.LastIndexOf('/') + 1)..]) : null) ??
+        ObjectId ResolvePacked(string path)
+        {
+            if (names.TryGetValue(path, out var id))
+                return id;
+            if (resolveBody(path) is { } resolved)
+                return resolved;
+            if (path.StartsWith("Sol/", StringComparison.OrdinalIgnoreCase))
+            {
+                string name = path[(path.LastIndexOf('/') + 1)..];
+                if (resolveBody(name) is { } leaf)
+                    return leaf;
+                int separator = name.IndexOf(' ');
+                if (separator > 0 && name[..separator].All(char.IsAsciiDigit) &&
+                    resolveBody(name[(separator + 1)..]) is { } numbered)
+                    return numbered;
+            }
             throw new InvalidDataException($"Unknown packed mission reference {path}.");
+        }
     }
 
     private static SampledMission ReadItem(JsonElement item, Func<string, ObjectId> resolve, string root, string directory,

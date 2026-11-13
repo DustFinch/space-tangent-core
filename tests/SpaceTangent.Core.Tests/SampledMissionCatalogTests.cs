@@ -85,6 +85,67 @@ public sealed class SampledMissionCatalogTests
         }
     }
 
+    [OriginalMissionPacksFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedMslAndDawnPacksMatchTheOriginalSourceArcsAndFrames()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_MSL_DAWN_PACKS")!;
+        var messages = new List<string>();
+        var packed = SampledMissionCatalog.Load(
+            ["msl-pack/pack.json", "dawn-pack/pack.json"], root, Resolve, messages.Add);
+        var msl = Load("msl", "SPACETANGENT_MSL_ROOT", messages);
+        var dawn = Load("dawn", "SPACETANGENT_DAWN_ROOT", messages);
+
+        foreach (var (source, days) in new[] { (msl, new[] { 2456000d, 2456145.5, 2456146 }),
+                                                (dawn, new[] { 2454800d, 2455743.5, 2455800, 2456166, 2456300 }) })
+        {
+            var compiled = Assert.Single(packed, item => item.Name == source.Name);
+            Assert.Equal(source.Arcs.Count, compiled.Arcs.Count);
+            var originalWorld = BuildWorld();
+            originalWorld.AddSampledMission(source);
+            var packedWorld = BuildWorld();
+            packedWorld.AddSampledMission(compiled);
+            var original = originalWorld.Build();
+            var restored = packedWorld.Build();
+            foreach (double day in days)
+            {
+                var epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
+                var left = original.Evaluate(epoch);
+                var right = restored.Evaluate(epoch);
+                Assert.True(left.TryState(source.Id, out var expected), $"{source.Name} source at {day}");
+                Assert.True(right.TryState(compiled.Id, out var actual), $"{source.Name} pack at {day}");
+                Assert.True(left.TryStateCenter(source.Id, out var sourceCenter));
+                Assert.True(right.TryStateCenter(compiled.Id, out var packedCenter));
+                Assert.Equal(sourceCenter, packedCenter);
+                Assert.InRange((expected.PositionKilometers - actual.PositionKilometers).Length, 0, .001);
+                Assert.True(left.TryOrientation(source.Id, out var expectedFrame));
+                Assert.True(right.TryOrientation(compiled.Id, out var actualFrame));
+                Assert.True((expectedFrame.ToWorld.X - actualFrame.ToWorld.X).Length <= (source == msl && day >= 2456146 ? 2e-5 : 2e-6), $"{source.Name} X at {day}: {expectedFrame.ToWorld.X} vs {actualFrame.ToWorld.X}");
+                Assert.True((expectedFrame.ToWorld.Z - actualFrame.ToWorld.Z).Length <= (source == msl && day >= 2456146 ? 2e-5 : 2e-6), $"{source.Name} Z at {day}: {expectedFrame.ToWorld.Z} vs {actualFrame.ToWorld.Z}");
+            }
+        }
+        var engine = Assert.Single(packed, item => item.Name == "_Dawn Engine 1");
+        Assert.Equal(2000, Assert.Single(Assert.Single(engine.Geometry!).Shape.ParticleEmitters!).SpawnRate);
+
+        static ObjectId? Resolve(string name) => name switch
+        {
+            "Sun" or "Sol" => Sun,
+            "Mars" => Mars,
+            "Vesta" => Vesta,
+            _ => null
+        };
+    }
+
+    private sealed class OriginalMissionPacksFactAttribute : FactAttribute
+    {
+        public OriginalMissionPacksFactAttribute()
+        {
+            if (new[] { "SPACETANGENT_MSL_ROOT", "SPACETANGENT_DAWN_ROOT", "SPACETANGENT_MSL_DAWN_PACKS" }
+                .Any(key => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key))))
+                Skip = "Set the original source and packed MSL and Dawn roots.";
+        }
+    }
+
     [Fact]
     public void XyzDerivesEndpointAndInteriorVelocitiesAndRejectsDuplicateEpochs()
     {
