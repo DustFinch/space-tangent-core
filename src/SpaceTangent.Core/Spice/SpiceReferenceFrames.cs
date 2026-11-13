@@ -155,6 +155,7 @@ internal static class SpiceReferenceFrames
         (10122, "IAU_PATROCLUS_BARYCENTER", 20000617),
         (10123, "IAU_PATROCLUS", 920000617),
         (10124, "IAU_MENOETIUS", 120000617),
+        (13000, "ITRF93", 3000),
     ];
 
     private static readonly Dictionary<string, int> Names = Inertial.Select((frame, index) => (frame.Name, Id: index + 1))

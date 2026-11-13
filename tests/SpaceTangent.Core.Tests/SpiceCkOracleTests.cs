@@ -137,6 +137,66 @@ public sealed class SpiceCkOracleTests
         }
     }
 
+    [OracleFact]
+    [Trait("Category", "ExternalData")]
+    public void Itrf93UsesItsOwnTextPckCoefficientsByNameAndId()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CK_ORACLE")!;
+        var scratch = Directory.CreateTempSubdirectory("st-itrf93-");
+        try
+        {
+            string source = Directory.CreateDirectory(Path.Combine(scratch.FullName, "source")).FullName;
+            File.Copy(Path.Combine(original, "pck00011.tpc"), Path.Combine(source, "pck00011.tpc"));
+            File.WriteAllText(Path.Combine(source, "terrestrial.tpc"), """
+                KPL/PCK
+                \begindata
+                BODY3000_POLE_RA = ( -90 0 0 )
+                BODY3000_POLE_DEC = ( 90 0 0 )
+                BODY3000_PM = ( 0 360 0 )
+                \begintext
+                """);
+            string catalog = Path.Combine(source, "ground.ssc");
+            File.WriteAllText(catalog, """
+                "Named frame" "Sol/Earth" {
+                    FixedPosition [ 7000 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "itrf93" BaseFrame "J2000" Kernel [ "pck00011.tpc" "terrestrial.tpc" ] }
+                }
+                "Numeric frame" "Sol/Earth" {
+                    FixedPosition [ 7100 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "13000" BaseFrame "J2000" }
+                }
+                """);
+            Verify(SscBodyCatalogue.Load(source));
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Verify(SscBodyCatalogue.Load(packed));
+
+            File.WriteAllText(catalog, File.ReadAllText(catalog).Replace(" \"terrestrial.tpc\"", "", StringComparison.Ordinal));
+            Assert.Throws<InvalidDataException>(() => SscBodyCatalogue.Load(source));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        static void Verify(IReadOnlyList<SscBodyDefinition> bodies)
+        {
+            Assert.Equal(2, bodies.Count);
+            foreach (var body in bodies)
+            foreach (double hours in new[] { 0d, 6, 12 })
+            {
+                double angle = hours * Math.Tau / 24;
+                var epoch = JulianInstant.FromTdbSeconds(hours * 3600);
+                var attitude = Assert.IsType<FrameKinematics>(body.SampleRotation!(epoch));
+                Assert.InRange((attitude.ToWorld.X - new Vector3d(Math.Cos(angle), Math.Sin(angle), 0)).Length, 0, 1e-13);
+                Assert.InRange((attitude.AngularVelocityRadiansPerSecond!.Value -
+                    new Vector3d(0, 0, Math.Tau / 86400)).Length, 0, 1e-16);
+            }
+        }
+    }
+
     private static Dictionary<string, MissionFrame.Spice> Load(string root, string group) =>
         SampledMissionCatalog.Load([$"catalogue-{group}.json"], root, _ => new ObjectId("sol/sun"))
             .ToDictionary(mission => mission.Name, mission => Assert.IsType<MissionFrame.Spice>(Assert.Single(mission.Arcs).BodyFrame));
