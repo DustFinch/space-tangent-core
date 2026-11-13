@@ -89,7 +89,7 @@ public static class PackedSatelliteCatalog
         double radius = body.GetProperty("radiusKm").GetDouble();
         if (!(radius > 0) || !double.IsFinite(radius))
             throw new InvalidDataException($"{name}: the packed satellite radius is invalid.");
-        return new(name, elements, nadir, velocity, meshToBody, fixedBasis, mesh, radius);
+        return new(name, elements, nadir, velocity, meshToBody, fixedBasis, mesh, radius) { Display = SampledMissionCatalog.ReadDisplay(body, packed: true) };
 
         Vector3d Compose(Vector3d value) => fixedBasis.Transform(NativeToAstronomical.Transform(value));
     }

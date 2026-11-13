@@ -23,6 +23,7 @@ public sealed class ScienceSatellite
         Name = name;
         Id = new($"norad/{elements.CatalogNumber}");
         _orbit = new(elements);
+        OrbitPeriodSeconds = Math.Tau * 60 / elements.MeanMotion;
         _nadir = nadir;
         _relativeVelocity = relativeVelocity;
         _meshToBody = meshToBody;
@@ -36,6 +37,8 @@ public sealed class ScienceSatellite
     public string Name { get; }
     public string MeshPath { get; }
     public double SizeKilometers { get; }
+    public double OrbitPeriodSeconds { get; }
+    public MissionDisplay? Display { get; internal init; }
     public Basis3d MeshToBody => _meshToBody;
     /// <summary>Mesh transform to apply after the world graph's physical spacecraft attitude.</summary>
     public Basis3d MeshToOrientedBody { get; }

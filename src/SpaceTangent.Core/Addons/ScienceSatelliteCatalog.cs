@@ -90,7 +90,7 @@ public static class ScienceSatelliteCatalog
         var (meshToFrame, instrumentToFrame) = item.TryGetProperty("rotationModel", out JsonElement rotation)
             ? ReadFixedRotation(rotation)
             : (Basis3d.Identity, Basis3d.Identity);
-        return new(name, elements, nadir, velocity, meshToFrame, instrumentToFrame, meshPath, size);
+        return new(name, elements, nadir, velocity, meshToFrame, instrumentToFrame, meshPath, size) { Display = SampledMissionCatalog.ReadDisplay(item) };
     }
 
     private static (Basis3d MeshToFrame, Basis3d InstrumentToFrame) ReadFixedRotation(JsonElement model)

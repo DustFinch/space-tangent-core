@@ -25,6 +25,8 @@ public sealed class PackedSatelliteCatalogTests
             Assert.Equal(record.Name, compiled.Name);
             Assert.Equal(record.Epoch, compiled.Epoch);
             Assert.Equal(record.SizeKilometers, compiled.SizeKilometers);
+            Assert.Equal(record.Display, compiled.Display);
+            Assert.Equal(record.OrbitPeriodSeconds, compiled.OrbitPeriodSeconds);
             Assert.EndsWith(".glb", compiled.MeshPath, StringComparison.OrdinalIgnoreCase);
             var epoch = record.Epoch.AddSeconds(45);
             Assert.True(record.TrySample(epoch, out var a));
@@ -74,6 +76,34 @@ public sealed class PackedSatelliteCatalogTests
             }
         }
         Assert.Equal(new[] { 1, 2, 4, 5, 6, 7, 12 }, versions.Order());
+    }
+
+    [ArchiveDisplayFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedDisplayRetainsTheOriginalLabelAndAuthoredTrail()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_DISPLAY")!;
+        var source = Path.Combine(Path.GetDirectoryName(root)!, "source");
+        var original = ScienceSatelliteCatalog.Load(Path.Combine(source, "sciencesat.json"), Path.GetDirectoryName(source)!);
+        var packed = PackedSatelliteCatalog.Load(root);
+        var jason = Assert.Single(packed, satellite => satellite.Name == "Jason-1");
+        var display = Assert.IsType<MissionDisplay>(jason.Display);
+        Assert.Equal(new Vector3d(.7, .7, .9), display.LabelColor);
+        Assert.Equal(new Vector3d(.3, .8, .45), display.OrbitColor);
+        Assert.Equal(2700, display.OrbitDurationSeconds);
+        Assert.Equal(600, display.OrbitLeadSeconds, 9);
+        Assert.Equal(.6, display.OrbitFade);
+        Assert.InRange(jason.OrbitPeriodSeconds, 6000, 7500);
+        Assert.Equal(original[0].Display! with { OrbitLeadSeconds = display.OrbitLeadSeconds }, display);
+    }
+
+    private sealed class ArchiveDisplayFactAttribute : FactAttribute
+    {
+        public ArchiveDisplayFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_DISPLAY")))
+                Skip = "Set the archived science installation with the authored trail.";
+        }
     }
 
     private sealed class PackedScienceVersionsFactAttribute : FactAttribute

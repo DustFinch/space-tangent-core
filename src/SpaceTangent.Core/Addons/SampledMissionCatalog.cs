@@ -12,6 +12,7 @@ public sealed record SampledMission(ObjectId Id, string Name, string? MeshPath, 
     IReadOnlyList<MissionArc> Arcs)
 {
     public MissionObservation? Observation { get; init; }
+    public MissionDisplay? Display { get; init; }
     public JulianInstant Start => Arcs[0].Start;
     public JulianInstant End => Arcs[^1].End;
     public IReadOnlyList<MissionGeometrySpan>? Geometry { get; init; }
@@ -127,7 +128,8 @@ public static partial class SampledMissionCatalog
                                 timedChildren.GetValueOrDefault((definition.Source, Text(definition.Item, "path"))))
                         : ReadItem(definition.Item, Resolve, definition.Owner, directory, resources,
                             name => instrumentFrames.GetValueOrDefault(name), warning, cancellation));
-                    loaded.Add((mission, references));
+                    var display = ReadDisplay(definition.Item, definition.Packed);
+                    loaded.Add((mission with { Display = display }, references));
                 }
                 catch (Exception error) when (definition.Packed && !definition.Item.TryGetProperty("particles", out _) &&
                     (error is NotSupportedException ||
@@ -266,6 +268,7 @@ public static partial class SampledMissionCatalog
                         if (timedParents.Contains(Text(body, "path")) ||
                             (IsTimedComponent(body) && timedParents.Contains(Text(body, "parent"))) ||
                             body.TryGetProperty("sensor", out _) || body.TryGetProperty("observation", out _) ||
+                            body.TryGetProperty("display", out _) && !body.TryGetProperty("replaces", out _) ||
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
                             HasPackedSpice(body) || HasCompoundTrajectory(body))
