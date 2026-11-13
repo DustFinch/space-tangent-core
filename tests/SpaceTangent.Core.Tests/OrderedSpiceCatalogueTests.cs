@@ -474,6 +474,111 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void AuthoredBodyNamesAndNumericPrefixesMatchNativeSscStates()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+            var rows = document.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+            var aliases = rows.Single(row => row.GetProperty("case").GetString() == "target-alias-frozen").GetProperty("results");
+            var prefix = rows.Single(row => row.GetProperty("case").GetString() == "numeric-id-prefix-fallback").GetProperty("results");
+            foreach (var (file, expected) in new[] { ("alias-a.tf", aliases[1]), ("alias-b.tf", aliases[5]) })
+            {
+                string source = scratch.CreateSubdirectory(Path.GetFileNameWithoutExtension(file)).FullName;
+                foreach (string asset in new[] { file, "aliases.bsp", "linear.bsp" })
+                    File.Copy(Path.Combine(corpus, asset), Path.Combine(source, asset));
+                File.WriteAllText(Path.Combine(source, "names.ssc"), $$"""
+                    "Named" "Sol" {
+                        OrbitFrame { EquatorJ2000 {} }
+                        SpiceOrbit { Kernel [ "{{file}}" "aliases.bsp" ] Target "prefix_body" Origin "SSB" BoundingRadius 300 }
+                        FixedPosition [ 3 0 0 ]
+                    }
+                    "Numeric prefix" "Sol" {
+                        OrbitFrame { EquatorJ2000 {} }
+                        SpiceOrbit { Kernel "linear.bsp" Target "1999999tail" Origin "+0 tail" BoundingRadius 300 }
+                        FixedPosition [ 4 0 0 ]
+                    }
+                    """);
+                Check(source);
+                string packed = Path.Combine(scratch.FullName, Path.GetFileNameWithoutExtension(file) + "-packed");
+                Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+                Check(packed);
+
+                void Check(string root)
+                {
+                    var warnings = new List<string>();
+                    var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                    Assert.Empty(warnings);
+                    CheckState(bodies[0], expected);
+                    CheckState(bodies[1], prefix[1]);
+                }
+            }
+
+            string mission = scratch.CreateSubdirectory("mission").FullName;
+            foreach (string file in Directory.EnumerateFiles(original))
+                File.Copy(file, Path.Combine(mission, Path.GetFileName(file)));
+            string catalogue = Path.Combine(mission, "cassini.ssc");
+            string ssc = File.ReadAllText(catalogue);
+            Assert.Contains("Target \"CASSINI\"", ssc);
+            ssc = ssc.Replace("Target \"CASSINI\"", "Target \"Cassini spacecraft\"", StringComparison.Ordinal);
+            ssc = ssc.Replace("Origin \"6\"", "Origin \"Saturn system\"", StringComparison.Ordinal);
+            int kernelList = ssc.IndexOf("Kernel [", StringComparison.Ordinal);
+            Assert.True(kernelList >= 0);
+            ssc = ssc.Insert(kernelList + "Kernel [".Length, " \"body-names.tf\"");
+            File.WriteAllText(catalogue, ssc);
+            File.WriteAllText(Path.Combine(mission, "body-names.tf"), """
+                KPL/FK
+                \begindata
+                NAIF_BODY_NAME = ( 'CASSINI SPACECRAFT', 'SATURN SYSTEM' )
+                NAIF_BODY_CODE = ( -82, 6 )
+                \begintext
+                """);
+            var epoch = JulianInstant.FromTdbSeconds(141917558.4203589);
+            var legacy = Assert.Single(SscSpiceCatalog.Load(Path.Combine(original, "cassini.ssc"), original));
+            var aliased = Assert.Single(SscSpiceCatalog.Load(catalogue, mission));
+            Assert.True(legacy.TrySample(epoch, out var baseline));
+            Assert.True(aliased.TrySample(epoch, out var actual));
+            Assert.Equal(baseline, actual);
+            File.WriteAllText(Path.Combine(mission, "aliased-cassini.json"), """
+                {"version":"1.0",
+                 "spiceKernels":["body-names.tf","040615AP_SK_04167_04186.bsp"],
+                 "items":[{"name":"Cassini","class":"spacecraft","center":"Saturn",
+                   "trajectory":{"type":"Spice","target":"Cassini spacecraft","center":"Saturn system"},
+                   "bodyFrame":{"type":"Spice","name":"J2000"},
+                   "geometry":{"type":"Mesh","source":"cassini.3ds","size":0.006}}]}
+                """);
+            var json = Assert.Single(SpiceJsonCatalog.Load("aliased-cassini.json", mission).Spacecraft);
+            Assert.True(json.TrySample(epoch, out var jsonState));
+            Assert.Equal(baseline, jsonState);
+            var generic = Assert.Single(SscBodyCatalogue.Load(mission));
+            var packedMission = Path.Combine(scratch.FullName, "mission-packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(mission, packedMission, _ => { }));
+            var originalBody = Assert.Single(SscBodyCatalogue.Load(original));
+            Assert.NotNull(originalBody.Sample(epoch));
+            Assert.Equal(originalBody.Sample(epoch), generic.Sample(epoch));
+            Assert.Equal(originalBody.Sample(epoch), Assert.Single(SscBodyCatalogue.Load(packedMission)).Sample(epoch));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
+        {
+            var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
+            var state = body.Sample(epoch)!.Value;
+            var values = reference.GetProperty("values").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+            Assert.InRange((state.PositionKilometers - new Vector3d(values[0], -values[2], values[1])).Length, 0, 2e-7);
+            Assert.InRange((state.VelocityKilometersPerSecond -
+                new Vector3d(values[3], -values[5], values[4]) / 86400).Length, 0, 2e-11);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()

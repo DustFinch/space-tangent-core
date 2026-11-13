@@ -51,8 +51,8 @@ public static class SscSpiceCatalog
             throw new InvalidDataException("SSC radius must be finite and positive.");
 
         SscValue.Map orbit = fields.Object("SpiceOrbit");
-        int target = NaifIds.Resolve(orbit.Text("Target"));
-        int center = NaifIds.Resolve(orbit.Text("Origin"));
+        int target = NaifIds.Resolve(orbit.Text("Target"), resources, allowNumericPrefix: true);
+        int center = NaifIds.Resolve(orbit.Text("Origin"), resources, allowNumericPrefix: true);
 
 
         string? attitude = null, baseFrame = null;

@@ -89,7 +89,8 @@ public static class SpiceJsonCatalog
                 throw new InvalidDataException("SPICE mesh size must be finite and positive.");
 
             tracks.Add(new(Text(item.GetProperty("name")), Text(item.GetProperty("center")),
-                NaifIds.Resolve(Text(trajectory.GetProperty("target"))), NaifIds.Resolve(Text(trajectory.GetProperty("center"))),
+                NaifIds.Resolve(Text(trajectory.GetProperty("target")), resources),
+                NaifIds.Resolve(Text(trajectory.GetProperty("center")), resources),
                 mesh, size, Text(bodyFrame.GetProperty("name")), "J2000", resources));
         }
         var sensors = new List<SpiceSensor>(sensorItems.Count);

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-using System.Globalization;
 using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Spice;
@@ -31,7 +30,7 @@ public static partial class SampledMissionCatalog
             throw new NotSupportedException("A sampled SPICE trajectory requires a J2000 output frame.");
         int target = ResolveSpiceId(value.GetProperty("target"), resources);
         int center = value.TryGetProperty(packed ? "spiceCenter" : "center", out var selected) ? ResolveSpiceId(selected, resources) :
-            ResolveSpiceId(arcCenter, resources);
+            NaifIds.Resolve(arcCenter, resources);
         var states = resources.States;
         return epoch => states.TryState(target, center, epoch, out var state) ? state : null;
     }
@@ -39,27 +38,9 @@ public static partial class SampledMissionCatalog
     private static int ResolveSpiceId(JsonElement value, SpiceResources resources) => value.ValueKind switch
     {
         JsonValueKind.Number => value.GetInt32(),
-        JsonValueKind.String => ResolveSpiceId(value.GetString()!, resources),
+        JsonValueKind.String => NaifIds.Resolve(value.GetString()!, resources),
         _ => throw new InvalidDataException("A SPICE target or center requires an object name or integer code.")
     };
-
-    private static int ResolveSpiceId(string name, SpiceResources resources)
-    {
-        if (int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out int direct))
-            return direct;
-        var pool = resources.Text;
-        if (pool.Contains("NAIF_BODY_NAME") && pool.Contains("NAIF_BODY_CODE"))
-        {
-            string[] names = pool.Get("NAIF_BODY_NAME"), codes = pool.Get("NAIF_BODY_CODE");
-            if (names.Length != codes.Length)
-                throw new InvalidDataException("SPICE body names and codes have different lengths.");
-            for (int index = names.Length - 1; index >= 0; index--)
-                if (names[index].Equals(name, StringComparison.OrdinalIgnoreCase) &&
-                    int.TryParse(codes[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out int mapped))
-                    return mapped;
-        }
-        return NaifIds.Resolve(name);
-    }
 
     private static MissionFrame.Spice SpiceOrientation(string frame, SpiceResources resources)
     {

@@ -96,7 +96,8 @@ public static partial class SscBodyCatalogue
 
     private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, bool preflight)
     {
-        int target = NaifIds.Resolve(orbit.Text("Target")), origin = NaifIds.Resolve(orbit.Text("Origin"));
+        int target = NaifIds.Resolve(orbit.Text("Target"), resources, allowNumericPrefix: true);
+        int origin = NaifIds.Resolve(orbit.Text("Origin"), resources, allowNumericPrefix: true);
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
         var coverage = SpiceCoverage(orbit);
