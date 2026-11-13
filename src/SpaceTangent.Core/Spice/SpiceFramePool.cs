@@ -119,10 +119,7 @@ internal sealed class SpiceFramePool(SpiceTextKernel definitions, Func<CkKernel[
                 return new FrameModel.Attitude(classId, new(definitions, clock));
             case 4:
                 string tk = SpiceFixedFrames.Key(definitions, id, classId);
-                string[] parents = definitions.Get(tk + "_RELATIVE");
-                if (parents.Length != 1)
-                    throw new InvalidDataException("A fixed SPICE frame requires a parent frame.");
-                int parent = Id(parents[0]);
+                int parent = Id(SpiceFixedFrames.Parent(definitions, tk));
                 return parent == 0 ? new FrameModel.Missing() : new FrameModel.Fixed(parent, SpiceFixedFrames.Transform(definitions, tk));
             default:
                 return new FrameModel.Missing();

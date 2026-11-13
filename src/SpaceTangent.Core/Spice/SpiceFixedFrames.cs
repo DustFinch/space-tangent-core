@@ -22,7 +22,7 @@ internal static class SpiceFixedFrames
             int classId = pool.GetInteger(key + "_CLASS_ID");
             string local = Key(pool, id, classId);
             basis = Compose(Transform(pool, local), basis);
-            frame = Text(pool, local + "_RELATIVE");
+            frame = Parent(pool, local);
         }
         return (frame, basis);
     }
@@ -54,15 +54,18 @@ internal static class SpiceFixedFrames
         return pool.Contains(nameKey) && pool.Get(nameKey) is [string name] ? "TKFRAME_" + name : numeric;
     }
 
+    internal static string Parent(SpiceTextKernel pool, string key) =>
+        pool.Contains(key + "_RELATIVE") ? Text(pool, key + "_RELATIVE") : "J2000";
+
     internal static Basis3d Compose(Basis3d parent, Basis3d local) =>
         new(parent.Transform(local.X), parent.Transform(local.Y), parent.Transform(local.Z));
 
     internal static Basis3d Transform(SpiceTextKernel pool, string key)
     {
-        string kind = Text(pool, key + "_SPEC");
+        string kind = Text(pool, key + "_SPEC").ToUpperInvariant();
         if (kind == "ANGLES")
         {
-            double scale = AngleUnit(Text(pool, key + "_UNITS"));
+            double scale = pool.Contains(key + "_UNITS") ? AngleUnit(Text(pool, key + "_UNITS").ToUpperInvariant()) : 1;
             double[] angles = Numbers(pool, key + "_ANGLES", 3), axes = Numbers(pool, key + "_AXES", 3);
             return SpiceEuler.Compose([angles[0] * scale, angles[1] * scale, angles[2] * scale], axes);
         }

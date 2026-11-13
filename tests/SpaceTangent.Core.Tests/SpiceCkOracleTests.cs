@@ -197,6 +197,53 @@ public sealed class SpiceCkOracleTests
         }
     }
 
+    [OracleFact]
+    [Trait("Category", "ExternalData")]
+    public void LegacyFixedFrameDefaultsMatchTheNativeExplicitFrame()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CK_ORACLE")!;
+        var scratch = Directory.CreateTempSubdirectory("st-tk-defaults-");
+        try
+        {
+            string source = Directory.CreateDirectory(Path.Combine(scratch.FullName, "source")).FullName;
+            string kernel = File.ReadAllText(Path.Combine(original, "oracle.tf"));
+            kernel = kernel.Replace("TKFRAME_1001001_RELATIVE = 'J2000'", "", StringComparison.Ordinal)
+                .Replace("TKFRAME_1001001_UNITS = 'DEGREES'", "", StringComparison.Ordinal)
+                .Replace("TKFRAME_1001001_SPEC = 'ANGLES'", "TKFRAME_1001001_SPEC = 'angles'", StringComparison.Ordinal)
+                .Replace("TKFRAME_1001001_ANGLES = (13 -27 19)",
+                    FormattableString.Invariant($"TKFRAME_1001001_ANGLES = ({13 * Math.PI / 180:R} {-27 * Math.PI / 180:R} {19 * Math.PI / 180:R})"),
+                    StringComparison.Ordinal);
+            File.WriteAllText(Path.Combine(source, "legacy.tf"), kernel);
+            File.WriteAllText(Path.Combine(source, "probe.ssc"), """
+                "Test frame" "Sol/Earth" {
+                    FixedPosition [ 7000 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "NIGHT_TK" BaseFrame "J2000" Kernel "legacy.tf" }
+                }
+                """);
+            var native = Load(original, "static-frames")["NIGHT_TK"];
+            var epoch = JulianInstant.FromTdbSeconds(0);
+            var expected = Assert.IsType<FrameKinematics>(native.Sample(epoch));
+            Verify(SscBodyCatalogue.Load(source));
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Verify(SscBodyCatalogue.Load(packed));
+
+            void Verify(IReadOnlyList<SscBodyDefinition> bodies)
+            {
+                var actual = Assert.IsType<FrameKinematics>(Assert.Single(bodies).SampleRotation!(epoch));
+                Assert.InRange((actual.ToWorld.X - expected.ToWorld.X).Length, 0, 2e-13);
+                Assert.InRange((actual.ToWorld.Y - expected.ToWorld.Y).Length, 0, 2e-13);
+                Assert.InRange((actual.ToWorld.Z - expected.ToWorld.Z).Length, 0, 2e-13);
+                Assert.Equal(default(Vector3d), actual.AngularVelocityRadiansPerSecond);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static Dictionary<string, MissionFrame.Spice> Load(string root, string group) =>
         SampledMissionCatalog.Load([$"catalogue-{group}.json"], root, _ => new ObjectId("sol/sun"))
             .ToDictionary(mission => mission.Name, mission => Assert.IsType<MissionFrame.Spice>(Assert.Single(mission.Arcs).BodyFrame));
