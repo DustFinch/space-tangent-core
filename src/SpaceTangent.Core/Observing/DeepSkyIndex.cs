@@ -41,7 +41,7 @@ public sealed class DeepSkyIndex
         root = Path.GetFullPath(root);
         if (!AddonDependencies.DirectoryExists(root))
             return Default;
-        string[] files = AddonDependencies.ListFiles(root, "*.dsc");
+        string[] files = SkyCataloguePack.List(root, ".dsc");
         if (files.Length == 0)
             return Default;
         if (files.Length > 64)
@@ -50,7 +50,7 @@ public sealed class DeepSkyIndex
         var primaryKeys = new Dictionary<ObjectId, string>();
         var duplicates = new Dictionary<ObjectId, DeepSkyObject>();
         int records = 0;
-        foreach (string path in files.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        foreach (string path in files)
         {
             cancellation.ThrowIfCancellationRequested();
             AddonDiagnostics.Read(AddonStage.Catalog, path, () =>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Observing;
 using Xunit;
 using Xunit.Abstractions;
@@ -75,6 +76,43 @@ public sealed class StcCatalogueTests(ITestOutputHelper output)
         Assert.Contains(planet, planets.BodiesOf(keplerA.Id));
         Assert.DoesNotContain(planet, planets.BodiesOf(keplerB.Id));
         Assert.Equal(6462, planets.Bodies.Count);
+    }
+
+    [RealStcFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalSkyPackMatchesLooseCataloguesAfterRelocation()
+    {
+        string source = Input("SPACETANGENT_STC_ROOT")!;
+        using var sandbox = new SkyPackFixture();
+        string pack = Path.Combine(sandbox.Root.FullName, "pack");
+        var files = SkyCataloguePack.Build(source, pack);
+        Assert.True(files.Stellar > 0);
+        Assert.True(files.DeepSky > 0);
+        string moved = Path.Combine(sandbox.Root.FullName, "relocated sky pack");
+        Directory.Move(pack, moved);
+        File.WriteAllText(Path.Combine(moved, "unlisted.stc"), "deliberately malformed");
+
+        var archive = StellarCatalogue.LoadArchive(Input("SPACETANGENT_STELLAR_ARCHIVE")!);
+        var loose = archive.WithStc(source);
+        var packed = archive.WithStc(moved);
+        Assert.Equal(loose.AppliedRecords, packed.AppliedRecords);
+        Assert.Equal(loose.DiagnosticCount, packed.DiagnosticCount);
+        var date = JulianInstant.FromJulianDate(2460600.5, TimeScale.Tdb);
+        Assert.Equal(loose.Catalogue.Stars.Select(star => (star.Id, star.StateAt(date), star.BarycenterId)),
+            packed.Catalogue.Stars.Select(star => (star.Id, star.StateAt(date), star.BarycenterId)));
+
+        var looseDsc = DeepSkyIndex.Load(source);
+        var packedDsc = DeepSkyIndex.Load(moved);
+        Assert.Equal(looseDsc.Objects.Select(body => (body.Id, body.Kind, body.PositionKilometers, body.Orientation)),
+            packedDsc.Objects.Select(body => (body.Id, body.Kind, body.PositionKilometers, body.Orientation)));
+        Assert.Equal(looseDsc.Find(new("dso/m13"))!.Aliases, packedDsc.Find(new("dso/m13"))!.Aliases);
+        output.WriteLine($"Relocated {files.Stellar} STC and {files.DeepSky} DSC files. Compared {packed.AppliedRecords} effective STC records and {packedDsc.Objects.Count} DSC objects.");
+    }
+
+    private sealed class SkyPackFixture : IDisposable
+    {
+        internal DirectoryInfo Root { get; } = Directory.CreateTempSubdirectory("space-tangent-sky-pack-");
+        public void Dispose() => Root.Delete(recursive: true);
     }
 
     private sealed class SupplementaryStcFactAttribute : RealStcFactAttribute

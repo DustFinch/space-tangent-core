@@ -26,7 +26,7 @@ public sealed partial class StellarCatalogue
         root = Path.GetFullPath(root);
         if (!AddonDependencies.DirectoryExists(root))
             return new(this, 0, 0, []);
-        string[] files = AddonDependencies.ListFiles(root, "*.stc");
+        string[] files = SkyCataloguePack.List(root, ".stc");
         if (files.Length == 0)
             return new(this, 0, 0, []);
         if (files.Length > 64)
@@ -41,7 +41,7 @@ public sealed partial class StellarCatalogue
         var drafts = new Dictionary<ObjectId, StcDraft>();
         var warnings = new List<string>();
         int applied = 0, omitted = 0;
-        foreach (string path in files.OrderBy(path => path, Names))
+        foreach (string path in files)
         {
             cancellation.ThrowIfCancellationRequested();
             AddonDiagnostics.Read(AddonStage.Catalog, path, () =>
