@@ -4,7 +4,7 @@ using System.Text;
 namespace SpaceTangent.Core.Addons;
 
 internal sealed record SscDefinition(string Names, string Parent, SscValue.Map Properties,
-    IReadOnlyDictionary<string, string> FieldDirectories, string SourceFile)
+    IReadOnlyDictionary<string, string> FieldDirectories, IReadOnlyDictionary<string, int> FieldOrder, string SourceFile)
 {
     internal string Name => Names.Split(':')[0];
 
@@ -34,7 +34,7 @@ internal static class SscDefinitions
     {
         var bodies = new List<SscDefinition>();
         var aliases = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        int longestAliasPath = 0;
+        int longestAliasPath = 0, operation = 0;
         foreach (var document in documents)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -66,6 +66,8 @@ internal static class SscDefinitions
                 string parent = ResolveParent(parentPath);
                 string primaryPath = parent + "/" + names[0];
                 var directories = properties.Fields.Keys.ToDictionary(key => key, _ => directory, StringComparer.Ordinal);
+                int sequence = operation++;
+                var positions = properties.Fields.Keys.ToDictionary(key => key, _ => sequence, StringComparer.Ordinal);
 
                 if (aliases.TryGetValue(primaryPath, out int index))
                 {
@@ -73,8 +75,8 @@ internal static class SscDefinitions
                         throw new InvalidDataException($"Duplicate SSC body {primaryPath}.");
                     SscDefinition previous = bodies[index];
                     var effective = disposition == SscDisposition.Modify
-                        ? Modify(previous, properties, directories)
-                        : previous with { Properties = properties, FieldDirectories = directories };
+                        ? Modify(previous, properties, directories, positions)
+                        : previous with { Properties = properties, FieldDirectories = directories, FieldOrder = positions };
                     bodies[index] = effective with { SourceFile = file };
                     continue;
                 }
@@ -86,7 +88,7 @@ internal static class SscDefinitions
                         throw new InvalidDataException($"Duplicate SSC body alias {parent}/{name}.");
                     longestAliasPath = Math.Max(longestAliasPath, aliasPath.Length);
                 }
-                bodies.Add(new(string.Join(':', names), parent, properties, directories, file));
+                bodies.Add(new(string.Join(':', names), parent, properties, directories, positions, file));
             }
         }
         static string ReadFile(string file, string? root)
@@ -121,18 +123,21 @@ internal static class SscDefinitions
         }
     }
 
-    private static SscDefinition Modify(SscDefinition previous, SscValue.Map patch, Dictionary<string, string> directories)
+    private static SscDefinition Modify(SscDefinition previous, SscValue.Map patch,
+        Dictionary<string, string> directories, Dictionary<string, int> positions)
     {
         var fields = new Dictionary<string, SscValue>(previous.Properties.Fields, StringComparer.Ordinal);
         var origins = new Dictionary<string, string>(previous.FieldDirectories, StringComparer.Ordinal);
+        var order = new Dictionary<string, int>(previous.FieldOrder, StringComparer.Ordinal);
         RemoveSuperseded(OrbitModels);
         RemoveSuperseded(RotationModels);
         foreach (var (key, value) in patch.Fields)
         {
             fields[key] = value;
             origins[key] = directories[key];
+            order[key] = positions[key];
         }
-        return previous with { Properties = new(fields), FieldDirectories = origins };
+        return previous with { Properties = new(fields), FieldDirectories = origins, FieldOrder = order };
 
         void RemoveSuperseded(string[] family)
         {
@@ -142,6 +147,7 @@ internal static class SscDefinitions
             {
                 fields.Remove(key);
                 origins.Remove(key);
+                order.Remove(key);
             }
         }
     }

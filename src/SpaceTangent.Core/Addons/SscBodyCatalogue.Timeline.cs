@@ -55,7 +55,7 @@ public static partial class SscBodyCatalogue
                 trajectory = ReadTimelineFrame(phase.Object("OrbitFrame"), center, out center);
 
             var state = TrySpiceModel(phase, spice, "SpiceOrbit",
-                (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
+                (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
             state ??= ReadTimelineState(phase, center, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
@@ -66,7 +66,8 @@ public static partial class SscBodyCatalogue
                 bodyFrame = ReadTimelineFrame(phase.Object("BodyFrame"), item.Parent, out _);
 
             var spiceSpin = TrySpiceModel(phase, spice, "SpiceRotation",
-                (block, pool) => ReadSpiceRotation(block, pool, Basis3d.Identity), WarnPhase, timeline: true);
+                (block, pool, initial) => ReadSpiceRotation(block, pool, initial, Basis3d.Identity,
+                    HasSpiceAlternative(phase, "SpiceRotation", timeline: true)), WarnPhase, timeline: true);
             var spin = spiceSpin ?? ReadTimelineSpin(phase, orbitPeriodSeconds);
             result.Add((find, radiusKilometers) =>
             {

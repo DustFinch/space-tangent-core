@@ -93,7 +93,7 @@ public static class SscSampledCatalog
 
     private static SscSampledSpacecraft ReadTrack(string root, SscDefinition definition, CancellationToken cancellation)
     {
-        var (names, parent, fields, _, _) = definition;
+        var (names, parent, fields, _, _, _) = definition;
         if (fields.Text("Class") != "spacecraft")
             throw new NotSupportedException("The sampled SSC track must be a spacecraft.");
 

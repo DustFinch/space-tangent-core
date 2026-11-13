@@ -60,7 +60,7 @@ public sealed class SscHuygensTrack
     private static SscHuygensTrack ReadTrack(string root, SscDefinition definition, SscSampledSpacecraft carrier,
         SpicePolynomialBodyFrame titan)
     {
-        var (names, parent, fields, _, _) = definition;
+        var (names, parent, fields, _, _, _) = definition;
         if (fields.Text("Class") != "spacecraft" ||
             fields.Get("Timeline") is not SscValue.List { Items: [SscValue.Map attached, SscValue.Map flight, SscValue.Map landed] })
             throw new InvalidDataException("Huygens requires an attached, a flight and a landed phase.");

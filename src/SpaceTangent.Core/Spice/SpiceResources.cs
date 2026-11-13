@@ -27,12 +27,43 @@ internal sealed class SpiceResources
         Action<Exception>? Unavailable = null, bool SkipRepeatedExplicit = false)
     {
         internal Func<string, string>? ResolveExplicit { get; init; }
+        internal Action<int>? RecordPrefix { get; init; }
     }
 
     internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
         : this(sources.Select(source => new KernelGroup(source.Root, [(source.Directory, source.Name)]))) { }
 
-    internal SpiceResources(IEnumerable<KernelGroup> groups)
+    internal SpiceResources(IEnumerable<KernelGroup> groups) : this(ReadGroups(groups), null) { }
+
+    private SpiceResources(KernelFiles files, int? count)
+    {
+        _text = new(() =>
+        {
+            var pool = new SpiceTextKernel();
+            foreach (var (path, kind) in files.Ordered.Take(count ?? files.Ordered.Count))
+                if (kind is KernelKind.Meta or KernelKind.Text)
+                    pool.Apply(GetKernel(files.Text, path, SpiceTextKernel.Read));
+            return pool;
+        });
+        _trajectories = new(() => Load(KernelKind.Trajectory, files.Spk, path => new SpkKernel(path)));
+        _attitudes = new(() => Load(KernelKind.Attitude, files.Ck, path => new CkKernel(path)));
+        _frames = new(() => new SpiceFramePool(Text, () => _attitudes.Value));
+        _states = new(() => new SpiceStatePool(_trajectories.Value, Frames));
+        Files = files;
+
+        T[] Load<T>(KernelKind wanted, Dictionary<string, T> parsed, Func<string, T> parse) =>
+            files.Ordered.Take(count ?? files.Ordered.Count).Where(file => file.Kind == wanted)
+                .Select(file => GetKernel(parsed, file.Path, parse)).ToArray();
+    }
+
+    private sealed record KernelFiles(List<(string Path, KernelKind Kind)> Ordered,
+        Dictionary<string, SpkKernel> Spk, Dictionary<string, CkKernel> Ck,
+        Dictionary<string, IReadOnlyList<SpiceTextKernel.Assignment>> Text);
+
+    private KernelFiles Files { get; }
+    internal SpiceResources Prefix(int count) => new(Files, count);
+
+    private static KernelFiles ReadGroups(IEnumerable<KernelGroup> groups)
     {
         var active = new HashSet<string>(FileNames);
         var ordered = new List<(string Path, KernelKind Kind)>();
@@ -94,6 +125,7 @@ internal sealed class SpiceResources
             {
                 if (pending is not null)
                     explicitSscLoads.UnionWith(pending);
+                group.RecordPrefix?.Invoke(ordered.Count);
                 continue;
             }
 
@@ -111,6 +143,7 @@ internal sealed class SpiceResources
                 }
                 if (pending is not null)
                     explicitSscLoads.UnionWith(pending);
+                group.RecordPrefix?.Invoke(ordered.Count);
             }
             catch (Exception error) when (IsKernelInputError(error))
             {
@@ -118,30 +151,7 @@ internal sealed class SpiceResources
                 group.Unavailable(error);
             }
         }
-        _text = new(() =>
-        {
-            var pool = new SpiceTextKernel();
-            foreach (var (path, kind) in ordered)
-                if (kind is KernelKind.Meta or KernelKind.Text)
-                    pool.Apply(GetKernel(parsedText, path, SpiceTextKernel.Read));
-            return pool;
-        });
-        _trajectories = new(() => Load(KernelKind.Trajectory, parsedSpk, path => new SpkKernel(path)));
-        _attitudes = new(() => Load(KernelKind.Attitude, parsedCk, path => new CkKernel(path)));
-        _frames = new(() => new SpiceFramePool(Text, () => _attitudes.Value));
-        _states = new(() => new SpiceStatePool(TrajectoryKernels(), Frames));
-
-        T[] Load<T>(KernelKind wanted, Dictionary<string, T> parsed, Func<string, T> parse)
-        {
-            var output = new List<T>();
-            foreach (var (path, kind) in ordered)
-            {
-                if (kind != wanted)
-                    continue;
-                output.Add(GetKernel(parsed, path, parse));
-            }
-            return output.ToArray();
-        }
+        return new(ordered, parsedSpk, parsedCk, parsedText);
     }
 
     private static bool IsKernelInputError(Exception error) =>
@@ -149,21 +159,23 @@ internal sealed class SpiceResources
 
     private static T GetKernel<T>(Dictionary<string, T> parsed, string path, Func<string, T> parse)
     {
-        if (!parsed.TryGetValue(path, out var kernel))
+        lock (parsed)
         {
-            kernel = AddonDiagnostics.Read(AddonStage.Kernel, path, () => parse(path));
-            parsed.Add(path, kernel);
+            if (!parsed.TryGetValue(path, out var kernel))
+            {
+                kernel = AddonDiagnostics.Read(AddonStage.Kernel, path, () => parse(path));
+                parsed.Add(path, kernel);
+            }
+            return kernel;
         }
-        return kernel;
     }
 
     internal SpiceTextKernel Text => _text.Value;
 
     internal SpiceFramePool Frames => _frames.Value;
-    internal SpiceStatePool States => _states.Value;
-
-    private SpkKernel[] TrajectoryKernels() => _trajectories.Value is { Length: > 0 } kernels ? kernels :
+    internal SpiceStatePool States => _trajectories.Value.Length > 0 ? _states.Value :
         throw new InvalidDataException("SPICE trajectory has no SPK file.");
+    internal SpiceStatePool StatesAtInitialization => _states.Value;
 
 
     private static void Expand(string root, string directory, string name, HashSet<string> active,

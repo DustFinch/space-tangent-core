@@ -216,7 +216,7 @@ public static partial class SscBodyCatalogue
         if (timeline is not null)
             raw = _ => null; // A timeline needs its bound graph to select a center and frame.
         else if (TrySpiceModel(fields, spice, "SpiceOrbit",
-            (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(fields, "SpiceOrbit"), Warn), Warn) is { } spiceSample)
+            (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(fields, "SpiceOrbit"), Warn), Warn) is { } spiceSample)
             raw = spiceSample;
         else if (usesScriptOrbit &&
             TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) is { } scripted)
@@ -357,7 +357,7 @@ public static partial class SscBodyCatalogue
 
         Func<JulianInstant, FrameKinematics?>? spin = null;
         bool usesScriptRotation = fields.Fields.ContainsKey("ScriptedRotation");
-        if (TrySpiceModel(fields, spice, "SpiceRotation", (block, pool) => ReadSpiceRotation(block, pool, spinFrame), Warn) is { } spiceSpin)
+        if (TrySpiceModel(fields, spice, "SpiceRotation", (block, pool, initial) => ReadSpiceRotation(block, pool, initial, spinFrame, HasSpiceAlternative(fields, "SpiceRotation")), Warn) is { } spiceSpin)
             spin = spiceSpin;
         else if (usesScriptRotation &&
             TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)

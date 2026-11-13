@@ -717,6 +717,115 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void SscInitializationFreezesAliasesAndCoverageBeforeLaterLoads()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        using var reference = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+        var rows = reference.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in new[] { "linear.bsp", "wide.bsp", "aliases.bsp", "alias-a.tf", "alias-b.tf", "fixed-frame.tf" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+            File.WriteAllText(Path.Combine(source, "01-early.ssc"), """
+                "Missing SPK" "Sol" {
+                    SpiceOrbit { Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Missing alias" "Sol" {
+                    SpiceOrbit { Target "PREFIX_BODY" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 4 0 0 ]
+                }
+                "Missing frame" "Sol" {
+                    FixedPosition [ 5 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "PREFIX_FRAME" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 10 }
+                }
+                "Early" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                """);
+            File.WriteAllText(Path.Combine(source, "02-wide.ssc"), """
+                "Wide" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel [ "wide.bsp" "alias-b.tf" ] Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                "Late frame" "Sol" {
+                    FixedPosition [ 6 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Kernel "fixed-frame.tf" Frame "PREFIX_FRAME" BaseFrame "J2000" }
+                }
+                """);
+            Check(source, (bodies, warnings) =>
+            {
+                Assert.Equal(3, warnings.Count);
+                Assert.Contains("No SPK coverage", warnings[0]);
+                Assert.Contains("Unknown NAIF object PREFIX_BODY", warnings[1]);
+                Assert.Contains("Unknown SSC SPICE frame PREFIX_FRAME", warnings[2]);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(3d, bodies[0].Sample(epoch)!.Value.PositionKilometers.X);
+                Assert.Equal(4d, bodies[1].Sample(epoch)!.Value.PositionKilometers.X);
+                var expected = Results("late-window-freeze");
+                CheckState(bodies[3], expected[3]);
+                CheckState(bodies[4], expected[5]);
+                var early = bodies[2].SampleRotation!(epoch)!.Value.ToWorld;
+                var late = bodies[5].SampleRotation!(epoch)!.Value.ToWorld;
+                Assert.InRange(Math.Abs(late.X.X - Math.Cos(25 * Math.PI / 180)), 0, 1e-13);
+                Assert.NotEqual(early, late);
+            });
+
+            string aliases = scratch.CreateSubdirectory("aliases").FullName;
+            foreach (string file in new[] { "aliases.bsp", "alias-a.tf", "alias-b.tf" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(aliases, file));
+            File.WriteAllText(Path.Combine(aliases, "aliases.ssc"), """
+                "Required external alias" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Target "PREFIX_BODY" Origin "0" BoundingRadius 500 }
+                }
+                "Early alias" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel [ "alias-a.tf" "aliases.bsp" ] Target "PREFIX_BODY" Origin "0" BoundingRadius 500 }
+                }
+                "Late alias" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "alias-b.tf" Target "PREFIX_BODY" Origin "0" BoundingRadius 500 }
+                }
+                """);
+            Check(aliases, (bodies, warnings) =>
+            {
+                Assert.Empty(warnings);
+                var expected = Results("target-alias-frozen");
+                CheckState(bodies[0], expected[5]);
+                CheckState(bodies[1], expected[3]);
+                CheckState(bodies[2], expected[5]);
+            });
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        System.Text.Json.JsonElement Results(string name) =>
+            rows.Single(row => row.GetProperty("case").GetString() == name).GetProperty("results");
+
+        void Check(string source, Action<IReadOnlyList<SscBodyDefinition>, List<string>> verify)
+        {
+            string packed = source + "-packed";
+            SscBodyCatalogue.BuildPack(source, packed, _ => { });
+            foreach (string folder in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(folder, warning: warnings.Add);
+                verify(bodies, warnings);
+            }
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
