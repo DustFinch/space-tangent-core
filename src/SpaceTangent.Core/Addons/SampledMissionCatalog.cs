@@ -228,8 +228,8 @@ public static partial class SampledMissionCatalog
                 if (catalogue.TryGetProperty("formatVersion", out var packedVersion))
                 {
                     int version = packedVersion.GetInt32();
-                    if (version is < 3 or > 19)
-                        throw new NotSupportedException($"Packed mission format version {version} is outside 3–19.");
+                    if (version is < 1 or > 19)
+                        throw new NotSupportedException($"Packed mission format version {version} is outside 1–19.");
                     if (sourceOnly)
                         throw new InvalidDataException("A mission pack must contain loose source catalogues.");
                     ReadPackedKernelLoads(catalogue, owner, Path.GetDirectoryName(path)!, loads);
@@ -254,6 +254,7 @@ public static partial class SampledMissionCatalog
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (timedParents.Contains(Text(body, "path")) ||
                             (IsTimedComponent(body) && timedParents.Contains(Text(body, "parent"))) ||
+                            body.TryGetProperty("sensor", out _) ||
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
                             HasPackedSpice(body))

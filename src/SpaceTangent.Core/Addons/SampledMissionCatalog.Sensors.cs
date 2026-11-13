@@ -7,15 +7,17 @@ namespace SpaceTangent.Core.Addons;
 
 public static partial class SampledMissionCatalog
 {
-    private static MissionSensor ReadSensor(JsonElement value, Func<string, ObjectId> resolve)
+    private static MissionSensor ReadSensor(JsonElement value, Func<string, ObjectId> resolve, bool packed = false)
     {
         ObjectId target = resolve(Text(value, "target"));
-        double range = value.TryGetProperty("range", out _) ? Distance(value, "range") : 1000;
+        double range = packed ? PackedPositive(value, "rangeKm") :
+            value.TryGetProperty("range", out _) ? Distance(value, "range") : 1000;
         if (!(range > 0))
             throw new InvalidDataException("A sensor range must be positive.");
-        var (color, opacity) = SensorStyle(value);
+        var (color, opacity) = SensorStyle(value, packed ? "color" : "frustumColor");
         bool rectangle = value.TryGetProperty("shape", out var shape) && shape.GetString() == "rectangular";
-        double x = HalfExtent("horizontalFov"), y = HalfExtent("verticalFov");
+        string suffix = packed ? "Deg" : "";
+        double x = HalfExtent("horizontalFov" + suffix), y = HalfExtent("verticalFov" + suffix);
         Basis3d basis = value.TryGetProperty("orientation", out var attitude) ? Quaternion(attitude) : Basis3d.Identity;
         const int rayCount = 48;
         var directions = new Vector3d[rayCount];
@@ -25,7 +27,10 @@ public static partial class SampledMissionCatalog
             Vector3d ray = rectangle ? RectangleRay(index, x, y) : new(x * Math.Cos(phase), y * Math.Sin(phase), 1);
             directions[index] = basis.Transform(ray / ray.Length);
         }
-        return new(target, range, color, opacity, basis.Z, Array.AsReadOnly(directions), rectangle ? 4 : 8);
+        return new(target, range, color, opacity, basis.Z, Array.AsReadOnly(directions), rectangle ? 4 : 8)
+        {
+            FootprintOpacity = packed ? ReadFootprintOpacity(value) : 0
+        };
 
         double HalfExtent(string field)
         {
@@ -41,9 +46,9 @@ public static partial class SampledMissionCatalog
         }
     }
 
-    private static (Vector3d Color, double Opacity) SensorStyle(JsonElement value)
+    private static (Vector3d Color, double Opacity) SensorStyle(JsonElement value, string colorField = "frustumColor")
     {
-        Vector3d color = value.TryGetProperty("frustumColor", out var rgb) ? Vector(rgb) : new(1, 1, 1);
+        Vector3d color = value.TryGetProperty(colorField, out var rgb) ? Vector(rgb) : new(1, 1, 1);
         double opacity = value.TryGetProperty("frustumOpacity", out var alpha) ? alpha.GetDouble() : .3;
         if (!double.IsFinite(opacity) || opacity is < 0 or > 1 ||
             color.X is < 0 or > 1 || color.Y is < 0 or > 1 || color.Z is < 0 or > 1)

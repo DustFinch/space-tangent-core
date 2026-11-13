@@ -62,6 +62,49 @@ public sealed class MissionSensorTests
         finally { folder.Delete(recursive: true); }
     }
 
+    [ArchivedSensorFact]
+    [Trait("Category", "ExternalData")]
+    public void VersionTwoSciencePackRestoresBothOrientedSensorFields()
+    {
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SENSOR_PACK")!;
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_PROBE_MISSIONS_ROOT")!;
+        var jason = new ObjectId("satellite/jason");
+        var sorce = new ObjectId("satellite/sorce");
+        ObjectId? Resolve(string name) => name switch
+        {
+            "Earth" => SolarSystemSample.EarthId, "Sun" or "Sol" => SolarSystemSample.SunId, "Jason-1" => jason, "SORCE" => sorce, _ => null
+        };
+        var loose = SampledMissionCatalog.Load("sensor-verification.json", source, Resolve);
+        var packed = SampledMissionCatalog.Load("pack.json", archive, Resolve);
+        foreach (var original in loose)
+        {
+            var actual = Assert.Single(packed, body => body.Id == original.Id);
+            Assert.Equal(original.Arcs[0].Center, actual.Arcs[0].Center);
+            var a = Assert.IsType<MissionSensor>(Assert.Single(original.Geometry!).Shape.Sensor);
+            var b = Assert.IsType<MissionSensor>(Assert.Single(actual.Geometry!).Shape.Sensor);
+            Assert.Equal(a.Target, b.Target);
+            Assert.Equal(a.RangeKilometers, b.RangeKilometers);
+            Assert.Equal(a.Color, b.Color);
+            Assert.Equal(a.Opacity, b.Opacity);
+            Assert.Equal(a.GridSpokes, b.GridSpokes);
+            Assert.Equal(1, b.FootprintOpacity);
+            Assert.Equal(48, b.Boundary.Count);
+            Assert.InRange((a.Boresight - b.Boresight).Length, 0, 1e-5);
+            for (int ray = 0; ray < b.Boundary.Count; ray++)
+                Assert.InRange((a.Boundary[ray] - b.Boundary[ray]).Length, 0, 1e-5);
+        }
+    }
+
+    private sealed class ArchivedSensorFactAttribute : FactAttribute
+    {
+        public ArchivedSensorFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SENSOR_PACK")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_PROBE_MISSIONS_ROOT")))
+                Skip = "Set the original v2 science export and source mission corpus.";
+        }
+    }
+
     private static Vector3d Vector(JsonElement array) => new(array[0].GetDouble(), array[1].GetDouble(), array[2].GetDouble());
 
     private sealed class NativeSensorFactAttribute : FactAttribute

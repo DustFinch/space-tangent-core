@@ -50,8 +50,11 @@ public static partial class SampledMissionCatalog
             AddArc(start, end, parent, body.GetProperty("orbit"));
 
         double radius = PackedPositive(body, "radiusKm");
-        MissionShape? shape = body.TryGetProperty("sensor", out var sensor) && sensor.TryGetProperty("instrument", out _)
-            ? ReadPackedSpiceSensor(sensor, body, resources, resolve)
+        MissionShape? shape = body.TryGetProperty("sensor", out var sensor)
+            ? sensor.TryGetProperty("instrument", out var instrument) && instrument.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(instrument.GetString())
+                ? ReadPackedSpiceSensor(sensor, body, resources, resolve)
+                : new(null, .001, Basis3d.Identity, default, ReadSensor(sensor, resolve, packed: true))
             : ReadPackedShape(body, root, name, radius, resolve, warning, cancellation);
         var geometry = new List<MissionGeometrySpan>();
         AddGeometry(body, shape);
@@ -309,8 +312,10 @@ public static partial class SampledMissionCatalog
             string? path;
             try { path = PackedAsset(root, "models", file); }
             catch (FileNotFoundException) { path = null; warning?.Invoke($"{name}: mesh {file} is missing; the trajectory is available."); }
-            string convention = Text(model, "geometryConvention");
-            double value = model.GetProperty("geometryValue").GetDouble();
+            string convention = model.TryGetProperty("geometryConvention", out var mode)
+                ? mode.GetString() ?? throw new InvalidDataException("Missing packed mesh geometry convention.")
+                : PackedMeshSize;
+            double value = model.TryGetProperty("geometryValue", out var size) ? size.GetDouble() : radius;
             double? scale = convention switch
             {
                 PackedMeshSize when value > 0 && double.IsFinite(value) => null,
