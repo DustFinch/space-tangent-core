@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Spice;
+using SpaceTangent.Core.World;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -204,6 +205,58 @@ public sealed class CassiniSpiceCatalogTests
         finally
         {
             root.Delete(recursive: true);
+        }
+    }
+
+    [PackedCassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void PackedCassiniKeepsTheOriginalTrajectoryAndBothCameraFields()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_PACKED_ROOT")!;
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        var baseline = SpiceJsonCatalog.Load(Path.Combine(source, "cassini.json"), source);
+        var saturn = new ObjectId("sol/saturn");
+        var diagnostics = new List<string>();
+        var content = SampledMissionCatalog.Load("pack.json", root,
+            name => name is "Sol/Saturn" or "Saturn" ? saturn : null, diagnostics.Add);
+        Assert.True(content.Count == 3, string.Join("\n", diagnostics));
+        var cassini = Assert.Single(content, mission => mission.Name == "Cassini SOI");
+        Assert.EndsWith("cassini.glb", cassini.MeshPath);
+        var builder = new WorldGraphBuilder();
+        builder.AddTrajectory(saturn, _ => default(CartesianState));
+        foreach (var mission in content)
+            builder.AddSampledMission(mission);
+        var world = builder.Build();
+        foreach (double seconds in new[] { 141911269.46157101, 141917558.4203589 })
+        {
+            var time = JulianInstant.FromTdbSeconds(seconds);
+            var snapshot = world.Evaluate(time);
+            Assert.True(snapshot.TryState(cassini.Id, out var position));
+            Assert.True(baseline.Spacecraft.Single().TrySample(time, out var expected));
+            Assert.InRange((position.PositionKilometers - expected.PositionKilometers).Length, 0, 1e-6);
+            Assert.InRange((position.VelocityKilometersPerSecond - expected.VelocityKilometersPerSecond).Length, 0, 1e-9);
+            Assert.True(baseline.Spacecraft.Single().TryAttitude(time, out var body));
+            Assert.True(snapshot.TryOrientation(cassini.Id, out var attitude));
+            Assert.InRange((attitude.ToWorld.X - body.X).Length, 0, 1e-12);
+            foreach (var camera in baseline.Sensors)
+            {
+                var mission = Assert.Single(content, item => item.Name == camera.Name);
+                var sensor = Assert.Single(mission.Geometry!).Shape.Sensor!;
+                Assert.True(snapshot.TryOrientation(mission.Id, out var frame));
+                Assert.Equal(48, sensor.Boundary.Count);
+                Assert.Equal(camera.RangeKilometers, sensor.RangeKilometers);
+                Assert.InRange((frame.ToWorld.Transform(sensor.Boresight) - body.Transform(camera.BoresightInBody)).Length, 0, 1e-12);
+            }
+        }
+    }
+
+    private sealed class PackedCassiniFactAttribute : FactAttribute
+    {
+        public PackedCassiniFactAttribute()
+        {
+            if (new[] { "SPACETANGENT_CASSINI_PACKED_ROOT", "SPACETANGENT_CASSINI_JSON_ROOT" }
+                .Any(variable => string.IsNullOrEmpty(Environment.GetEnvironmentVariable(variable))))
+                Skip = "Set the original Cassini JSON and archived pack roots.";
         }
     }
 

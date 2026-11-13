@@ -24,13 +24,13 @@ public static partial class SampledMissionCatalog
     }
 
     private static Func<JulianInstant, CartesianState?> SpiceTrajectory(JsonElement value, SpiceResources resources,
-        string arcCenter)
+        string arcCenter, bool packed = false)
     {
-        if (value.TryGetProperty("frame", out var frame) &&
+        if (!packed && value.TryGetProperty("frame", out var frame) &&
             !string.Equals(frame.GetString(), "J2000", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("A sampled SPICE trajectory requires a J2000 output frame.");
         int target = ResolveSpiceId(value.GetProperty("target"), resources);
-        int center = value.TryGetProperty("center", out var selected) ? ResolveSpiceId(selected, resources) :
+        int center = value.TryGetProperty(packed ? "spiceCenter" : "center", out var selected) ? ResolveSpiceId(selected, resources) :
             ResolveSpiceId(arcCenter, resources);
         var states = resources.States;
         return epoch => states.TryState(target, center, epoch, out var state) ? state : null;
@@ -81,21 +81,26 @@ public static partial class SampledMissionCatalog
         var (color, opacity) = SensorStyle(geometry);
         if (!(range > 0) || end.CompareTo(start) <= 0)
             throw new InvalidDataException("A SPICE sensor requires a positive range and an increasing availability window.");
+        var sensor = new MissionSensor(target, range, color, opacity, field.Boresight,
+            SensorEdgeRays(field.Corners), field.Corners.Length);
+        ObjectId center = resolve(parent);
+        return new(resolve(name), name, null, .001,
+            [new(start, end, center, _ => new CartesianState(default, default), Equatorial, new MissionFrame.BodyFixed(center))])
+            { Geometry = [new(start, end, new(null, .001, Basis3d.Identity, default, sensor))] };
+    }
+    private static IReadOnlyList<Vector3d> SensorEdgeRays(IReadOnlyList<Vector3d> corners)
+    {
         const int samplesPerEdge = 12;
-        var rays = new Vector3d[field.Corners.Length * samplesPerEdge];
-        for (int side = 0; side < field.Corners.Length; side++)
+        var rays = new Vector3d[corners.Count * samplesPerEdge];
+        for (int side = 0; side < corners.Count; side++)
         {
-            Vector3d first = field.Corners[side], next = field.Corners[(side + 1) % field.Corners.Length];
+            Vector3d first = corners[side], next = corners[(side + 1) % corners.Count];
             for (int sample = 0; sample < samplesPerEdge; sample++)
             {
                 Vector3d ray = first + (next - first) * (sample / (double)samplesPerEdge);
                 rays[side * samplesPerEdge + sample] = ray / ray.Length;
             }
         }
-        var sensor = new MissionSensor(target, range, color, opacity, field.Boresight, Array.AsReadOnly(rays), field.Corners.Length);
-        ObjectId center = resolve(parent);
-        return new(resolve(name), name, null, .001,
-            [new(start, end, center, _ => new CartesianState(default, default), Equatorial, new MissionFrame.BodyFixed(center))])
-            { Geometry = [new(start, end, new(null, .001, Basis3d.Identity, default, sensor))] };
+        return Array.AsReadOnly(rays);
     }
 }

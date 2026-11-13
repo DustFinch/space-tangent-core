@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Spice;
 using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Addons;
@@ -10,7 +11,7 @@ namespace SpaceTangent.Core.Addons;
 public static partial class SampledMissionCatalog
 {
     private static SampledMission ReadPackedBody(JsonElement body, Func<string, ObjectId> resolve,
-        string root, Action<string>? warning, CancellationToken cancellation)
+        string root, SpiceResources resources, Action<string>? warning, CancellationToken cancellation)
     {
         string name = Text(body, "name");
         ObjectId id = resolve(Text(body, "path"));
@@ -23,10 +24,13 @@ public static partial class SampledMissionCatalog
 
         var spin = body.GetProperty("rotation");
         bool follows = Text(spin, "kind") == "follow";
-        var reference = follows ? new MissionFrame.BodyFixed(resolve(Text(spin, "body"))) :
+        bool spiceAttitude = Text(spin, "kind") == "spice";
+        var reference = spiceAttitude ? PackedSpiceAxes(spin, "outputFrame") : follows ? new MissionFrame.BodyFixed(resolve(Text(spin, "body"))) :
             PackedFrame(spin.GetProperty("frame"), resolve, id);
         MissionFrame attitude;
-        if (body.TryGetProperty("bodyFrame", out var axes))
+        if (spiceAttitude)
+            attitude = ReadPackedSpiceAttitude(spin, resources);
+        else if (body.TryGetProperty("bodyFrame", out var axes))
         {
             var dynamic = PackedFrame(axes, resolve, id);
             if (reference is not MissionFrame.Inertial inertial)
@@ -59,7 +63,9 @@ public static partial class SampledMissionCatalog
             AddArc(start, end, parent, body.GetProperty("orbit"));
 
         double radius = PackedPositive(body, "radiusKm");
-        MissionShape? shape = ReadPackedShape(body, root, name, radius, resolve, warning, cancellation);
+        MissionShape? shape = body.TryGetProperty("sensor", out var sensor) && sensor.TryGetProperty("instrument", out _)
+            ? ReadPackedSpiceSensor(sensor, body, resources, resolve)
+            : ReadPackedShape(body, root, name, radius, resolve, warning, cancellation);
         var shown = body.TryGetProperty("shown", out var interval) ? interval : default;
         var visibleFrom = shown.ValueKind == JsonValueKind.Object ? Date(shown, "fromJdTdb", start) : start;
         var visibleTo = shown.ValueKind == JsonValueKind.Object ? Date(shown, "untilJdTdb", end) : end;
@@ -74,7 +80,7 @@ public static partial class SampledMissionCatalog
 
         void AddArc(JulianInstant from, JulianInstant until, string center, JsonElement orbit)
         {
-            var trajectory = PackedTrajectory(orbit, center, resolve, id, root);
+            var trajectory = PackedTrajectory(orbit, center, resolve, id, root, resources);
             arcs.Add(new(from, until, resolve(center), trajectory.Local, trajectory.Frame, attitude)
             {
                 BodyReferenceFrame = reference, NativeVelocitySource = trajectory.NativeVelocitySource,
@@ -87,9 +93,11 @@ public static partial class SampledMissionCatalog
         Basis3d? NativeVelocitySource = null, bool PhysicalVelocity = false);
 
     private static PackedOrbit PackedTrajectory(JsonElement orbit, string center, Func<string, ObjectId> resolve,
-        ObjectId owner, string root, bool nested = false)
+        ObjectId owner, string root, SpiceResources resources, bool nested = false)
     {
         string kind = Text(orbit, "kind");
+        if (kind == "spice")
+            return ReadPackedSpiceOrbit(orbit, resources, resolve, owner);
         if (kind == "movingFrame")
         {
             if (nested)
@@ -97,7 +105,7 @@ public static partial class SampledMissionCatalog
             var trajectory = orbit.GetProperty("trajectory");
             if (!center.Equals(Text(trajectory, "center"), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The packed moving trajectory changed its centre.");
-            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, nested: true);
+            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, resources, nested: true);
             if (local.Frame is not MissionFrame.Inertial source)
                 throw new NotSupportedException("A packed moving frame needs an inertial local trajectory.");
             ObjectId body = resolve(Text(orbit, "body"));

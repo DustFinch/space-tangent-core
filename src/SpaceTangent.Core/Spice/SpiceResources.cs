@@ -98,7 +98,16 @@ internal sealed class SpiceResources
             }
             if (text.Contains("KERNELS_TO_LOAD"))
                 foreach (string item in text.Get("KERNELS_TO_LOAD"))
-                    Expand(root, Path.GetDirectoryName(file)!, Substitute(item, symbols), active, result, ref visits, depth + 1);
+                {
+                    string relative = Substitute(item, symbols);
+                    string owner = Path.GetDirectoryName(file)!;
+                    // Archived pack tools can place a metakernel in data/ while leaving data/ prefixes in its children.
+                    if (FileNames.Equals(owner, Path.Combine(root, "data")) &&
+                        relative.Replace('\\', '/').StartsWith("data/", StringComparison.OrdinalIgnoreCase) &&
+                        !AddonDependencies.FileExists(Path.Combine(owner, relative)))
+                        owner = root;
+                    Expand(root, owner, relative, active, result, ref visits, depth + 1);
+                }
             active.Remove(file);
         }
         catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, file))

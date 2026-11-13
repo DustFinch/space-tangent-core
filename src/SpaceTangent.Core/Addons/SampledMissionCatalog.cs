@@ -107,7 +107,7 @@ public static partial class SampledMissionCatalog
                     var mission = AddonDiagnostics.Read(AddonStage.Catalog, definition.Source, () =>
                         definition.Packed ? definition.Item.TryGetProperty("particles", out _)
                             ? ReadPackedParticleMission(definition.Item, TrackReference, directory, warning)
-                            : ReadPackedBody(definition.Item, TrackReference, directory, warning, cancellation)
+                            : ReadPackedBody(definition.Item, TrackReference, directory, resources, warning, cancellation)
                         : ReadItem(definition.Item, Resolve, root, directory, resources,
                             name => instrumentFrames.GetValueOrDefault(name), warning, cancellation));
                     loaded.Add((mission, references));
@@ -200,6 +200,7 @@ public static partial class SampledMissionCatalog
                     int version = packedVersion.GetInt32();
                     if (version is < 3 or > 19)
                         throw new NotSupportedException($"Packed mission format version {version} is outside 3–19.");
+                    ReadPackedKernelLoads(catalogue, root, Path.GetDirectoryName(path)!, kernelLoads);
                     if (catalogue.TryGetProperty("annotations", out var packedAnnotations))
                         foreach (var annotation in packedAnnotations.EnumerateArray())
                             AddAnnotation(annotation, packed: true);
@@ -209,7 +210,7 @@ public static partial class SampledMissionCatalog
                     bool metadata = packedAnnotations.ValueKind == JsonValueKind.Array || packedViewpoints.ValueKind == JsonValueKind.Array;
                     if (!catalogue.TryGetProperty("bodies", out var bodies))
                     {
-                        if (metadata)
+                        if (metadata || catalogue.TryGetProperty("spiceLoads", out _))
                             return true;
                         throw new InvalidDataException("A packed mission catalogue requires bodies, annotations or viewpoints.");
                     }
@@ -217,7 +218,8 @@ public static partial class SampledMissionCatalog
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
-                            body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _))
+                            body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
+                            HasPackedSpice(body))
                             Register(body, path, packed: true);
                     return true;
                 }
