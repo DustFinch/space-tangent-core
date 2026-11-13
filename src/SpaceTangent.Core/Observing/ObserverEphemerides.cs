@@ -15,12 +15,12 @@ public sealed record ObserverNight(DateOnly EveningDate, IReadOnlyList<ObserverE
 public static class ObserverEphemerides
 {
     private const int HalfHourSeconds = 1800;
-    private const int EveningStartSeconds = 18 * 3600;
 
-    /// <summary>Twenty-nine half-hour samples beginning at local mean 18:00, plus an independently refined daily culmination.</summary>
+
+    /// <summary>Twenty-nine half-hour samples beginning at local 18:00, plus an independently refined daily culmination.</summary>
     public static ObserverNight Night(ISolarSystemEphemeris ephemeris, DateOnly eveningDate, EarthSite site, DeltaTModel model,
         Func<SolarSystemSample, SurfaceLighting, HorizontalCoordinates?> target, double minimumAltitude = 10,
-        double sunBelow = -12, CancellationToken cancellation = default)
+        double sunBelow = -12, CancellationToken cancellation = default, ObserverSiteClock clock = default)
     {
         ArgumentNullException.ThrowIfNull(target);
         if (!site.IsValid())
@@ -28,13 +28,13 @@ public static class ObserverEphemerides
         if (!double.IsFinite(minimumAltitude) || minimumAltitude is < -90 or > 90 ||
             !double.IsFinite(sunBelow) || sunBelow is < -90 or > 90)
             throw new ArgumentOutOfRangeException(nameof(minimumAltitude));
-        JulianInstant midnight = LocalMidnight();
+        JulianInstant evening = clock.At(eveningDate, new(18, 0), site, model);
         var rows = new ObserverEphemerisRow[29];
         int covered = 0, dark = 0;
         ObserverEphemerisRow? best = null;
         for (int i = 0; i < rows.Length; i++)
         {
-            var row = rows[i] = Sample(EveningStartSeconds + i * HalfHourSeconds);
+            var row = rows[i] = Sample(evening, i * HalfHourSeconds);
             if (row.Target is not { } position || row.SunAltitudeDegrees is not { } solar)
                 continue;
             covered++;
@@ -48,16 +48,11 @@ public static class ObserverEphemerides
             best is null ? NightVisibility.BelowAltitude : NightVisibility.Visible;
         return new(eveningDate, Array.AsReadOnly(rows), status, best, Culmination());
 
-        JulianInstant LocalMidnight()
-        {
-            try { return TimeConversion.Convert(EarthObserving.LocalMidnight(eveningDate, site.LongitudeDegrees), TimeScale.Tdb); }
-            catch (ArgumentOutOfRangeException) { return EarthCivilTime.ModelMidnight(eveningDate, site.LongitudeDegrees, model); }
-        }
 
-        ObserverEphemerisRow Sample(double seconds)
+        ObserverEphemerisRow Sample(JulianInstant origin, double seconds)
         {
             cancellation.ThrowIfCancellationRequested();
-            var epoch = midnight.AddSeconds(seconds);
+            var epoch = origin.AddSeconds(seconds);
             if (epoch.CompareTo(ephemeris.Start) < 0 || epoch.CompareTo(ephemeris.End) > 0)
                 return new(epoch, null, null);
             var solar = ephemeris.Sample(epoch);
@@ -73,14 +68,17 @@ public static class ObserverEphemerides
         {
             const int Step = 600;
             // Local noon to noon, so the culmination belongs to the requested evening.
-            double first = 43_200, last = first + JulianInstant.SecondsPerDay;
+            JulianInstant noon = clock.At(eveningDate, new(12, 0), site, model);
+            JulianInstant nextNoon = clock.At(eveningDate.AddDays(1), new(12, 0), site, model);
+            double first = 0, last = (double)nextNoon.DifferenceNanoseconds(noon) / JulianInstant.NanosecondsPerSecond;
             double bestAt = first, bestAltitude = double.NegativeInfinity;
             ObserverEphemerisRow? peak = null;
             for (double seconds = first; seconds <= last; seconds += Step)
                 Consider(seconds);
+            Consider(last);
             if (peak is null || bestAt <= first || bestAt >= last)
                 return peak;
-            double low = bestAt - Step, high = bestAt + Step;
+            double low = Math.Max(first, bestAt - Step), high = Math.Min(last, bestAt + Step);
             while (high - low > 1)
             {
                 double left = low + (high - low) / 3, right = high - (high - low) / 3;
@@ -93,7 +91,7 @@ public static class ObserverEphemerides
 
             double Consider(double seconds)
             {
-                var row = Sample(seconds);
+                var row = Sample(noon, seconds);
                 double altitude = row.Target?.AltitudeDegrees ?? double.NegativeInfinity;
                 if (altitude > bestAltitude)
                 {

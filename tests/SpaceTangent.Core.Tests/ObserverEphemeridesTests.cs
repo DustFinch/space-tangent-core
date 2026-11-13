@@ -50,6 +50,31 @@ public sealed class ObserverEphemeridesTests
             Assert.True(double.TryParse(field, NumberStyles.Float, CultureInfo.InvariantCulture, out _))));
     }
 
+    [NightEphemerisFact]
+    [Trait("Category", "ExternalData")]
+    public void SiteClockUsesMoscowCivilMidnightAndLondonSummerTime()
+    {
+        var ephemeris = De440Ephemeris.Load(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")!);
+        const DeltaTModel model = DeltaTModel.MorrisonStephenson2004;
+        var moscow = new EarthSite(55.7558, 37.6173, .156);
+        var date = new DateOnly(2024, 12, 31);
+        var epoch = TimeConversion.FromUtc(new(date, 21, 15, 0), TimeScale.Tdb);
+        var clock = new ObserverSiteClock("Москва", "Europe/Moscow", 3);
+        Assert.Equal(date, EarthObserving.LocalMeanDate(epoch, moscow, model));
+        Assert.Equal(date.AddDays(1), clock.DateAt(epoch, moscow, model));
+        var report = ObserverEphemerides.Night(ephemeris, date, moscow, model, (_, _) => null, clock: clock);
+        Assert.Equal(new UtcDateTime(date, 15, 0, 0), TimeConversion.ToUtc(report.Rows[0].Epoch));
+
+        var london = new EarthSite(51.5, -.125, .03);
+        var march = new DateOnly(2024, 3, 31);
+        var zone = new ObserverSiteClock("London", "Europe/London", 0);
+        var summer = ObserverEphemerides.Night(ephemeris, march, london, model, (_, _) => null, clock: zone);
+        Assert.Equal(new UtcDateTime(march, 17, 0, 0), TimeConversion.ToUtc(summer.Rows[0].Epoch));
+        var fallback = zone with { TimeZone = "Unrecognized/Zone", UtcOffsetHours = 5.5 };
+        var fixedReport = ObserverEphemerides.Night(ephemeris, march, london, model, (_, _) => null, clock: fallback);
+        Assert.Equal(new UtcDateTime(march, 12, 30, 0), TimeConversion.ToUtc(fixedReport.Rows[0].Epoch));
+    }
+
     private sealed class NightEphemerisFactAttribute : FactAttribute
     {
         public NightEphemerisFactAttribute()

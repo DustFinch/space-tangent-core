@@ -70,24 +70,15 @@ public static class EarthObserving
     public static CivilTwilight Twilight(De440Ephemeris ephemeris, DateOnly date, EarthSite site, DeltaTModel deltaT) =>
         Twilight((ISolarSystemEphemeris)ephemeris, date, site, deltaT);
 
-    public static CivilTwilight Twilight(ISolarSystemEphemeris ephemeris, DateOnly date, EarthSite site, DeltaTModel deltaT)
+    public static CivilTwilight Twilight(ISolarSystemEphemeris ephemeris, DateOnly date, EarthSite site, DeltaTModel deltaT, ObserverSiteClock clock = default)
     {
         if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));
 
-        JulianInstant start, end;
-        try
-        {
-            start = LocalMidnight(date, site.LongitudeDegrees);
-            end = LocalMidnight(date.AddDays(1), site.LongitudeDegrees);
-            _ = TimeConversion.Convert(start, TimeScale.Tdb);
-            _ = TimeConversion.Convert(end, TimeScale.Tdb);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            start = EarthCivilTime.ModelMidnight(date, site.LongitudeDegrees, deltaT);
-            end = EarthCivilTime.ModelMidnight(date.AddDays(1), site.LongitudeDegrees, deltaT);
-        }
+        JulianInstant start = clock.At(date, TimeOnly.MinValue, site, deltaT, tdb: false);
+        JulianInstant end = clock.At(date.AddDays(1), TimeOnly.MinValue, site, deltaT, tdb: start.Scale == TimeScale.Tdb);
+        if (start.Scale != end.Scale)
+            start = TimeConversion.Convert(start, end.Scale);
         JulianInstant previous = start;
         double previousAltitude = Altitude(start);
         var civil = new SolarAltitudeCrossings(null, null, previousAltitude >= CivilLimit);
