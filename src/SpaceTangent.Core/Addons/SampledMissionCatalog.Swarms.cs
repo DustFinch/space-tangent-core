@@ -5,7 +5,10 @@ using SpaceTangent.Contracts;
 namespace SpaceTangent.Core.Addons;
 
 public sealed record MissionSwarmStyle(string SourcePath, MissionSwarm Elements, Vector3d Color,
-    float Opacity, float PointSize, float FadeSize, bool Visible);
+    float Opacity, float PointSize, float FadeSize, bool Visible)
+{
+    public bool ReverseEquatorialAxes { get; init; }
+}
 
 public static partial class SampledMissionCatalog
 {
@@ -38,6 +41,10 @@ public static partial class SampledMissionCatalog
         return new(null, swarm.BoundingRadiusKilometers, Basis3d.Identity, default)
         {
             Swarm = new(path, swarm, color, (float)opacity, (float)size, (float)fade, visible)
+            {
+                // Packed natural attitudes include the half-turn of the body's prime meridian.
+                ReverseEquatorialAxes = packed && item.TryGetProperty("naturalAxes", out var natural) && natural.GetBoolean()
+            }
         };
 
         double Number(string field, double fallback) =>

@@ -71,6 +71,50 @@ public sealed class MissionSwarmTests
         };
     }
 
+    [SwarmInstallFact]
+    [Trait("Category", "ExternalData")]
+    public void MixedPackResolvesInstalledScienceBodyAndKeepsNativeSwarmAxes()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_SWARM_INSTALL")!;
+        var satellite = new ObjectId("science/sorce");
+        var earth = new ObjectId("earth");
+        var warnings = new List<string>();
+        string packedRoot = Path.Combine(root, "packed-addons", "science");
+        var packed = SampledMissionCatalog.Load("pack.json", packedRoot, Resolve, warnings.Add);
+        Assert.Empty(warnings);
+        Assert.Equal(2, packed.Count);
+
+        string sourceRoot = Path.Combine(root, "source-addons", "science");
+        var source = SampledMissionCatalog.Load("swarm-native-verification.json", sourceRoot, Resolve, warnings.Add);
+        Assert.Empty(warnings);
+        Assert.Equal(2, source.Count);
+
+        foreach (var mission in packed)
+        {
+            var original = Assert.Single(source, item => item.Name == mission.Name);
+            var originalStyle = Assert.IsType<MissionSwarmStyle>(Assert.Single(original.Geometry!).Shape.Swarm);
+            var style = Assert.IsType<MissionSwarmStyle>(Assert.Single(mission.Geometry!).Shape.Swarm);
+            Assert.Equal(2740, style.Elements.Count);
+            Assert.True(style.Elements.Attributes.SequenceEqual(originalStyle.Elements.Attributes));
+            Assert.False(originalStyle.ReverseEquatorialAxes);
+            var arc = Assert.Single(mission.Arcs);
+            Assert.Equal(earth, arc.Center);
+            bool natural = mission.Name == "NativeSwarmNatural";
+            Assert.Equal(natural, style.ReverseEquatorialAxes);
+            if (!natural)
+                Assert.Equal(satellite, Assert.IsType<MissionFrame.BodyFixed>(
+                    Assert.IsType<MissionFrame.Rotating>(arc.BodyFrame).Parent).Body);
+        }
+
+        ObjectId? Resolve(string name) => name switch
+        {
+            "Earth" or "Sol/Earth" => earth,
+            "SORCE" => satellite,
+            "Jason-1" => new("science/jason"),
+            _ => null
+        };
+    }
+
     private sealed class SwarmInstallFactAttribute : FactAttribute
     {
         public SwarmInstallFactAttribute()
