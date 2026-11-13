@@ -227,6 +227,36 @@ public static partial class SscBodyCatalogue
             raw = ScriptOrbit(scripted);
         else if (ReadLegacySampledOrbit(item, fields, "SampledOrbit", resolve, Warn) is { } legacyCurve)
             raw = epoch => legacyCurve.TrySample(epoch, out var state) ? state : null;
+        else if (fields.Fields.TryGetValue("SampledTrajectory", out var data))
+        {
+            const string key = "SampledTrajectory";
+            string name;
+            if (data is SscValue.Map sample)
+            {
+                if (sample.Fields.TryGetValue("Interpolation", out SscValue? interpolation) && interpolation.AsText() != "cubic")
+                    throw new NotSupportedException("Only cubic sampled trajectory interpolation is available.");
+                name = sample.Text("Source");
+            }
+            else
+                name = data.AsText();
+            string file;
+            try
+            {
+                file = resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories");
+            }
+            catch (FileNotFoundException) when (usesScriptOrbit)
+            {
+                Warn($"The alternate {key} resource is unavailable.");
+                return null;
+            }
+            if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
+            var curve = SampledStateTrajectory.ReadXyzv(file, Icrs);
+            if (curve.Count == 0)
+                throw new InvalidDataException("The SSC trajectory contains no samples.");
+            raw = epoch => epoch.CompareTo(curve.Start!.Value) >= 0 && epoch.CompareTo(curve.End!.Value) <= 0 &&
+                curve.TrySample(epoch, out CartesianState state) ? state : null;
+        }
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {
             var context = new SscOrbitContext(Icrs, starScale ? AuKilometers : 1,
@@ -281,39 +311,10 @@ public static partial class SscBodyCatalogue
             var state = new CartesianState(ReadVector(position), default);
             raw = _ => state;
         }
+        else if (usesScriptOrbit || fields.Fields.ContainsKey("SampledOrbit"))
+            return null;
         else
-        {
-            const string key = "SampledTrajectory";
-            if (!fields.Fields.ContainsKey(key) && (usesScriptOrbit || fields.Fields.ContainsKey("SampledOrbit")))
-                return null;
-            SscValue data = fields.Get(key);
-            string name;
-            if (data is SscValue.Map sample)
-            {
-                if (sample.Fields.TryGetValue("Interpolation", out SscValue? interpolation) && interpolation.AsText() != "cubic")
-                    throw new NotSupportedException("Only cubic sampled trajectory interpolation is available.");
-                name = sample.Text("Source");
-            }
-            else
-                name = data.AsText();
-            string file;
-            try
-            {
-                file = resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories");
-            }
-            catch (FileNotFoundException) when (usesScriptOrbit)
-            {
-                Warn($"The alternate {key} resource is unavailable.");
-                return null;
-            }
-            if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
-                throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
-            var curve = SampledStateTrajectory.ReadXyzv(file, Icrs);
-            if (curve.Count == 0)
-                throw new InvalidDataException("The SSC trajectory contains no samples.");
-            raw = epoch => epoch.CompareTo(curve.Start!.Value) >= 0 && epoch.CompareTo(curve.End!.Value) <= 0 &&
-                curve.TrySample(epoch, out CartesianState state) ? state : null;
-        }
+            throw new InvalidDataException("Missing SSC field SampledTrajectory.");
 
         Vector3d? radii = null;
         if (fields.Fields.TryGetValue("SemiAxes", out var dimensions))

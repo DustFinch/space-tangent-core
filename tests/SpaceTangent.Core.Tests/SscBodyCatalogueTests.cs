@@ -108,6 +108,45 @@ public sealed class SscBodyCatalogueTests
         Assert.InRange(state.VelocityKilometersPerSecond.Length, 19, 21);
     }
 
+    [LocalBodyPackFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalAsteroidSamplesTakePriorityOverOtherOrbitsInSourceAndPack()
+    {
+        string fixture = Environment.GetEnvironmentVariable("SPACETANGENT_SSC_ADDON_PACK")!;
+        var root = Directory.CreateTempSubdirectory("st-ssc-sample-priority-");
+        try
+        {
+            var original = Assert.Single(SscBodyCatalogue.Load(fixture), item => item.Name == "2008 TC3");
+            string folder = Directory.CreateDirectory(Path.Combine(root.FullName, "source")).FullName;
+            string catalog = Directory.EnumerateFiles(fixture, "2008-tc3.ssc", SearchOption.AllDirectories).Single();
+            string samples = Directory.EnumerateFiles(fixture, "2008TC3.xyzv", SearchOption.AllDirectories).Single();
+            string text = File.ReadAllText(catalog);
+            int field = text.IndexOf("SampledTrajectory", StringComparison.Ordinal);
+            Assert.True(field >= 0);
+            File.WriteAllText(Path.Combine(folder, "2008-tc3.ssc"), text.Insert(field,
+                "EllipticalOrbit { SemiMajorAxis 2 Period 3 }\n FixedPosition [ 1 2 3 ]\n "));
+            File.Copy(samples, Path.Combine(folder, Path.GetFileName(samples)));
+            var loose = Assert.Single(SscBodyCatalogue.Load(folder));
+            string packed = Path.Combine(root.FullName, "packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(folder, packed, _ => { }));
+            var restored = Assert.Single(SscBodyCatalogue.Load(packed));
+
+            foreach (double day in new[] { 2454013.5, 2454016.5, 2454030.5 })
+            {
+                var epoch = Epoch(day);
+                Assert.NotNull(original.Sample(epoch));
+                Assert.Equal(original.Sample(epoch), loose.Sample(epoch));
+                Assert.Equal(original.Sample(epoch), restored.Sample(epoch));
+            }
+            Assert.Null(loose.OrbitApoapsisKilometers);
+            Assert.Null(restored.OrbitApoapsisKilometers);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [OriginalSpacecraftFact]
     [Trait("Category", "ExternalData")]
     public void OriginalConicSpacecraftKeepMissionWindowsAndModels()
