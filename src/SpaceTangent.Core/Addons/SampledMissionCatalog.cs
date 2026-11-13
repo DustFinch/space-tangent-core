@@ -265,7 +265,7 @@ public static partial class SampledMissionCatalog
                             body.TryGetProperty("sensor", out _) ||
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
-                            HasPackedSpice(body))
+                            HasPackedSpice(body) || HasCompoundTrajectory(body))
                             Register(body, path, owner, packed: true);
                     return true;
                 }
@@ -328,11 +328,14 @@ public static partial class SampledMissionCatalog
                 return;
             }
             string name = Text(item, visualizer ? "tag" : "name");
-            // A mixed pack can refer to an already installed science satellite. Let the science
-            // loader own its TLE and attitude so mission dependants resolve the live object.
+            // Keep installed science satellites and built-in ephemerides when this reader
+            // cannot replace them. Other packed tracks can still refer to the installed body.
             if (packed && resolveBody(name) is not null && item.TryGetProperty("timeline", out var phases) &&
                 phases.GetArrayLength() == 1 && phases[0].TryGetProperty("orbit", out var packedOrbit) &&
-                Text(packedOrbit, "kind") == "tle")
+                (Text(packedOrbit, "kind") == "tle" ||
+                 Text(packedOrbit, "kind") == PackedBuiltinKind &&
+                 (!TrySatelliteTheory(Text(packedOrbit, "name"), out _) ||
+                  Text(packedOrbit.GetProperty("frame"), "kind") != "equatorJ2000")))
                 return;
             if (!packed && item.TryGetProperty("geometry", out var geometry) &&
                 Text(geometry, "type") is not ("Mesh" or "Globe" or "TimeSwitched" or "Sensor" or "Observations" or "ParticleSystem" or "Axes" or "PlaneVisualizer" or "DirectionVisualizer" or "KeplerianSwarm") &&
@@ -397,6 +400,14 @@ public static partial class SampledMissionCatalog
             throw new InvalidDataException($"Unknown packed mission reference {path}.");
         }
     }
+
+    private static bool HasCompoundTrajectory(JsonElement body) =>
+        body.TryGetProperty("orbit", out var orbit) && IsCompound(orbit) ||
+        body.TryGetProperty("timeline", out var phases) &&
+        phases.EnumerateArray().Any(phase => IsCompound(phase.GetProperty("orbit")));
+
+    private static bool IsCompound(JsonElement orbit) =>
+        Text(orbit, "kind") is "chebyshev" or "combination";
 
     private static bool IsTimedComponent(JsonElement item) =>
         item.TryGetProperty("class", out var kind) && kind.ValueEquals("component") && item.TryGetProperty("shown", out _) &&

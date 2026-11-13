@@ -95,7 +95,7 @@ public static partial class SampledMissionCatalog
 
         void AddArc(JulianInstant from, JulianInstant until, string center, JsonElement orbit)
         {
-            var trajectory = PackedTrajectory(orbit, center, resolve, id, root, resources);
+            var trajectory = PackedTrajectory(orbit, center, resolve, id, root, resources, cancellation);
             ObjectId centerId = resolve(center);
             while (from.CompareTo(until) < 0)
             {
@@ -163,20 +163,25 @@ public static partial class SampledMissionCatalog
     private sealed record PackedOrbit(Func<JulianInstant, CartesianState?> Local, MissionFrame Frame,
         Basis3d? NativeVelocitySource = null, bool PhysicalVelocity = false);
 
+    private const string PackedBuiltinKind = "cosmographiaBuiltin";
+
     private static PackedOrbit PackedTrajectory(JsonElement orbit, string center, Func<string, ObjectId> resolve,
-        ObjectId owner, string root, SpiceResources resources, bool nested = false)
+        ObjectId owner, string root, SpiceResources resources, CancellationToken cancellation, int depth = 0, bool framed = false)
     {
+        cancellation.ThrowIfCancellationRequested();
+        if (depth >= 16)
+            throw new InvalidDataException("A packed trajectory exceeds 16 nested levels.");
         string kind = Text(orbit, "kind");
         if (kind == "spice")
             return ReadPackedSpiceOrbit(orbit, resources, resolve, owner);
         if (kind == "twoVectorFrame")
         {
-            if (nested || Text(orbit, "velocityPolicy") != "cosmographia-native-zero")
+            if (framed || Text(orbit, "velocityPolicy") != "cosmographia-native-zero")
                 throw new InvalidDataException("Invalid packed two-vector trajectory or velocity policy.");
             var trajectory = orbit.GetProperty("trajectory");
             if (!center.Equals(Text(trajectory, "center"), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The packed two-vector trajectory changed its centre.");
-            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, resources, nested: true);
+            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, resources, cancellation, depth + 1, framed: true);
             if (local.Frame is not MissionFrame.Inertial source ||
                 PackedFrame(orbit.GetProperty("frame"), resolve, owner) is not MissionFrame.TwoVector axes)
                 throw new NotSupportedException("A packed two-vector frame needs an inertial local trajectory and two directions.");
@@ -187,12 +192,12 @@ public static partial class SampledMissionCatalog
         }
         if (kind == "movingFrame")
         {
-            if (nested)
+            if (framed)
                 throw new InvalidDataException("Packed moving frames cannot be nested.");
             var trajectory = orbit.GetProperty("trajectory");
             if (!center.Equals(Text(trajectory, "center"), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The packed moving trajectory changed its centre.");
-            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, resources, nested: true);
+            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, resources, cancellation, depth + 1, framed: true);
             if (local.Frame is not MissionFrame.Inertial source)
                 throw new NotSupportedException("A packed moving frame needs an inertial local trajectory.");
             ObjectId body = resolve(Text(orbit, "body"));
@@ -220,8 +225,72 @@ public static partial class SampledMissionCatalog
                 Angle(orbit, "meanAnomalyDeg"), Angle(orbit, "inclinationDeg"), Angle(orbit, "ascendingNodeDeg"),
                 Angle(orbit, "argOfPericenterDeg")),
             "sampled" => PackedSamples(orbit, root),
+            "chebyshev" => PackedChebyshev(orbit, root),
+            "combination" => PackedCombination(orbit, center, resolve, owner, root, resources, axesFrame, cancellation, depth, framed),
+            PackedBuiltinKind => BuiltinTrajectory(Text(orbit, "name"), axesFrame),
             _ => throw new NotSupportedException($"Unsupported packed mission trajectory {kind}.")
         }, axesFrame, PhysicalVelocity: true);
+    }
+
+    private static Func<JulianInstant, CartesianState?> PackedChebyshev(JsonElement orbit, string root)
+    {
+        var terms = orbit.GetProperty("terms");
+        if (terms.GetArrayLength() is < 1 or > 16)
+            throw new InvalidDataException("A packed Chebyshev trajectory requires one to 16 terms.");
+        return WeightedTrajectory(terms.EnumerateArray().Select(term =>
+        {
+            string path = SscSampledCatalog.FindAsset(AddonStage.Trajectory, root, root, Text(term, "file"), "data", "trajectories");
+            var series = AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ChebyshevTrajectory.Load(path));
+            Func<JulianInstant, CartesianState?> sample = epoch => series.Sample(epoch);
+            return (sample, term.GetProperty("weight").GetDouble());
+        }).ToArray());
+    }
+
+    private static Func<JulianInstant, CartesianState?> PackedCombination(JsonElement orbit, string center,
+        Func<string, ObjectId> resolve, ObjectId owner, string root, SpiceResources resources, MissionFrame axes,
+        CancellationToken cancellation, int depth, bool framed)
+    {
+        var terms = orbit.GetProperty("terms");
+        if (terms.GetArrayLength() is < 2 or > 16)
+            throw new InvalidDataException("A packed combination requires two to 16 terms.");
+        return WeightedTrajectory(terms.EnumerateArray().Select(term =>
+            (ReadTerm(term.GetProperty("phases")), term.GetProperty("weight").GetDouble())).ToArray());
+
+        Func<JulianInstant, CartesianState?> ReadTerm(JsonElement phases)
+        {
+            if (phases.GetArrayLength() is < 1 or > 128)
+                throw new InvalidDataException("A packed trajectory term requires one to 128 phases.");
+            var segments = new List<(JulianInstant End, Func<JulianInstant, CartesianState?> Sample, Basis3d? ToCombined)>();
+            JulianInstant previous = Minimum;
+            foreach (var phase in phases.EnumerateArray())
+            {
+                var until = Date(phase, "endingJdTdb", Maximum);
+                if (until.CompareTo(previous) <= 0 || resolve(Text(phase, "center")) != resolve(center))
+                    throw new InvalidDataException("Packed combination phases require increasing ends and a common centre.");
+                var child = PackedTrajectory(phase.GetProperty("orbit"), center, resolve, owner, root, resources,
+                    cancellation, depth + 1, framed);
+                Basis3d? toCombined = child.Frame == axes ? null :
+                    axes is MissionFrame.Inertial combined && child.Frame is MissionFrame.Inertial component
+                        ? Multiply(combined.ToWorld.Transpose(), component.ToWorld)
+                        : throw new NotSupportedException("Packed combination terms require compatible trajectory axes.");
+                segments.Add((until, child.Local, toCombined));
+                previous = until;
+            }
+            return epoch =>
+            {
+                var segment = segments[^1];
+                foreach (var candidate in segments)
+                {
+                    if (epoch.CompareTo(candidate.End) >= 0)
+                        continue;
+                    segment = candidate;
+                    break;
+                }
+                var local = segment.Sample(epoch);
+                return local is { } state && segment.ToCombined is { } basis
+                    ? new(basis.Transform(state.PositionKilometers), basis.Transform(state.VelocityKilometersPerSecond)) : local;
+            };
+        }
     }
 
     private static Func<JulianInstant, CartesianState?> PackedSamples(JsonElement orbit, string root)
@@ -347,7 +416,7 @@ public static partial class SampledMissionCatalog
             string? path = null;
             if (texture.ValueKind == JsonValueKind.String && texture.GetString() is { Length: > 0 } file)
             {
-                try { path = PackedAsset(root, "textures", file); }
+                try { path = SscSampledCatalog.FindAsset(AddonStage.Texture, root, root, file, "textures"); }
                 catch (FileNotFoundException) { warning?.Invoke($"{name}: globe map {file} is missing; the shape is available."); }
             }
             return new(null, radius, Basis3d.Identity, default)

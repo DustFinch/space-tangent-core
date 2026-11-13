@@ -5,6 +5,7 @@ using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.World;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -90,6 +91,65 @@ public sealed class CompositeMissionTests
             }
         }
         finally { folder.Delete(recursive: true); }
+    }
+
+    [ArchivedSeriesFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedSaturnPackRetainsPolynomialPhasesAndWeightedRelativeStates()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_COMPOUND_PACK")!;
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")!;
+        var saturn = new ObjectId("sol/saturn");
+        var warnings = new List<string>();
+        var missions = SampledMissionCatalog.Load("pack.json", root, name => name switch
+        {
+            "Sol" or "Sun" => SolarSystemSample.SunId, "Saturn" => saturn,
+            "Mimas" or "Tethys" or "Rhea" or "Titan" or "Hyperion" or "Iapetus" => new ObjectId("sol/" + name.ToLowerInvariant()),
+            _ => null
+        }, warnings.Add);
+        // The orbital verification folder ships the series and catalogues. Surface assets are optional here.
+        Assert.All(warnings, warning => Assert.Matches("^(Enceladus|Dione|Phoebe): (globe map|mesh) ", warning));
+        var builder = new WorldGraphBuilder();
+        var planet = new CartesianState(new(1.4e9, 5e7, -4e7), new(7, -2, 1));
+        builder.AddTrajectory(saturn, _ => planet);
+        foreach (var mission in missions)
+            builder.AddSampledMission(mission);
+        var world = builder.Build();
+        using var document = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(original, "reference.json")));
+        int checkedRows = 0;
+        foreach (var row in document.RootElement.GetProperty("samples").EnumerateArray())
+        {
+            var body = Assert.Single(missions, mission => mission.Name == row.GetProperty("body").GetString());
+            var epoch = JulianInstant.FromJulianDate(row.GetProperty("jd").GetDouble(), TimeScale.Tdb);
+            var snapshot = world.Evaluate(epoch);
+            Assert.True(snapshot.TryState(body.Id, out var actual), body.Name);
+            Assert.InRange((actual.PositionKilometers - planet.PositionKilometers - Vector(row, "positionKm")).Length, 0, 2e-5);
+            Assert.InRange((actual.VelocityKilometersPerSecond - planet.VelocityKilometersPerSecond - Vector(row, "velocityKmS")).Length, 0, 2e-10);
+            checkedRows++;
+        }
+        Assert.True(checkedRows > 10);
+
+        var transition = JulianInstant.FromJulianDate(2458848.5, TimeScale.Tdb);
+        var enceladus = new ObjectId("mission/enceladus");
+        var onBoundary = world.Evaluate(transition);
+        Assert.True(onBoundary.TryState(enceladus, out var after));
+        Assert.Equal(planet + AnalyticSatelliteOrbit.Sample(SatelliteTheory.Enceladus, transition), after);
+
+        var beacon = world.Evaluate(JulianInstant.FromJulianDate(2453187.625, TimeScale.Tdb));
+        Assert.True(beacon.TryState(new("mission/combinationbeacon"), out var weighted));
+        Assert.True(beacon.TryState(enceladus, out var parent));
+        Assert.InRange(((weighted - parent).PositionKilometers - new Vector3d(1980, -40, -60)).Length, 0, 2e-6);
+        Assert.InRange(((weighted - parent).VelocityKilometersPerSecond - new Vector3d(0, 2000 * Math.Tau / 345600, 0)).Length, 0, 2e-10);
+    }
+
+    private sealed class ArchivedSeriesFactAttribute : FactAttribute
+    {
+        public ArchivedSeriesFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_COMPOUND_PACK")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")))
+                Skip = "Set the archived Saturn compound pack and the independent series reference.";
+        }
     }
 
     private static Vector3d Vector(JsonElement value, string name)

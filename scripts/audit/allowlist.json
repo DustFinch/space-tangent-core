@@ -113,5 +113,15 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
     "sha256": "81c9e0c5d108432b31921f576bacd541bbc2120e350b709c304053c0514ee3af",
     "reason": "Exact wire value for the archived two-vector trajectory velocity policy."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "c4b24f1c63602251099936cc6ee723ee4c00af16d618623fe49908fd367789ed",
+    "reason": "Exact wire value required by the archived trajectory format."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "657d92e1d22e69833bbab298ed62848e2fb1b00a4849cc649d590faec9cfe399",
+    "reason": "Exact wire value required by the archived trajectory format."
   }
 ]

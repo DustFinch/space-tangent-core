@@ -53,11 +53,7 @@ public static partial class SampledMissionCatalog
             case "Spice":
                 return SpiceTrajectory(value, resources, center);
             case "Builtin":
-                string name = Text(value, "name");
-                if (frame != Equatorial || !Enum.TryParse<SatelliteTheory>(name, ignoreCase: false, out var theory) ||
-                    !Enum.IsDefined(theory) || theory.ToString() != name)
-                    throw new NotSupportedException($"Unsupported mission built-in trajectory {name}.");
-                return epoch => AnalyticSatelliteOrbit.Sample(theory, epoch);
+                return BuiltinTrajectory(Text(value, "name"), frame);
             default:
                 throw new NotSupportedException($"Unsupported mission trajectory {type}.");
         }
@@ -101,20 +97,36 @@ public static partial class SampledMissionCatalog
                 throw new InvalidDataException("A trajectory combination requires matching trajectories and weights.");
             var terms = children.EnumerateArray().Select((child, index) =>
                 (Sample: ReadTrajectory(child, root, directory, start, end, frame, resources, center, depth + 1), Weight: weights[index].GetDouble())).ToArray();
-            if (terms.Any(term => !double.IsFinite(term.Weight)))
-                throw new InvalidDataException("Trajectory combination weights must be finite.");
-            return epoch =>
-            {
-                CartesianState state = default;
-                foreach (var (sample, weight) in terms)
-                {
-                    if (sample(epoch) is not { } component)
-                        return null;
-                    state += new CartesianState(component.PositionKilometers * weight, component.VelocityKilometersPerSecond * weight);
-                }
-                return state;
-            };
+            return WeightedTrajectory(terms);
         }
+    }
+
+    private static Func<JulianInstant, CartesianState?> BuiltinTrajectory(string name, MissionFrame frame)
+    {
+        if (frame != Equatorial || !TrySatelliteTheory(name, out var theory))
+            throw new NotSupportedException($"Unsupported mission built-in trajectory {name}.");
+        return epoch => AnalyticSatelliteOrbit.Sample(theory, epoch);
+    }
+
+    private static bool TrySatelliteTheory(string name, out SatelliteTheory theory) =>
+        Enum.TryParse(name, ignoreCase: false, out theory) && Enum.IsDefined(theory) && theory.ToString() == name;
+
+    private static Func<JulianInstant, CartesianState?> WeightedTrajectory(
+        (Func<JulianInstant, CartesianState?> Sample, double Weight)[] terms)
+    {
+        if (terms.Any(term => !double.IsFinite(term.Weight)))
+            throw new InvalidDataException("Trajectory combination weights must be finite.");
+        return epoch =>
+        {
+            CartesianState state = default;
+            foreach (var (sample, weight) in terms)
+            {
+                if (sample(epoch) is not { } component)
+                    return null;
+                state += new CartesianState(component.PositionKilometers * weight, component.VelocityKilometersPerSecond * weight);
+            }
+            return state;
+        };
     }
 
     private static Func<JulianInstant, CartesianState?> Keplerian(JsonElement value)
