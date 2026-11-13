@@ -133,7 +133,8 @@ public sealed partial class WorldGraphBuilder
                 return true;
             case MissionFrame.RelativeAttitude attitude when TryMissionFrame(input, attitude.Parent, out var reference) &&
                 attitude.Local(input.Epoch) is { } local:
-                frame = ComposeAttitudes(reference, local);
+                frame = ComposeAttitudes(attitude.LocalRateOnly
+                    ? reference with { AngularVelocityRadiansPerSecond = default(Vector3d) } : reference, local);
                 return true;
             case MissionFrame.TwoVector two when TryMissionDirection(input, two.Primary, out var primary) &&
                 TryMissionDirection(input, two.Secondary, out var secondary) &&

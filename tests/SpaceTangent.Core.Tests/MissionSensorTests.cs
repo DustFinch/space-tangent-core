@@ -157,6 +157,69 @@ public sealed class MissionSensorTests
         }
     }
 
+    [ArchivedSpinFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedFollowSpinCarriesOnlyTheLocalRateThroughMovingOffsets()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_FOLLOW_SPIN")!;
+        var satellites = PackedSatelliteCatalog.Load(root);
+        var jason = Assert.Single(satellites, satellite => satellite.Name == "Jason-1");
+        var earth = SolarSystemSample.EarthId;
+        ObjectId? Resolve(string name) => name == "Earth" ? earth :
+            satellites.FirstOrDefault(satellite => satellite.Name == name)?.Id;
+        var missions = SampledMissionCatalog.Load("pack.json", root, Resolve);
+        var witness = Assert.Single(missions, body => body.Name == "Jason Spin Witness");
+        var offset = Assert.Single(missions, body => body.Name == "Jason Spin Offset");
+        var builder = new WorldGraphBuilder();
+        builder.AddTrajectory(earth, _ => default(CartesianState));
+        builder.AddTrajectory(jason.Id, epoch => jason.TrySample(epoch, out var sample) ? sample.EarthRelativeState : null, earth);
+        var parentAxes = new Basis3d(new(0, 1, 0), new(0, 0, 1), new(1, 0, 0));
+        builder.AddOrientation(jason.Id, _ => new(parentAxes, new Vector3d(.001, .002, .003)));
+        foreach (var mission in missions)
+            builder.AddSampledMission(mission);
+        var graph = builder.Build();
+        foreach (double day in new[] { 2455755d, 2455755.005, 2455755.02 })
+        {
+            var epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
+            var world = graph.Evaluate(epoch);
+            double phase = Math.PI + Radians(33) + (day - 2455755) * Math.Tau * 36;
+            Vector3d Tilt(Vector3d vector)
+            {
+                double tilt = Radians(17);
+                return Z(new(vector.X, Math.Cos(tilt) * vector.Y - Math.Sin(tilt) * vector.Z,
+                    Math.Sin(tilt) * vector.Y + Math.Cos(tilt) * vector.Z), Radians(5));
+            }
+            Vector3d Turn(Vector3d vector) => parentAxes.Transform(Tilt(Z(vector, phase)));
+            var expectedRate = parentAxes.Transform(Tilt(new(0, 0, Math.Tau / 2400)));
+            Assert.True(world.TryOrientation(witness.Id, out var attitude));
+            Close(Turn(new(1, 0, 0)), attitude.ToWorld.X);
+            Close(Turn(new(0, 1, 0)), attitude.ToWorld.Y);
+            Close(Turn(new(0, 0, 1)), attitude.ToWorld.Z);
+            Close(expectedRate, attitude.AngularVelocityRadiansPerSecond!.Value);
+            Assert.True(world.TryMissionReferenceFrame(witness.Id, orbit: false, epoch, out _, out var frame));
+            Close(parentAxes.X, frame.ToWorld.X);
+            Assert.True(world.TryState(offset.Id, out var actual));
+            Assert.True(world.TryState(jason.Id, out var center));
+            Close(Turn(new(-100, -200, 300)), (actual - center).PositionKilometers);
+            Close(Vector3d.Cross(expectedRate, new(100, 200, 300)), (actual - center).VelocityKilometersPerSecond);
+        }
+
+        static double Radians(double degrees) => degrees * Math.PI / 180;
+        static Vector3d Z(Vector3d p, double angle) => new(Math.Cos(angle) * p.X - Math.Sin(angle) * p.Y,
+            Math.Sin(angle) * p.X + Math.Cos(angle) * p.Y, p.Z);
+        static void Close(Vector3d expected, Vector3d actual) => Assert.True((expected - actual).Length < 2e-6,
+            $"{expected} vs {actual}");
+    }
+
+    private sealed class ArchivedSpinFactAttribute : FactAttribute
+    {
+        public ArchivedSpinFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_FOLLOW_SPIN")))
+                Skip = "Set the original science pack with the exported local-spin witness.";
+        }
+    }
+
     private sealed class ArchivedSensorFactAttribute : FactAttribute
     {
         public ArchivedSensorFactAttribute()

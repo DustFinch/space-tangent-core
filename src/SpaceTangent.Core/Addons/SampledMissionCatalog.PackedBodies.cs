@@ -133,6 +133,18 @@ public static partial class SampledMissionCatalog
                 return (ReadPackedSpiceAttitude(spin, resources), PackedSpiceAxes(spin, "outputFrame"));
             var reference = kind == "follow" ? new MissionFrame.BodyFixed(resolve(Text(spin, "body"))) :
                 PackedFrame(spin.GetProperty("frame"), resolve, id);
+            if (kind == "follow" && spin.TryGetProperty("localRotation", out var own) && own.ValueKind != JsonValueKind.Null)
+            {
+                if (axes.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null) ||
+                    PackedFrame(own.GetProperty("frame"), resolve, id) is not MissionFrame.Inertial ownAxes)
+                    throw new NotSupportedException("A packed follow spin requires inertial local axes.");
+                var turn = PackedFollowTurn(spin);
+                var turned = new MissionFrame.Rotating(reference, _ => new(turn, default(Vector3d)));
+                var relativeAxes = new MissionFrame.Inertial(Multiply(Ecliptic.ToWorld.Transpose(), ownAxes.ToWorld));
+                var ownModel = PackedRotation(own, relativeAxes, root, cancellation);
+                return (new MissionFrame.RelativeAttitude(turned, epoch => EvaluateLocalRotation(ownModel, epoch))
+                    { LocalRateOnly = true }, turned);
+            }
             if (axes.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
                 return (PackedRotation(spin, reference, root, cancellation), reference);
             var dynamicFrame = PackedFrame(axes, resolve, id);
@@ -315,8 +327,7 @@ public static partial class SampledMissionCatalog
         {
             if (spin.TryGetProperty("localRotation", out var local) && local.ValueKind != JsonValueKind.Null)
                 throw new NotSupportedException("A packed follow frame with a local spin is unavailable.");
-            var sourceAxes = RotateX(-Math.PI / 2);
-            var turn = Multiply(Multiply(sourceAxes.Transpose(), Quaternion(spin.GetProperty("turn"))), sourceAxes);
+            var turn = PackedFollowTurn(spin);
             return new MissionFrame.Rotating(parent, _ => new(turn, default(Vector3d)));
         }
         if (kind == "quaternion")
@@ -357,6 +368,12 @@ public static partial class SampledMissionCatalog
                 RotateZ(meridian + (epoch.ToJulianDate() - reference) * JulianInstant.SecondsPerDay * rate)), mean.Z * rate));
         }
         throw new NotSupportedException($"Unsupported packed mission rotation {kind}.");
+    }
+
+    private static Basis3d PackedFollowTurn(JsonElement spin)
+    {
+        var sourceAxes = RotateX(-Math.PI / 2);
+        return Multiply(Multiply(sourceAxes.Transpose(), Quaternion(spin.GetProperty("turn"))), sourceAxes);
     }
 
     private static FrameKinematics EvaluateLocalRotation(MissionFrame.Rotating rotating, JulianInstant epoch)
