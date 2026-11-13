@@ -942,6 +942,54 @@ public sealed class OrderedSpiceCatalogueTests
 
     [OrderedSpiceFact]
     [Trait("Category", "ExternalData")]
+    public void AFailedSscMetakernelRetainsItsSuccessfullyLoadedChildren()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in new[] { "linear.bsp", "wide.bsp" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+            File.WriteAllText(Path.Combine(source, "damaged.bsp"), "DAF/SPK");
+            File.WriteAllText(Path.Combine(source, "optional.tm"), """
+                KPL/MK
+                \begindata
+                KERNELS_TO_LOAD = ( 'linear.bsp' 'damaged.bsp' 'wide.bsp' )
+                """);
+            File.WriteAllText(Path.Combine(source, "partial-load.ssc"), """
+                "Orbit fallback" "Sol" {
+                    SpiceOrbit { Kernel "optional.tm" Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Later orbit" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 4 0 0 ]
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string folder in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(folder, warning: warnings.Add);
+                string warning = Assert.Single(warnings);
+                Assert.Contains("Orbit fallback: SpiceOrbit initialization failed", warning);
+                Assert.Contains("damaged.bsp", warning);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(3d, bodies[0].Sample(epoch)!.Value.PositionKilometers.X);
+                Assert.InRange(bodies[1].Sample(epoch)!.Value.PositionKilometers.X, 104.9999999, 105.0000001);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
     public void SscCoverageCapacityAndShortWindowsMatchNativeInitialization()
     {
         string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");

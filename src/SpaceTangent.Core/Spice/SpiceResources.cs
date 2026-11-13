@@ -75,14 +75,12 @@ internal sealed class SpiceResources
         int visits = 0;
         foreach (var group in groups)
         {
-            int first = ordered.Count;
             try
             {
                 FileNotFoundException? skippedMissing = null;
                 bool hasOtherKernel = false;
                 foreach (var (directory, name) in group.Files)
                 {
-                    first = ordered.Count;
                     string physicalDirectory = directory, physicalName = name;
                     if (group.ResolveExplicit is { } resolve)
                     {
@@ -105,24 +103,9 @@ internal sealed class SpiceResources
                         }
                     }
 
-                    // Publish each successfully furnished file before trying the next one.
-                    // Children of a single metakernel are validated together.
                     HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
                     Expand(group.Root, physicalDirectory, physicalName, active, ordered, ref visits, 0,
-                        explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
-                    if (group.Unavailable is not null)
-                    {
-                        for (int index = first; index < ordered.Count; index++)
-                        {
-                            var (path, kind) = ordered[index];
-                            if (kind == KernelKind.Trajectory)
-                                GetKernel(parsedSpk, path, file => new SpkKernel(file));
-                            else if (kind == KernelKind.Attitude)
-                                GetKernel(parsedCk, path, file => new CkKernel(file));
-                            else if (kind is KernelKind.Text or KernelKind.Meta)
-                                GetKernel(parsedText, path, SpiceTextKernel.Read);
-                        }
-                    }
+                        group.Unavailable is null ? null : Validate, explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
                     if (pending is not null)
                         explicitSscLoads.UnionWith(pending);
                     hasOtherKernel = true;
@@ -133,12 +116,21 @@ internal sealed class SpiceResources
             }
             catch (Exception error) when (group.Unavailable is not null && IsKernelInputError(error))
             {
-                ordered.RemoveRange(first, ordered.Count - first);
                 active.Clear();
                 group.Unavailable(error);
             }
         }
         return new(ordered, parsedSpk, parsedCk, parsedText);
+
+        void Validate(string path, KernelKind kind)
+        {
+            if (kind == KernelKind.Trajectory)
+                GetKernel(parsedSpk, path, file => new SpkKernel(file));
+            else if (kind == KernelKind.Attitude)
+                GetKernel(parsedCk, path, file => new CkKernel(file));
+            else if (kind is KernelKind.Text or KernelKind.Meta)
+                GetKernel(parsedText, path, SpiceTextKernel.Read);
+        }
     }
 
     private static bool IsKernelInputError(Exception error) =>
@@ -167,6 +159,7 @@ internal sealed class SpiceResources
 
     private static void Expand(string root, string directory, string name, HashSet<string> active,
         List<(string Path, KernelKind Kind)> result, ref int visits, int depth,
+        Action<string, KernelKind>? validate,
         HashSet<(string File, string Authored)>? previousExplicit = null,
         HashSet<(string File, string Authored)>? pending = null, string? authored = null)
     {
@@ -179,6 +172,7 @@ internal sealed class SpiceResources
             if (++visits > MaximumLoads || depth > MaximumDepth)
                 throw new InvalidDataException("SPICE metakernel load limit exceeded.");
             KernelKind kind = Classify(file);
+            validate?.Invoke(file, kind);
             result.Add((file, kind));
             if (kind != KernelKind.Meta)
                 return;
@@ -207,7 +201,7 @@ internal sealed class SpiceResources
                         relative.Replace('\\', '/').StartsWith("data/", StringComparison.OrdinalIgnoreCase) &&
                         !AddonDependencies.FileExists(Path.Combine(owner, relative)))
                         owner = root;
-                    Expand(root, owner, relative, active, result, ref visits, depth + 1);
+                    Expand(root, owner, relative, active, result, ref visits, depth + 1, validate);
                 }
             active.Remove(file);
         }
