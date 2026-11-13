@@ -200,11 +200,11 @@ public static partial class SscBodyCatalogue
         double? orbitPeriodSeconds = null;
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
-            ? ReadTimeline(item, timelineValue, resolve, cancellation) : null;
+            ? ReadTimeline(item, timelineValue, resolve, spice, Warn, cancellation) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
         if (timeline is not null)
             raw = _ => null; // A timeline needs its bound graph to select a center and frame.
-        else if (TrySpiceOrbit() is { } spiceSample)
+        else if (TrySpiceModel(fields, spice, "SpiceOrbit", ReadSpiceOrbit, Warn) is { } spiceSample)
             raw = spiceSample;
         else if (usesScriptOrbit &&
             TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) is { } scripted)
@@ -340,7 +340,7 @@ public static partial class SscBodyCatalogue
 
         Func<JulianInstant, FrameKinematics?>? spin = null;
         bool usesScriptRotation = fields.Fields.ContainsKey("ScriptedRotation");
-        if (TrySpiceRotation() is { } spiceSpin)
+        if (TrySpiceModel(fields, spice, "SpiceRotation", (block, pool) => ReadSpiceRotation(block, pool, spinFrame), Warn) is { } spiceSpin)
             spin = spiceSpin;
         else if (usesScriptRotation &&
             TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
@@ -446,39 +446,6 @@ public static partial class SscBodyCatalogue
             BindTimeline = timeline is null ? null : (id, find, radiusKilometers) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))
         };
-
-        Func<JulianInstant, CartesianState?>? TrySpiceOrbit()
-        {
-            if (!fields.Fields.ContainsKey("SpiceOrbit"))
-                return null;
-            try
-            {
-                return ReadSpiceOrbit(fields.Object("SpiceOrbit"), spice.ForModel(item, "SpiceOrbit"));
-            }
-            catch (Exception error) when (HasSpiceAlternative(fields, "SpiceOrbit") && CanUseFallback(error))
-            {
-                Warn($"SpiceOrbit initialization failed. {error.Message}");
-                return null;
-            }
-        }
-
-        Func<JulianInstant, FrameKinematics?>? TrySpiceRotation()
-        {
-            if (!fields.Fields.ContainsKey("SpiceRotation"))
-                return null;
-            try
-            {
-                return ReadSpiceRotation(fields.Object("SpiceRotation"), spice.ForModel(item, "SpiceRotation"), spinFrame);
-            }
-            catch (Exception error) when (HasSpiceAlternative(fields, "SpiceRotation") && CanUseFallback(error))
-            {
-                Warn($"SpiceRotation initialization failed. {error.Message}");
-                return null;
-            }
-        }
-
-        static bool CanUseFallback(Exception error) =>
-            error is InvalidDataException or NotSupportedException or FormatException or ArgumentException or FileNotFoundException;
 
         T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
         {

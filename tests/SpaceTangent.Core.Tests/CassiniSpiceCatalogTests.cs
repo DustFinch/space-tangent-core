@@ -48,6 +48,77 @@ public sealed class CassiniSpiceCatalogTests
     }
 
     [CassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalCassiniKernelsWorkInsidePackedPhasesAndKeepPointingGaps()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        var workspace = Directory.CreateTempSubdirectory("space-tangent-phase-spice-");
+        try
+        {
+            string source = workspace.CreateSubdirectory("source").FullName;
+            foreach (string file in Directory.EnumerateFiles(original))
+                File.Copy(file, Path.Combine(source, Path.GetFileName(file)));
+            var expected = Assert.Single(SscBodyCatalogue.Load(source));
+            var ephemeris = Assert.Single(SscSpiceCatalog.Load(Path.Combine(source, "cassini.ssc"), source));
+            File.WriteAllText(Path.Combine(source, "cassini.ssc"), """
+                "Cassini-SSC" "Sol/Saturn" {
+                    Class "spacecraft" Radius 0.006 Mesh "cassini.3ds"
+                    Timeline [
+                        {
+                            Ending 2453186.9
+                            SpiceOrbit { Kernel "missing.bsp" Target "CASSINI" Origin "6" BoundingRadius 10000000 }
+                            FixedPosition [1 2 3]
+                            SpiceRotation { Frame "UNKNOWN_FRAME" }
+                            FixedRotation { MeridianAngle 0 }
+                        }
+                        {
+                            OrbitFrame { EclipticJ2000 {} }
+                            SpiceOrbit { Kernel [ "040615AP_SK_04167_04186.bsp" "cas_v43.tf" "cas00172.tsc" "04182_04183pa_soi_itl.bc" ] Target "CASSINI" Origin "6" BoundingRadius 10000000 }
+                            BodyFrame { EquatorJ2000 {} }
+                            SpiceRotation { Frame "CASSINI_SC_COORD" BaseFrame "J2000" }
+                        }
+                    ]
+                }
+                """);
+            string pack = Path.Combine(workspace.FullName, "pack");
+            var warnings = new List<string>();
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, pack, warnings.Add));
+            Assert.Equal(2, warnings.Count);
+            warnings.Clear();
+            var definition = Assert.Single(SscBodyCatalogue.Load(pack, warning: warnings.Add));
+            Assert.Equal(2, warnings.Count);
+            Assert.All(warnings, warning => Assert.Contains("Timeline phase 1", warning));
+            var center = new ObjectId("saturn");
+            var id = new ObjectId("cassini");
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(center, _ => new CartesianState(default, default));
+            builder.AddSampledMission(definition.BindTimeline!(id, _ => center));
+            var graph = builder.Build();
+            var fallback = graph.Evaluate(JulianInstant.FromJulianDate(2453186, TimeScale.Tdb));
+            Assert.True(fallback.TryState(id, out var fixedPosition));
+            Assert.Equal(new Vector3d(1, 2, 3), fixedPosition.PositionKilometers);
+            Assert.True(fallback.TryOrientation(id, out _));
+            foreach (double seconds in new[] { 141917558.4203589, 141918830.41202343, 141919293.40898937, 141955264.18408903 })
+            {
+                var epoch = JulianInstant.FromTdbSeconds(seconds);
+                var snapshot = graph.Evaluate(epoch);
+                Assert.True(snapshot.TryState(id, out var state));
+                Assert.True(ephemeris.TrySample(epoch, out var reference));
+                Assert.InRange((state.PositionKilometers - reference.PositionKilometers).Length, 0, 1e-5);
+                Assert.InRange((state.VelocityKilometersPerSecond - reference.VelocityKilometersPerSecond).Length, 0, 1e-8);
+                var rotation = expected.SampleRotation!(epoch);
+                Assert.Equal(rotation.HasValue, snapshot.TryOrientation(id, out var actual));
+                if (rotation.HasValue)
+                    Assert.Equal(rotation.Value, actual);
+            }
+        }
+        finally
+        {
+            workspace.Delete(recursive: true);
+        }
+    }
+
+    [CassiniFact]
     public void LoadsOriginalSscAndMatchesCassiniStatesThroughCoverageEdges()
     {
         string directory = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;

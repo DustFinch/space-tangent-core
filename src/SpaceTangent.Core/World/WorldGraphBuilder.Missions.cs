@@ -107,6 +107,7 @@ public sealed partial class WorldGraphBuilder
     {
         MissionFrame.BodyFixed fixedFrame => [StateKey(fixedFrame.Body), new(fixedFrame.Body, WorldChannel.Orientation)],
         MissionFrame.Rotating rotating => FrameKeys(rotating.Parent),
+        MissionFrame.RelativeAttitude attitude => FrameKeys(attitude.Parent),
         MissionFrame.TwoVector two => DirectionKeys(two.Primary).Concat(DirectionKeys(two.Secondary)),
         _ => []
     };
@@ -128,11 +129,11 @@ public sealed partial class WorldGraphBuilder
                     : value.Orientation;
                 return value.Available;
             case MissionFrame.Rotating rotating when TryMissionFrame(input, rotating.Parent, out var parent):
-                var local = rotating.Local(input.Epoch);
-                Vector3d? angularVelocity = parent.AngularVelocityRadiansPerSecond is { } parentRate &&
-                    local.AngularVelocityRadiansPerSecond is { } localRate
-                        ? parentRate + parent.ToWorld.Transform(localRate) : null;
-                frame = new(SampledMissionCatalog.Multiply(parent.ToWorld, local.ToWorld), angularVelocity);
+                frame = ComposeAttitudes(parent, rotating.Local(input.Epoch));
+                return true;
+            case MissionFrame.RelativeAttitude attitude when TryMissionFrame(input, attitude.Parent, out var reference) &&
+                attitude.Local(input.Epoch) is { } local:
+                frame = ComposeAttitudes(reference, local);
                 return true;
             case MissionFrame.TwoVector two when TryMissionDirection(input, two.Primary, out var primary) &&
                 TryMissionDirection(input, two.Secondary, out var secondary) &&
@@ -143,6 +144,14 @@ public sealed partial class WorldGraphBuilder
                 frame = default;
                 return false;
         }
+    }
+
+    private static FrameKinematics ComposeAttitudes(FrameKinematics parent, FrameKinematics local)
+    {
+        Vector3d? angularVelocity = parent.AngularVelocityRadiansPerSecond is { } parentRate &&
+            local.AngularVelocityRadiansPerSecond is { } localRate
+                ? parentRate + parent.ToWorld.Transform(localRate) : null;
+        return new(SampledMissionCatalog.Multiply(parent.ToWorld, local.ToWorld), angularVelocity);
     }
 
     private static IEnumerable<WorldKey> DirectionKeys(MissionDirection direction) => direction switch

@@ -37,6 +37,7 @@ public abstract record MissionFrame
         internal Basis3d? LocalAxes { get; init; }
     }
     public sealed record Rotating(MissionFrame Parent, Func<JulianInstant, FrameKinematics> Local) : MissionFrame;
+    internal sealed record RelativeAttitude(MissionFrame Parent, Func<JulianInstant, FrameKinematics?> Local) : MissionFrame;
     public sealed record TwoVector(FrameAxis PrimaryAxis, MissionDirection Primary,
         FrameAxis SecondaryAxis, MissionDirection Secondary) : MissionFrame
     {

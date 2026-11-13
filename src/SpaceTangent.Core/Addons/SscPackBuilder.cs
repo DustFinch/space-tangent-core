@@ -143,7 +143,7 @@ public static partial class SscBodyCatalogue
         string Resolve(SscDefinition body, string field, AddonStage stage, string authored, params string[] fallback)
         {
             string file = loose.Resolve(body, field, stage, authored, fallback);
-            string kind = PackedResourceKind(field).Kind;
+            string kind = PackedResourceKind(field, stage).Kind;
             if (kind == "texture")
                 kind = "map";
             string logical = authored.Replace('\\', '/');

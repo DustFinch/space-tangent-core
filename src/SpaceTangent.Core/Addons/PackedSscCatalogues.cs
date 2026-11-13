@@ -89,7 +89,7 @@ public static partial class SscBodyCatalogue
 
         string Resolve(SscDefinition definition, string field, AddonStage stage, string name, params string[] ignored)
         {
-            var (kind, directory) = PackedResourceKind(field);
+            var (kind, directory) = PackedResourceKind(field, stage);
             var index = assets[definition.DirectoryFor(field)];
             string logical = name.Replace('\\', '/');
             if (!index.TryGetValue((kind, logical), out string? asset) &&
@@ -105,12 +105,13 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException($"Packed SSC field {property} is missing.");
     }
 
-    private static (string Kind, string Directory) PackedResourceKind(string field) => field switch
+    private static (string Kind, string Directory) PackedResourceKind(string field, AddonStage stage) => field switch
     {
         "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),
         "Mesh" => ("model", "models"),
         "Texture" or "Rings" => ("texture", "textures"),
         "SpiceOrbit" or "SpiceRotation" => ("data", "data"),
+        "Timeline" when stage == AddonStage.Kernel => ("data", "data"),
         "SampledOrbit" or "SampledTrajectory" or "SampledOrientation" or "Timeline" => ("trajectory", "trajectories"),
         _ => throw new NotSupportedException($"Packed SSC resource kind for {field} is unavailable.")
     };

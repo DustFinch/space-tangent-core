@@ -8,11 +8,11 @@ namespace SpaceTangent.Core.Addons;
 public static partial class SscBodyCatalogue
 {
     private sealed record SscSpiceInput(SpiceResources Pool,
-        IReadOnlyDictionary<(string Body, string Field), Exception> Unavailable)
+        IReadOnlyDictionary<(SscValue.Map Properties, string Field), Exception> Unavailable)
     {
-        internal SpiceResources ForModel(SscDefinition body, string field)
+        internal SpiceResources ForModel(SscValue.Map properties, string field)
         {
-            if (Unavailable.TryGetValue((body.Parent + "/" + body.Name, field), out var error))
+            if (Unavailable.TryGetValue((properties, field), out var error))
             {
                 string? file = AddonDiagnostics.Get(error)?.File;
                 throw new InvalidDataException(file is null ? error.Message : $"{file}: {error.Message}", error);
@@ -26,7 +26,7 @@ public static partial class SscBodyCatalogue
         string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> furnished)
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
-        var unavailable = new Dictionary<(string Body, string Field), Exception>();
+        var unavailable = new Dictionary<(SscValue.Map Properties, string Field), Exception>();
         var supplied = furnished.Select(item => new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]));
         var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Root].First()));
         return new(pool, unavailable);
@@ -34,20 +34,22 @@ public static partial class SscBodyCatalogue
         IEnumerable<SpiceResources.KernelGroup> Sources()
         {
             foreach (var item in definitions)
+            foreach (var (properties, timeline) in ModelScopes(item.Properties))
             foreach (string field in new[] { "SpiceOrbit", "SpiceRotation" })
             {
                 cancellation.ThrowIfCancellationRequested();
-                if (!item.Properties.Fields.TryGetValue(field, out var value) || value is not SscValue.Map parameters ||
+                if (!properties.Fields.TryGetValue(field, out var value) || value is not SscValue.Map parameters ||
                     !parameters.Fields.TryGetValue("Kernel", out var kernel))
                     continue;
-                string owner = root(item.DirectoryFor(field));
-                var key = (item.Parent + "/" + item.Name, field);
-                bool optional = HasSpiceAlternative(item.Properties, field);
+                string ownerField = timeline ? "Timeline" : field;
+                string owner = root(item.DirectoryFor(ownerField));
+                var key = (properties, field);
+                bool optional = HasSpiceAlternative(properties, field, timeline);
                 string[] files;
                 try
                 {
                     files = (kernel is SscValue.List list ? list.Items : [kernel])
-                        .Select(name => resolve(item, field, AddonStage.Kernel, name.AsText(), "data")).ToArray();
+                        .Select(name => resolve(item, ownerField, AddonStage.Kernel, name.AsText(), "data")).ToArray();
                 }
                 catch (FileNotFoundException error) when (optional)
                 {
@@ -61,12 +63,41 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static bool HasSpiceAlternative(SscValue.Map properties, string field)
+    private static IEnumerable<(SscValue.Map Properties, bool Timeline)> ModelScopes(SscValue.Map properties)
+    {
+        yield return (properties, false);
+        if (properties.Fields.TryGetValue("Timeline", out var timeline) && timeline is SscValue.List phases)
+            foreach (var phase in phases.Items.OfType<SscValue.Map>())
+                yield return (phase, true);
+    }
+
+    private static bool HasSpiceAlternative(SscValue.Map properties, string field, bool timeline = false)
     {
         string[] keys = field == "SpiceOrbit"
-            ? ["ScriptedOrbit", "EllipticalOrbit", "FixedPosition", "SampledOrbit", "SampledTrajectory"]
-            : ["ScriptedRotation", "SampledOrientation", "CustomRotation", "PrecessingRotation", "UniformRotation", "FixedRotation"];
-        return keys.Any(properties.Fields.ContainsKey);
+            ? ["EllipticalOrbit", "FixedPosition", "SampledTrajectory"]
+            : ["SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation"];
+        if (keys.Any(properties.Fields.ContainsKey))
+            return true;
+        return !timeline && (field == "SpiceOrbit"
+            ? properties.Fields.ContainsKey("ScriptedOrbit") || properties.Fields.ContainsKey("SampledOrbit")
+            : properties.Fields.ContainsKey("ScriptedRotation") || properties.Fields.ContainsKey("CustomRotation"));
+    }
+
+    private static T? TrySpiceModel<T>(SscValue.Map fields, SscSpiceInput spice, string name,
+        Func<SscValue.Map, SpiceResources, T> read, Action<string> warn, bool timeline = false) where T : class
+    {
+        if (!fields.Fields.ContainsKey(name))
+            return null;
+        try
+        {
+            return read(fields.Object(name), spice.ForModel(fields, name));
+        }
+        catch (Exception error) when (HasSpiceAlternative(fields, name, timeline) &&
+            error is InvalidDataException or NotSupportedException or FormatException or ArgumentException or FileNotFoundException)
+        {
+            warn($"{name} initialization failed. {error.Message}");
+            return null;
+        }
     }
 
     private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources)
