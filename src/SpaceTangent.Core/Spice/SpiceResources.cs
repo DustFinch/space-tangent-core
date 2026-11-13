@@ -8,7 +8,9 @@ internal sealed class SpiceResources
 {
     private enum KernelKind { Unknown, Meta, Text, Trajectory, Attitude }
 
-    private const int MaximumDepth = 12, MaximumLoads = 256;
+    private const int MaximumLoads = 256;
+    private static readonly HashSet<string> LoadControls = new(StringComparer.OrdinalIgnoreCase)
+        { "KERNELS_TO_LOAD", "PATH_SYMBOLS", "PATH_VALUES" };
     private static readonly StringComparer FileNames = OperatingSystem.IsWindows() ?
         StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private readonly Lazy<SpiceTextKernel> _text;
@@ -42,7 +44,7 @@ internal sealed class SpiceResources
             var pool = new SpiceTextKernel();
             foreach (var (path, kind) in files.Ordered.Take(count ?? files.Ordered.Count))
                 if (kind is KernelKind.Meta or KernelKind.Text)
-                    pool.Apply(GetKernel(files.Text, path, SpiceTextKernel.Read));
+                    pool.Apply(GetKernel(files.Text, path, SpiceTextKernel.Read).Where(value => !LoadControls.Contains(value.Name)));
             return pool;
         });
         _trajectories = new(() => Load(KernelKind.Trajectory, files.Spk, path => new SpkKernel(path)));
@@ -65,7 +67,6 @@ internal sealed class SpiceResources
 
     private static KernelFiles ReadGroups(IEnumerable<KernelGroup> groups)
     {
-        var active = new HashSet<string>(FileNames);
         var ordered = new List<(string Path, KernelKind Kind)>();
         var parsedSpk = new Dictionary<string, SpkKernel>(FileNames);
         var parsedCk = new Dictionary<string, CkKernel>(FileNames);
@@ -104,8 +105,8 @@ internal sealed class SpiceResources
                     }
 
                     HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
-                    Expand(group.Root, physicalDirectory, physicalName, active, ordered, ref visits, 0,
-                        group.Unavailable is null ? null : Validate, explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
+                    Expand(group.Root, physicalDirectory, physicalName, ordered, ref visits, dependency: false,
+                        group.Unavailable is null ? null : Validate, ReadText, explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
                     if (pending is not null)
                         explicitSscLoads.UnionWith(pending);
                     hasOtherKernel = true;
@@ -116,7 +117,6 @@ internal sealed class SpiceResources
             }
             catch (Exception error) when (group.Unavailable is not null && IsKernelInputError(error))
             {
-                active.Clear();
                 group.Unavailable(error);
             }
         }
@@ -128,9 +128,11 @@ internal sealed class SpiceResources
                 GetKernel(parsedSpk, path, file => new SpkKernel(file));
             else if (kind == KernelKind.Attitude)
                 GetKernel(parsedCk, path, file => new CkKernel(file));
-            else if (kind is KernelKind.Text or KernelKind.Meta)
-                GetKernel(parsedText, path, SpiceTextKernel.Read);
+
         }
+
+        IReadOnlyList<SpiceTextKernel.Assignment> ReadText(string path) =>
+            GetKernel(parsedText, path, SpiceTextKernel.Read);
     }
 
     private static bool IsKernelInputError(Exception error) =>
@@ -157,9 +159,9 @@ internal sealed class SpiceResources
     internal SpiceStatePool StatesAtInitialization => _states.Value;
 
 
-    private static void Expand(string root, string directory, string name, HashSet<string> active,
-        List<(string Path, KernelKind Kind)> result, ref int visits, int depth,
-        Action<string, KernelKind>? validate,
+    private static void Expand(string root, string directory, string name,
+        List<(string Path, KernelKind Kind)> result, ref int visits, bool dependency,
+        Action<string, KernelKind>? validate, Func<string, IReadOnlyList<SpiceTextKernel.Assignment>> readText,
         HashSet<(string File, string Authored)>? previousExplicit = null,
         HashSet<(string File, string Authored)>? pending = null, string? authored = null)
     {
@@ -169,18 +171,19 @@ internal sealed class SpiceResources
             file = LocalAddonFiles.ResolveRelative(root, directory, name);
             if (authored is not null && (previousExplicit!.Contains((file, authored)) || !pending!.Add((file, authored))))
                 return;
-            if (++visits > MaximumLoads || depth > MaximumDepth)
+            if (++visits > MaximumLoads)
                 throw new InvalidDataException("SPICE metakernel load limit exceeded.");
             KernelKind kind = Classify(file);
+            var assignments = kind is KernelKind.Text or KernelKind.Meta ? readText(file) : [];
             validate?.Invoke(file, kind);
             result.Add((file, kind));
-            if (kind != KernelKind.Meta)
+            if (!assignments.Any(value => LoadControls.Contains(value.Name)))
                 return;
-            if (!active.Add(file))
-                throw new InvalidDataException("SPICE metakernel load cycle.");
+            if (dependency)
+                throw new InvalidDataException("SPICE(RECURSIVELOADING): a metakernel child contains loading instructions.");
 
             var text = new SpiceTextKernel();
-            text.Furnish(file);
+            text.Apply(assignments);
             var symbols = new Dictionary<string, string>(StringComparer.Ordinal);
             if (text.Contains("PATH_SYMBOLS") || text.Contains("PATH_VALUES"))
             {
@@ -201,9 +204,8 @@ internal sealed class SpiceResources
                         relative.Replace('\\', '/').StartsWith("data/", StringComparison.OrdinalIgnoreCase) &&
                         !AddonDependencies.FileExists(Path.Combine(owner, relative)))
                         owner = root;
-                    Expand(root, owner, relative, active, result, ref visits, depth + 1, validate);
+                    Expand(root, owner, relative, result, ref visits, dependency: true, validate, readText);
                 }
-            active.Remove(file);
         }
         catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, file))
         {
@@ -221,12 +223,10 @@ internal sealed class SpiceResources
             ".tf" or ".ti" or ".tsc" or ".tpc" or ".tls" => KernelKind.Text,
             _ => KernelKind.Unknown
         };
-        if (byExtension != KernelKind.Unknown)
-            return byExtension;
         using var file = AddonDependencies.OpenRead(path, 256L * 1024 * 1024);
-        Span<byte> prefix = stackalloc byte[8];
+        Span<byte> prefix = stackalloc byte[1024];
         int read = file.ReadAtLeast(prefix, prefix.Length, throwOnEndOfStream: false);
-        string header = Encoding.ASCII.GetString(prefix[..read]).TrimEnd();
+        string header = Encoding.ASCII.GetString(prefix[..Math.Min(8, read)]).TrimEnd();
         if (header.StartsWith("KPL/MK", StringComparison.Ordinal))
             return KernelKind.Meta;
         if (header.StartsWith("KPL/", StringComparison.Ordinal))
@@ -235,7 +235,8 @@ internal sealed class SpiceResources
         {
             "DAF/SPK" => KernelKind.Trajectory,
             "DAF/CK" => KernelKind.Attitude,
-            _ => KernelKind.Unknown
+            _ when prefix[..read].IndexOf("\\begindata"u8) >= 0 => KernelKind.Text,
+            _ => byExtension
         };
     }
 

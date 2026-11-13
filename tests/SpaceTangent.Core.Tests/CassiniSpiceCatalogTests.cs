@@ -559,7 +559,7 @@ public sealed class CassiniSpiceCatalogTests
                 \begindata
                 KERNELS_TO_LOAD = ( '../catalog.tm' )
                 """);
-            Assert.Contains("cycle", Assert.Throws<InvalidDataException>(() =>
+            Assert.Contains("SPICE(RECURSIVELOADING)", Assert.Throws<InvalidDataException>(() =>
                 SpiceJsonCatalog.Load(catalog, root.FullName)).Message);
         }
         finally

@@ -1108,6 +1108,60 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void NestedMetakernelRetainsAssignmentsAndRejectsItsLoadInstructions()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in new[] { "linear.bsp", "wide.bsp" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+            File.WriteAllText(Path.Combine(source, "outer.tm"), """
+                KPL/MK
+                \begindata
+                KERNELS_TO_LOAD = ( 'linear.bsp' 'nested.tpc' 'wide.bsp' )
+                """);
+            File.WriteAllText(Path.Combine(source, "nested.tpc"), File.ReadAllText(Path.Combine(corpus, "fixed-frame.tf"))
+                .Replace("KPL/FK", "KPL/PCK", StringComparison.Ordinal)
+                .Replace("\\begintext", "KERNELS_TO_LOAD = ( 'wide.bsp' )", StringComparison.Ordinal));
+            File.WriteAllText(Path.Combine(source, "meta.ssc"), """
+                "Fallback" "Sol" {
+                    FixedPosition [ 3 0 0 ]
+                    SpiceRotation { Kernel "outer.tm" Frame "PREFIX_FRAME" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 10 }
+                }
+                "Later" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Target "1999999" Origin "0" BoundingRadius 500 }
+                    SpiceRotation { Frame "PREFIX_FRAME" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 15 }
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string root in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                string warning = Assert.Single(warnings);
+                Assert.Contains("SPICE(RECURSIVELOADING)", warning);
+                Assert.Contains("nested.tpc", warning);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.InRange(bodies[1].Sample(epoch)!.Value.PositionKilometers.X, 104.9999999, 105.0000001);
+                var rotation = bodies[1].SampleRotation!(epoch)!.Value.ToWorld;
+                Assert.InRange(Math.Abs(rotation.X.X - Math.Cos(25 * Math.PI / 180)), 0, 1e-13);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);

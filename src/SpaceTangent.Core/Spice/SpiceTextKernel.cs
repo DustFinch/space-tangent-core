@@ -46,7 +46,7 @@ internal sealed class SpiceTextKernel
 
     internal sealed record Assignment(string Name, string[] Values, bool Append);
 
-    internal void Apply(IReadOnlyList<Assignment> assignments)
+    internal void Apply(IEnumerable<Assignment> assignments)
     {
         foreach (var (name, values, append) in assignments)
             _values[name] = append && _values.TryGetValue(name, out var previous) ? [.. previous, .. values] : values;
