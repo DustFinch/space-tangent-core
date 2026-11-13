@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Buffers.Binary;
+using System.Text.Json;
 using SpaceTangent.Contracts;
 
 namespace SpaceTangent.Core.Addons;
@@ -41,6 +42,44 @@ public sealed class AtmosphereLookup
     public int ScatteringDepth { get; }
     public ReadOnlySpan<float> Transmission => _transmission;
     public ReadOnlySpan<float> Scattering => _scattering;
+
+    /// <summary>Resolves the local atmosphere tables declared by a versioned world pack.</summary>
+    public static IReadOnlyDictionary<string, string> LoadPackPaths(string root)
+    {
+        root = Path.GetFullPath(root);
+        string manifest = Path.Combine(root, "pack.json");
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!AddonDependencies.FileExists(manifest))
+            return paths;
+        return AddonDiagnostics.Read(AddonStage.Texture, manifest, () =>
+        {
+            using var input = AddonDependencies.OpenRead(LocalAddonFiles.Resolve(root, root, manifest), 16 * 1024 * 1024);
+            using var document = JsonDocument.Parse(input);
+            var pack = document.RootElement;
+            if (!pack.TryGetProperty("formatVersion", out var version) || !version.TryGetInt32(out int format) ||
+                format is < 1 or > 19)
+                throw new InvalidDataException("Unsupported packed atmosphere catalogue version.");
+            if (!pack.TryGetProperty("bodies", out var bodies))
+                return paths;
+            if (bodies.ValueKind != JsonValueKind.Array || bodies.GetArrayLength() > 8192)
+                throw new InvalidDataException("A packed atmosphere catalogue requires a bounded body list.");
+            foreach (var body in bodies.EnumerateArray())
+            {
+                if (!body.TryGetProperty("appearance", out var appearance) ||
+                    !appearance.TryGetProperty("atmosphereFile", out var file))
+                    continue;
+                string? relative = file.ValueKind == JsonValueKind.String ? file.GetString() : null;
+                string? path = body.TryGetProperty("path", out var identifier) && identifier.ValueKind == JsonValueKind.String
+                    ? identifier.GetString() : null;
+                if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(relative))
+                    throw new InvalidDataException("A packed atmosphere requires a body path and local table.");
+                string resolved = SscSampledCatalog.FindAsset(AddonStage.Texture, root, root, relative, "data");
+                if (!paths.TryAdd(path, resolved))
+                    throw new InvalidDataException($"Duplicate packed atmosphere for {path}.");
+            }
+            return paths;
+        });
+    }
 
     public static AtmosphereLookup Load(string path)
     {

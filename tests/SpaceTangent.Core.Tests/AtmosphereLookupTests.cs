@@ -65,6 +65,41 @@ public sealed class AtmosphereLookupTests
         static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     }
 
+    [ArchivedAtmosphereFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedWorldPacksResolveTheOriginalTables()
+    {
+        string[] roots = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_ATMOSPHERE_PACKS")!.Split(Path.PathSeparator);
+        string reference = Environment.GetEnvironmentVariable("SPACETANGENT_ATMOSPHERE_ROOT")!;
+        Assert.Equal(2, roots.Length);
+        var required = new[] { "Sol/Earth", "Sol/Saturn/Titan" };
+        Assert.Equal(required, AtmosphereLookup.LoadPackPaths(roots[0]).Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "Sol/Earth", "Sol/Mars", "Sol/Saturn/Titan" },
+            AtmosphereLookup.LoadPackPaths(roots[1]).Keys.Order(StringComparer.Ordinal));
+        foreach (string root in roots)
+        {
+            foreach (var (body, path) in AtmosphereLookup.LoadPackPaths(root))
+            {
+                string name = body[(body.LastIndexOf('/') + 1)..].ToLowerInvariant();
+                var actual = AtmosphereLookup.Load(path);
+                var original = AtmosphereLookup.Load(Path.Combine(reference, $"builtin-original-{name}.atmscat"));
+                Assert.Equal(original.RadiusKilometers, actual.RadiusKilometers);
+                Assert.Equal(original.TransmissionHalfBytes(), actual.TransmissionHalfBytes());
+                Assert.Equal(original.ScatteringHalfBytes(), actual.ScatteringHalfBytes());
+            }
+        }
+    }
+
+    private sealed class ArchivedAtmosphereFactAttribute : FactAttribute
+    {
+        public ArchivedAtmosphereFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_ATMOSPHERE_PACKS")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ATMOSPHERE_ROOT")))
+                Skip = "Set the original v13 and v14 world pack folders and the loose atmosphere root.";
+        }
+    }
+
     private static byte[] Fixture()
     {
         var bytes = new byte[104];
