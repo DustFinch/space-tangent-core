@@ -75,6 +75,33 @@ public static partial class SscBodyCatalogue
         return new(new(Axis(native.X), Axis(native.Z * -1), Axis(native.Y)), null);
     }
 
+    private static Func<JulianInstant, FrameKinematics?>? TryReadSampledSpin(SscValue.Map fields, Basis3d reference,
+        CancellationToken cancellation, Action<string> warn, Func<string, string> resolve,
+        Func<string, Func<JulianInstant, FrameKinematics?>>? read = null)
+    {
+        if (!fields.Fields.TryGetValue("SampledOrientation", out var orientation))
+            return null;
+        string name = orientation.AsText();
+        bool hasFallback = fields.Fields.ContainsKey("PrecessingRotation") || fields.Fields.ContainsKey("UniformRotation") ||
+            fields.Fields.ContainsKey("FixedRotation") || fields.Fields.ContainsKey("RotationPeriod");
+        try
+        {
+            string path = resolve(name);
+            return read is null ? ReadSampledSpin(path, reference, cancellation) : read(path);
+        }
+        catch (Exception error) when (hasFallback && error is (InvalidDataException or IOException or
+                                      UnauthorizedAccessException or ArgumentException or FormatException or OverflowException))
+        {
+            warn($"SampledOrientation initialization failed: {name}: {error.Message}");
+            return null;
+        }
+        catch (FileNotFoundException) when (fields.Fields.ContainsKey("ScriptedRotation"))
+        {
+            warn($"SampledOrientation initialization failed: {name}: resource unavailable.");
+            return null;
+        }
+    }
+
     private static Func<JulianInstant, FrameKinematics?> ReadSampledSpin(string file, Basis3d reference,
         CancellationToken cancellation)
     {

@@ -68,7 +68,7 @@ public static partial class SscBodyCatalogue
             var spiceSpin = TrySpiceModel(phase, spice, "SpiceRotation",
                 (block, pool, initial) => ReadSpiceRotation(block, pool, initial, Basis3d.Identity,
                     HasSpiceAlternative(phase, "SpiceRotation", timeline: true)), WarnPhase, timeline: true);
-            var spin = spiceSpin ?? ReadTimelineSpin(phase, orbitPeriodSeconds);
+            var spin = spiceSpin ?? ReadTimelineSpin(phase, orbitPeriodSeconds, WarnPhase);
             result.Add((find, radiusKilometers) =>
             {
                 ObjectId origin = find(center);
@@ -94,20 +94,16 @@ public static partial class SscBodyCatalogue
         }
         return result.AsReadOnly();
 
-        Func<JulianInstant, FrameKinematics?>? ReadTimelineSpin(SscValue.Map phase, double? orbitPeriodSeconds)
+        Func<JulianInstant, FrameKinematics?>? ReadTimelineSpin(SscValue.Map phase, double? orbitPeriodSeconds, Action<string> warnPhase)
         {
-            if (phase.Fields.TryGetValue("SampledOrientation", out var orientation))
-            {
-                string path = resolve(item, "Timeline", AddonStage.Trajectory, orientation.AsText(),
-                    Path.Combine("models", "trajectories"), "data", "trajectories");
-                if (!attitudes.TryGetValue(path, out var spin))
-                {
-                    CountBytes(path);
-                    spin = ReadSampledSpin(path, Basis3d.Identity, cancellation);
-                    attitudes.Add(path, spin);
-                }
-                return spin;
-            }
+            string? loadedPath = null;
+            var sampledSpin = TryReadSampledSpin(phase, Basis3d.Identity, cancellation, warnPhase,
+                name => resolve(item, "Timeline", AddonStage.Trajectory, name,
+                    Path.Combine("models", "trajectories"), "data", "trajectories"), ReadCachedSpin);
+            if (loadedPath is not null)
+                CountBytes(loadedPath);
+            if (sampledSpin is not null)
+                return sampledSpin;
             if (phase.Fields.ContainsKey("PrecessingRotation"))
                 return ReadUniformSpin(phase.Object("PrecessingRotation"), Basis3d.Identity, orbitPeriodSeconds, precessing: true);
             if (phase.Fields.ContainsKey("UniformRotation"))
@@ -117,6 +113,16 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.Keys.Any(key => key is "CustomRotation" or "ScriptedRotation" or "FixedAttitude"))
                 throw new NotSupportedException("This SSC Timeline rotation model is unavailable.");
             return null;
+
+            Func<JulianInstant, FrameKinematics?> ReadCachedSpin(string path)
+            {
+                if (attitudes.TryGetValue(path, out var spin))
+                    return spin;
+                loadedPath = path;
+                spin = ReadSampledSpin(path, Basis3d.Identity, cancellation);
+                attitudes.Add(path, spin);
+                return spin;
+            }
         }
 
         void CountBytes(string path)

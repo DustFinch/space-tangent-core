@@ -111,6 +111,55 @@ public sealed class SscTimelineTests
         };
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void UnavailableAttitudeKeepsExplicitFixedRotationInSourceAndPack(bool timeline, bool missing)
+    {
+        using var fixture = new TemporaryAttitude();
+        string catalog = Directory.EnumerateFiles(fixture.Source, "*.ssc").Single();
+        string quaternion = Path.Combine(fixture.Source, "data", "probe.q");
+        if (missing)
+            File.Delete(quaternion);
+        else
+            File.WriteAllText(quaternion, "2451545 0 0 0 0");
+        const string fields = """
+            Beginning 2451545 Ending 2451547 FixedPosition [ 1 2 3 ]
+            BodyFrame { EquatorJ2000 {} } FixedRotation { MeridianAngle 40 }
+            """;
+        string selected = fields + "\nSampledOrientation \"probe.q\"";
+        File.WriteAllText(catalog, Object(fields));
+        var expected = SscBodyCatalogue.Load(fixture.Source);
+        File.WriteAllText(catalog, Object(selected));
+        var warnings = new List<string>();
+        var loose = SscBodyCatalogue.Load(fixture.Source, warning: warnings.Add);
+        Assert.Contains(warnings, message => message.Contains("SampledOrientation initialization failed: probe.q", StringComparison.Ordinal));
+        Assert.Equal(1, SscBodyCatalogue.BuildPack(fixture.Source, fixture.Pack, _ => { }));
+        var packed = SscBodyCatalogue.Load(fixture.Pack);
+        var time = JulianInstant.FromJulianDate(2451545.5, TimeScale.Tdb);
+        Assert.Equal(Sample(expected), Sample(loose));
+        Assert.Equal(Sample(expected), Sample(packed));
+
+        string Object(string model) => "\"Probe\" \"Sol/Earth\" { " +
+            (timeline ? "Timeline [ { " + model + " } ]" : model) + " }";
+
+        FrameKinematics Sample(IReadOnlyList<SscBodyDefinition> definitions)
+        {
+            var body = Assert.Single(definitions);
+            if (!timeline)
+                return Assert.IsType<FrameKinematics>(body.SampleRotation!(time));
+            var id = new ObjectId("probe");
+            var center = SolarSystemSample.EarthId;
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(center, _ => new CartesianState(default, default));
+            builder.AddSampledMission(body.BindTimeline!(id, _ => center));
+            Assert.True(builder.Build().Evaluate(time).TryOrientation(id, out var rotation));
+            return rotation;
+        }
+    }
+
     [Fact]
     public void PackedSampledAttitudeInterpolatesInsideThePhaseAndHoldsAtBothEnds()
     {

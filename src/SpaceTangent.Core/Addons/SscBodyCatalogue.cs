@@ -367,20 +367,9 @@ public static partial class SscBodyCatalogue
         else if (usesScriptRotation &&
             TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
             spin = ScriptRotation(scriptedRotation, spinFrame);
-        else if (fields.Fields.ContainsKey("SampledOrientation"))
-        {
-            string name = Text("SampledOrientation")!;
-            try
-            {
-                string file = resolve(item, "SampledOrientation", AddonStage.Trajectory, name, "data", "trajectories");
-                spin = ReadSampledSpin(file, spinFrame, cancellation);
-            }
-            catch (FileNotFoundException) when (usesScriptRotation)
-            {
-                Warn("The alternate sampled orientation is unavailable.");
-                return null;
-            }
-        }
+        else if (TryReadSampledSpin(fields, spinFrame, cancellation, Warn,
+            name => resolve(item, "SampledOrientation", AddonStage.Trajectory, name, "data", "trajectories")) is { } sampledSpin)
+            spin = sampledSpin;
         else if (Text("CustomRotation") is "iau-amalthea" or "iau-thebe")
         {
             int naif = Text("CustomRotation") == "iau-amalthea" ? 505 : 514;
