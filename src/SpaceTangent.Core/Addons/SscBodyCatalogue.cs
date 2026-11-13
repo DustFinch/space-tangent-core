@@ -24,6 +24,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public Func<JulianInstant, FrameKinematics?>? SampleRotation { get; init; }
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? SurfaceMap { get; init; }
+    public double? GeometricAlbedo { get; init; }
     public SscRings? Rings { get; init; }
     public string? MeshRoot { get; init; }
     public Func<bool, SscExtrasolarConic>? BindExtrasolarOrbit { get; init; }
@@ -446,11 +447,14 @@ public static partial class SscBodyCatalogue
                     Warn($"Ring texture {name} is unavailable.");
             }
         }
+        double? albedo = Text("GeomAlbedo") is { } text &&
+            double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double coefficient) &&
+            double.IsFinite(coefficient) && coefficient >= 0 ? coefficient : null;
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
             mesh, meshCenter, meshRotation, orientation, Sample)
         {
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
-            Rings = rings, BindExtrasolarOrbit = extrasolarOrbit,
+            Rings = rings, GeometricAlbedo = albedo, BindExtrasolarOrbit = extrasolarOrbit,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
             BindTimeline = timeline is null ? null : (id, find, radiusKilometers) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))

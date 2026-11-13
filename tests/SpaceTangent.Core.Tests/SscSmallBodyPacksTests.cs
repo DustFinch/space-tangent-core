@@ -42,6 +42,9 @@ public sealed class SscSmallBodyPacksTests
                 var expected = loose[index];
                 var actual = packed[index];
                 Assert.Equal(expected.EllipsoidRadiiKilometers, actual.EllipsoidRadiiKilometers);
+                Assert.Equal(expected.GeometricAlbedo, actual.GeometricAlbedo);
+                if (actual.Name == "4 Vesta")
+                    Assert.Equal(.38, actual.GeometricAlbedo);
                 CompareAsset(expected.Mesh, actual.Mesh);
                 CompareAsset(expected.SurfaceMap, actual.SurfaceMap);
                 var times = new[] { Epoch(2451545), Epoch(2459849.469136174), Epoch(2462200.1) };
