@@ -176,7 +176,7 @@ public static partial class SscBodyCatalogue
         ? [name[..^1] + "png", name[..^1] + "jpg", name[..^1] + "dds"] : [name];
 
     private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts,
-        Action<string>? warning, SscResource resolve, SpiceResources spice, CancellationToken cancellation)
+        Action<string>? warning, SscResource resolve, SscSpiceInput spice, CancellationToken cancellation)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -431,10 +431,9 @@ public static partial class SscBodyCatalogue
                 return null;
             try
             {
-                return ReadSpiceOrbit(fields.Object("SpiceOrbit"), spice);
+                return ReadSpiceOrbit(fields.Object("SpiceOrbit"), spice.ForModel(item, "SpiceOrbit"));
             }
-            catch (Exception error) when (HasAlternative("ScriptedOrbit", "EllipticalOrbit", "FixedPosition",
-                "SampledOrbit", "SampledTrajectory") && CanUseFallback(error))
+            catch (Exception error) when (HasSpiceAlternative(fields, "SpiceOrbit") && CanUseFallback(error))
             {
                 Warn($"SpiceOrbit initialization failed. {error.Message}");
                 return null;
@@ -447,20 +446,17 @@ public static partial class SscBodyCatalogue
                 return null;
             try
             {
-                return ReadSpiceRotation(fields.Object("SpiceRotation"), spice, spinFrame);
+                return ReadSpiceRotation(fields.Object("SpiceRotation"), spice.ForModel(item, "SpiceRotation"), spinFrame);
             }
-            catch (Exception error) when (HasAlternative("ScriptedRotation", "SampledOrientation",
-                "CustomRotation", "UniformRotation", "FixedRotation") && CanUseFallback(error))
+            catch (Exception error) when (HasSpiceAlternative(fields, "SpiceRotation") && CanUseFallback(error))
             {
                 Warn($"SpiceRotation initialization failed. {error.Message}");
                 return null;
             }
         }
 
-        bool HasAlternative(params string[] keys) => keys.Any(fields.Fields.ContainsKey);
-
         static bool CanUseFallback(Exception error) =>
-            error is InvalidDataException or NotSupportedException or FormatException or ArgumentException;
+            error is InvalidDataException or NotSupportedException or FormatException or ArgumentException or FileNotFoundException;
 
         T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
         {

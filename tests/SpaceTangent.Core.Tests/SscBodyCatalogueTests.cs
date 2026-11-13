@@ -51,8 +51,10 @@ public sealed class SscBodyCatalogueTests
         }
     }
 
-    [Fact]
-    public void FailedSpiceModelsUseDeclaredOrbitAndRotationAlternatives()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FailedSpiceModelsUseDeclaredOrbitAndRotationAlternatives(bool missingKernel)
     {
         var root = Directory.CreateTempSubdirectory("st-ssc-fallback-");
         try
@@ -67,12 +69,17 @@ public sealed class SscBodyCatalogueTests
                     FixedRotation { Inclination 12 }
                 }
                 """;
-            File.WriteAllText(file, source);
+            File.WriteAllText(file, missingKernel
+                ? source.Replace("SpiceOrbit {", "SpiceOrbit { Kernel \"missing.bsp\"", StringComparison.Ordinal)
+                    .Replace("SpiceRotation {", "SpiceRotation { Kernel \"missing.bc\"", StringComparison.Ordinal)
+                : source);
             var warnings = new List<string>();
             var fallback = Assert.Single(SscBodyCatalogue.Load(root.FullName, warning: warnings.Add));
             Assert.Equal(2, warnings.Count);
             Assert.StartsWith("Sol/Earth/Test probe: SpiceOrbit initialization failed.", warnings[0]);
             Assert.StartsWith("Sol/Earth/Test probe: SpiceRotation initialization failed.", warnings[1]);
+            if (missingKernel)
+                Assert.All(warnings, message => Assert.Contains("asset is missing", message));
             File.WriteAllText(file, string.Join('\n', source.Split('\n').Where(line => !line.TrimStart().StartsWith("Spice", StringComparison.Ordinal))));
             var expected = Assert.Single(SscBodyCatalogue.Load(root.FullName));
             var epoch = Epoch(2451545);

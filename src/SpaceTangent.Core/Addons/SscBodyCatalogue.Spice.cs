@@ -7,12 +7,25 @@ namespace SpaceTangent.Core.Addons;
 
 public static partial class SscBodyCatalogue
 {
-    private static SpiceResources ReadSpiceResources(IReadOnlyList<SscDefinition> definitions,
+    private sealed record SscSpiceInput(SpiceResources Pool,
+        IReadOnlyDictionary<(string Body, string Field), FileNotFoundException> Missing)
+    {
+        internal SpiceResources ForModel(SscDefinition body, string field)
+        {
+            if (Missing.TryGetValue((body.Parent + "/" + body.Name, field), out var error))
+                throw new FileNotFoundException(error.Message, error.FileName, error);
+            return Pool;
+        }
+    }
+
+    private static SscSpiceInput ReadSpiceResources(IReadOnlyList<SscDefinition> definitions,
         Func<string, string> root, SscResource resolve, CancellationToken cancellation,
         string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> furnished)
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
-        return new SpiceResources(furnished.Concat(Sources()).OrderBy(item => order[item.Root].First()));
+        var missing = new Dictionary<(string Body, string Field), FileNotFoundException>();
+        var pool = new SpiceResources(furnished.Concat(Sources()).OrderBy(item => order[item.Root].First()));
+        return new(pool, missing);
 
         IEnumerable<(string Root, string Directory, string Name)> Sources()
         {
@@ -24,13 +37,29 @@ public static partial class SscBodyCatalogue
                     !parameters.Fields.TryGetValue("Kernel", out var kernel))
                     continue;
                 string owner = root(item.DirectoryFor(field));
-                foreach (var name in kernel is SscValue.List list ? list.Items : [kernel])
+                string[] files;
+                try
                 {
-                    string file = resolve(item, field, AddonStage.Kernel, name.AsText(), "data");
-                    yield return (owner, Path.GetDirectoryName(file)!, Path.GetFileName(file));
+                    files = (kernel is SscValue.List list ? list.Items : [kernel])
+                        .Select(name => resolve(item, field, AddonStage.Kernel, name.AsText(), "data")).ToArray();
                 }
+                catch (FileNotFoundException error) when (HasSpiceAlternative(item.Properties, field))
+                {
+                    missing.Add((item.Parent + "/" + item.Name, field), error);
+                    continue;
+                }
+                foreach (string file in files)
+                    yield return (owner, Path.GetDirectoryName(file)!, Path.GetFileName(file));
             }
         }
+    }
+
+    private static bool HasSpiceAlternative(SscValue.Map properties, string field)
+    {
+        string[] keys = field == "SpiceOrbit"
+            ? ["ScriptedOrbit", "EllipticalOrbit", "FixedPosition", "SampledOrbit", "SampledTrajectory"]
+            : ["ScriptedRotation", "SampledOrientation", "CustomRotation", "UniformRotation", "FixedRotation"];
+        return keys.Any(properties.Fields.ContainsKey);
     }
 
     private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources)
