@@ -10,6 +10,8 @@ namespace SpaceTangent.Core.Addons;
 public sealed record SscBodyAxis(FrameAxis Axis, string Observer, string Target, DirectionQuantity Quantity);
 public sealed record SscBodyOrientation(SscBodyAxis Primary, SscBodyAxis Secondary);
 
+public sealed record SscRings(double InnerKilometers, double OuterKilometers, string TexturePath);
+
 public sealed record SscBodyDefinition(string Names, string Parent, string Center, string Class,
     double RadiusKilometers, Vector3d Color, string? Mesh, Vector3d MeshCenter, Basis3d MeshRotation,
     SscBodyOrientation? Orientation, Func<JulianInstant, CartesianState?> Sample)
@@ -17,6 +19,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public Func<JulianInstant, FrameKinematics?>? SampleRotation { get; init; }
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? SurfaceMap { get; init; }
+    public SscRings? Rings { get; init; }
     public string? MeshRoot { get; init; }
     public Func<ObjectId, Func<string, ObjectId>, SampledMission>? BindTimeline { get; init; }
 
@@ -174,12 +177,12 @@ public static partial class SscBodyCatalogue
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
-        bool heliocentric = reference.Center.Equals("Sol", StringComparison.OrdinalIgnoreCase);
+        bool starScale = reference.Center.Equals("Sol", StringComparison.OrdinalIgnoreCase) || reference.Center.Equals("SSB", StringComparison.OrdinalIgnoreCase);
         Basis3d orbitFrame = reference.Axes switch
         {
             SscConicAxes.EclipticJ2000 => Ecliptic,
             SscConicAxes.EquatorJ2000 => Basis3d.Identity,
-            SscConicAxes.ParentDefault => heliocentric ? Ecliptic : Basis3d.Identity,
+            SscConicAxes.ParentDefault => starScale ? Ecliptic : Basis3d.Identity,
             SscConicAxes.ConstantTwoVector => SscConstantOrbitFrame.Read(fields.Object("OrbitFrame").Object("TwoVector")),
             _ => throw new NotSupportedException($"The SSC orbital frame {reference.Axes} is unavailable.")
         };
@@ -206,8 +209,8 @@ public static partial class SscBodyCatalogue
             raw = ScriptOrbit(scripted);
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {
-            var context = new SscOrbitContext(Icrs, heliocentric ? AuKilometers : 1,
-                heliocentric ? 31_557_600 : 86_400);
+            var context = new SscOrbitContext(Icrs, starScale ? AuKilometers : 1,
+                starScale ? 31_557_600 : 86_400);
             var curve = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
             orbitPeriodSeconds = Number(((SscValue.Map)orbit).Get("Period")) * context.SecondsPerPeriodUnit;
             raw = epoch => curve.Evaluate(epoch);
@@ -362,10 +365,36 @@ public static partial class SscBodyCatalogue
             if (surfaceMap is null)
                 Warn($"Texture {texture} is unavailable; using the catalogue color.");
         }
+        SscRings? rings = null;
+        if (fields.Fields.ContainsKey("Rings"))
+        {
+            var ring = fields.Object("Rings");
+            double inner = Number(ring.Get("Inner")), outer = Number(ring.Get("Outer"));
+            if (inner <= 0 || outer <= inner || outer > 10_000_000)
+                throw new InvalidDataException("SSC ring radii must be positive and increasing.");
+            if (ring.Fields.TryGetValue("Texture", out var ringTexture))
+            {
+                string name = ringTexture.AsText();
+                foreach (string candidate in TextureNames(name))
+                {
+                    try
+                    {
+                        string path = resolve(item, "Rings", AddonStage.Texture, candidate,
+                            Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
+                        rings = new(inner, outer, path);
+                        break;
+                    }
+                    catch (FileNotFoundException) { }
+                }
+                if (rings is null)
+                    Warn($"Ring texture {name} is unavailable.");
+            }
+        }
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
             mesh, meshCenter, meshRotation, orientation, Sample)
         {
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
+            Rings = rings,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
             BindTimeline = timeline is null ? null : (id, find) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find)).ToArray()))

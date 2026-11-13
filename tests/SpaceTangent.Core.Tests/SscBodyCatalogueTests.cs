@@ -116,6 +116,38 @@ public sealed class SscBodyCatalogueTests
         }
     }
 
+    [SmallRingsFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalSmallBodyRingsKeepTheirRadiiTexturesAndBarycentricOrbits()
+    {
+        var bodies = SscBodyCatalogue.Load(Environment.GetEnvironmentVariable("SPACETANGENT_SMALL_RINGS")!);
+        Check("2060 Chiron", 341.66, 353.77, "chiron-rings.png");
+        Check("10199 Chariklo", 382.5, 399.9, "chariklo-rings.png");
+        Check("Haumea", 2252, 2322, "haumea-rings.png");
+        Check("Quaoar", 2515, 4098, "quaoar-rings.png");
+
+        void Check(string name, double inner, double outer, string texture)
+        {
+            var body = Assert.Single(bodies, item => item.Name == name);
+            Assert.Equal("SSB", body.Center);
+            var rings = Assert.IsType<SscRings>(body.Rings);
+            Assert.Equal(inner, rings.InnerKilometers);
+            Assert.Equal(outer, rings.OuterKilometers);
+            Assert.Equal(texture, Path.GetFileName(rings.TexturePath));
+            Assert.InRange(body.Sample(Epoch(2451545))!.Value.PositionKilometers.Length, 1e9, 8e9);
+            Assert.NotNull(body.SampleRotation!(Epoch(2451545)));
+        }
+    }
+
+    private sealed class SmallRingsFactAttribute : FactAttribute
+    {
+        public SmallRingsFactAttribute()
+        {
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SPACETANGENT_SMALL_RINGS")))
+                Skip = "Set SPACETANGENT_SMALL_RINGS to the original small-body SSC entries.";
+        }
+    }
+
     private static JulianInstant Epoch(double day) => JulianInstant.FromJulianDate(day, TimeScale.Tdb);
 
     private sealed class LocalBodyPackFactAttribute : FactAttribute
