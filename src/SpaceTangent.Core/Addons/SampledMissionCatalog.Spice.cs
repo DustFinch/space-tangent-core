@@ -63,10 +63,10 @@ public static partial class SampledMissionCatalog
         if (!(range > 0) || end.CompareTo(start) <= 0)
             throw new InvalidDataException("A SPICE sensor requires a positive range and an increasing availability window.");
         var sensor = new MissionSensor(target, range, color, opacity, field.Boresight,
-            SensorEdgeRays(field.Corners), field.Corners.Length)
+            field.Curved ? Array.AsReadOnly(field.Corners) : SensorEdgeRays(field.Corners), field.Curved ? 8 : field.Corners.Length)
         {
             FootprintOpacity = ReadFootprintOpacity(geometry),
-            FootprintCorners = field.Corners.Length
+            FootprintCorners = field.Curved ? 0 : field.Corners.Length
         };
         ObjectId center = resolve(parent);
         return new(resolve(name), name, null, .001,

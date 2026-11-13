@@ -132,9 +132,9 @@ public static partial class SampledMissionCatalog
         var field = SpiceFieldOfView.Load(resources.Text, instrument, frame);
         Vector3d color = Vector(sensor.GetProperty("color"));
         double opacity = sensor.GetProperty("frustumOpacity").GetDouble();
-        var rays = SensorEdgeRays(field.Corners);
+        var rays = field.Curved ? Array.AsReadOnly(field.Corners) : SensorEdgeRays(field.Corners);
         return new(null, .001, Basis3d.Identity, default,
             new(resolve(Text(sensor, "target")), PackedPositive(sensor, "rangeKm"), color, opacity,
-                field.Boresight, rays, field.Corners.Length) { FootprintOpacity = ReadFootprintOpacity(sensor), FootprintCorners = field.Corners.Length });
+                field.Boresight, rays, field.Curved ? 8 : field.Corners.Length) { FootprintOpacity = ReadFootprintOpacity(sensor), FootprintCorners = field.Curved ? 0 : field.Corners.Length });
     }
 }

@@ -594,6 +594,105 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [CassiniJsonFact]
+    [Trait("Category", "ExternalData")]
+    public void CurvedAndPolygonInstrumentFieldsSurviveMissionPacking()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        var temporary = Directory.CreateTempSubdirectory("st-ik-shapes-");
+        try
+        {
+            string source = Directory.CreateDirectory(Path.Combine(temporary.FullName, "source")).FullName;
+            foreach (string file in Directory.EnumerateFiles(original))
+                File.Copy(file, Path.Combine(source, Path.GetFileName(file)));
+            string catalog = Path.Combine(source, "cassini.json");
+            var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(catalog))!.AsObject();
+            var items = document["items"]!.AsArray();
+            foreach (var (name, instrument) in new[] { ("NAC radiator", "-82368"), ("WAC radiator", "-82369"),
+                ("Corner circle", "-82991"), ("Corner ellipse", "-82992"), ("Angle ellipse", "-82993"), ("Polygon", "-82994") })
+            {
+                var item = items[1]!.DeepClone();
+                item["name"] = name;
+                item["geometry"]!["instrName"] = instrument;
+                items.Add(item);
+            }
+            document["spiceKernels"]!.AsArray().Add("shapes.ti");
+            File.WriteAllText(catalog, document.ToJsonString());
+            File.WriteAllText(Path.Combine(source, "shapes.ti"), """
+                KPL/IK
+                \begindata
+                INS-82991_FOV_FRAME = 'CASSINI_SC_COORD'
+                INS-82991_FOV_SHAPE = 'circle'
+                INS-82991_BORESIGHT = (0 0 1)
+                INS-82991_FOV_BOUNDARY_CORNERS = (.2 0 1)
+                INS-82992_FOV_FRAME = 'CASSINI_SC_COORD'
+                INS-82992_FOV_SHAPE = 'ELLIPSE'
+                INS-82992_BORESIGHT = (0 0 1)
+                INS-82992_FOV_BOUNDARY_CORNERS = (.2 0 1  0 .4 1)
+                INS-82993_FOV_FRAME = 'CASSINI_SC_COORD'
+                INS-82993_FOV_SHAPE = 'ELLIPSE'
+                INS-82993_BORESIGHT = (0 0 1)
+                INS-82993_FOV_CLASS_SPEC = 'angles'
+                INS-82993_FOV_REF_VECTOR = (1 0 0)
+                INS-82993_FOV_REF_ANGLE = (11.309932474020215)
+                INS-82993_FOV_CROSS_ANGLE = (21.80140948635181)
+                INS-82993_FOV_ANGLE_UNITS = 'degrees'
+                INS-82994_FOV_FRAME = 'CASSINI_SC_COORD'
+                INS-82994_FOV_SHAPE = 'POLYGON'
+                INS-82994_BORESIGHT = (0 0 1)
+                INS-82994_FOV_BOUNDARY_CORNERS = (0 .3 1  -.2 -.1 1  .2 -.1 1)
+                \begintext
+                """);
+            var dedicated = SpiceJsonCatalog.Load(catalog, source);
+            Assert.Equal(8, dedicated.SensorCount);
+            var sensors = dedicated.Sensors.ToDictionary(sensor => sensor.Name);
+            foreach (string name in new[] { "NAC radiator", "WAC radiator" })
+            {
+                var sensor = sensors[name];
+                Assert.Equal(32, sensor.CornersInBody.Count);
+                Assert.All(sensor.CornersInBody, ray =>
+                    Assert.InRange(Math.Abs(Vector3d.Dot(ray, sensor.BoresightInBody)), 0, 1e-13));
+            }
+            Assert.Equal(32, sensors["Corner circle"].CornersInBody.Count);
+            Compare(sensors["Corner circle"].CornersInBody[0], new(.2, 0, 1));
+            Compare(sensors["Corner circle"].CornersInBody[8], new(0, .2, 1));
+            foreach (string name in new[] { "Corner ellipse", "Angle ellipse" })
+            {
+                var rim = sensors[name].CornersInBody;
+                Assert.Equal(32, rim.Count);
+                Compare(rim[0], new(.2, 0, 1));
+                Compare(rim[8], new(0, .4, 1));
+                Compare(rim[4], new(.2 / Math.Sqrt(2), .4 / Math.Sqrt(2), 1));
+            }
+            Assert.Equal(3, sensors["Polygon"].CornersInBody.Count);
+            Compare(sensors["Polygon"].CornersInBody[1], new(-.2, -.1, 1));
+
+            ObjectId? Resolve(string name) => name == "Saturn" ? new("sol/saturn") : null;
+            var loose = SampledMissionCatalog.Load("cassini.json", source, Resolve);
+            string packed = Path.Combine(temporary.FullName, "packed");
+            Assert.Equal((9, 0, 0), MissionCataloguePack.Build(source, packed, Resolve));
+            var restored = SampledMissionCatalog.Load("packed/pack.json", temporary.FullName, Resolve);
+            foreach (var (name, expected) in new[] { ("NAC radiator", 32), ("Corner circle", 32),
+                ("Angle ellipse", 32), ("Polygon", 36) })
+            {
+                var fromSource = Sensor(loose, name);
+                var fromPack = Sensor(restored, name);
+                Assert.Equal(expected, fromSource.Boundary.Count);
+                Assert.Equal(fromSource.Boundary, fromPack.Boundary);
+            }
+        }
+        finally
+        {
+            temporary.Delete(recursive: true);
+        }
+
+        static MissionSensor Sensor(IReadOnlyList<SampledMission> missions, string name) =>
+            Assert.Single(Assert.Single(missions, mission => mission.Name == name).Geometry!).Shape.Sensor!;
+
+        static void Compare(Vector3d actual, Vector3d expected) =>
+            Assert.InRange((actual - expected / expected.Length).Length, 0, 1e-13);
+    }
+
     [Fact]
     public void MetakernelSymbolsCannotFormACircularLoad()
     {
