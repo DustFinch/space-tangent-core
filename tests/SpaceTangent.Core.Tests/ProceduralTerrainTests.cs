@@ -57,6 +57,23 @@ public sealed class ProceduralTerrainTests
     }
 
     [Fact]
+    public void NearbyRidgesRiseAboveTheLocalHorizon()
+    {
+        var terrain = new ProceduralTerrain(new ProceduralSurface(3, 5200, ProceduralWorldKind.Desert), 5185);
+        var horizon = new float[ProceduralTerrain.HorizonAzimuths];
+        float maximum = -.25f;
+        for (int y = 0; y < 12; y++)
+        for (int x = 0; x < 12; x++)
+        {
+            var direction = ProceduralTerrain.Direction(new(0, 0, 0, 0), (x + .5) / 12, (y + .5) / 12);
+            terrain.SampleHorizon(direction * terrain.GroundRadiusKilometers(direction), .1, horizon);
+            Assert.All(horizon, elevation => Assert.InRange(elevation, -.25f, 1));
+            maximum = Math.Max(maximum, horizon.Max());
+        }
+        Assert.True(maximum > .03f, "The procedural hills must raise the horizon above the tangent plane.");
+    }
+
+    [Fact]
     public void DescendingRefinesVisiblePatchesWithinABoundedBudget()
     {
         var surface = new ProceduralSurface(1, 5900);

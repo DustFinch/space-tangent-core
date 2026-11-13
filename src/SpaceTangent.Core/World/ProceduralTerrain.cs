@@ -18,7 +18,7 @@ public sealed record ProceduralTerrainPatch(Vector3d CenterKilometers, Procedura
 }
 
 /// <summary>View-dependent, equiangular cube-sphere terrain in the procedural surface's native Y-up axes.</summary>
-public sealed class ProceduralTerrain(ProceduralSurface surface, double polarRadiusKilometers)
+public sealed partial class ProceduralTerrain(ProceduralSurface surface, double polarRadiusKilometers)
 {
     public const int Grid = 16;
     public const int MaximumLeaves = 512;
