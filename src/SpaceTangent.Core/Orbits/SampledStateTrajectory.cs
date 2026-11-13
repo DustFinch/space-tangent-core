@@ -75,6 +75,9 @@ public sealed class SampledStateTrajectory
     public static SampledStateTrajectory ReadXyz(string path, FrameId frame) =>
         AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadCoordinates(path, frame, positionsOnly: true));
 
+    internal static SampledStateTrajectory ReadSsc(string path, FrameId frame, bool positionsOnly = false) =>
+        AddonDiagnostics.Read(AddonStage.Trajectory, path, () => ReadCoordinates(path, frame, positionsOnly, strictSsc: true));
+
     internal static SampledStateTrajectory ReadLegacy(string path, FrameId frame) =>
         AddonDiagnostics.Read(AddonStage.Trajectory, path, () => Path.GetExtension(path).ToLowerInvariant() switch
         {
@@ -83,7 +86,7 @@ public sealed class SampledStateTrajectory
             _ => throw new NotSupportedException("An SSC SampledOrbit needs XYZ or XYZV samples.")
         });
 
-    private static SampledStateTrajectory ReadCoordinates(string path, FrameId frame, bool positionsOnly, bool legacy = false)
+    private static SampledStateTrajectory ReadCoordinates(string path, FrameId frame, bool positionsOnly, bool legacy = false, bool strictSsc = false)
     {
         using FileStream file = AddonDependencies.OpenRead(path, 64L * 1024 * 1024);
         if (file.Length > 64L * 1024 * 1024)
@@ -108,9 +111,12 @@ public sealed class SampledStateTrajectory
                     continue;
                 if (samples.Count == MaximumSamples)
                     throw new InvalidDataException("A trajectory contains too many samples.");
+                double time = legacy ? values[0] : (values[0] - JulianInstant.J2000Day) * JulianInstant.SecondsPerDay;
+                if (strictSsc && times.Count != 0 && time <= times[^1])
+                    throw new InvalidDataException("SSC trajectory sample epochs must increase.");
                 samples.Add(new(JulianInstant.FromJulianDate(values[0], TimeScale.Tdb),
                     new(new(values[1], values[2], values[3]), positionsOnly ? default : new(values[4], values[5], values[6]))));
-                times.Add(legacy ? values[0] : (values[0] - JulianInstant.J2000Day) * JulianInstant.SecondsPerDay);
+                times.Add(time);
                 field = 0;
             }
         }

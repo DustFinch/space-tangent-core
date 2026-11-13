@@ -68,7 +68,7 @@ public sealed class SscSampledSpacecraft
         return state.PositionKilometers.IsFinite && state.VelocityKilometersPerSecond.IsFinite;
     }
 
-    internal static SampledStateTrajectory ReadCurve(string path) => SampledStateTrajectory.ReadXyzv(path, EclipticFrame);
+    internal static SampledStateTrajectory ReadCurve(string path) => SampledStateTrajectory.ReadSsc(path, EclipticFrame);
 
     internal static Vector3d ToEquatorial(Vector3d value) =>
         new(value.X, CosObliquity * value.Y - SinObliquity * value.Z,

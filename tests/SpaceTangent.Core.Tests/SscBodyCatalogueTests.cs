@@ -165,14 +165,21 @@ public sealed class SscBodyCatalogueTests
                     FixedPosition [ 5 6 7 ]
                 }
                 "Child" "Sol/Earth/Corrupt" { FixedPosition [ 1 2 3 ] }
+                "DuplicateEpoch" "Sol/Earth" {
+                    Timeline [ { SampledTrajectory { Source "duplicate.xyzv" } } ]
+                }
                 "Missing" "Sol/Earth" {
                     Timeline [ { SampledTrajectory { Source "missing.xyzv" } } ]
                 }
                 """);
             File.WriteAllText(Path.Combine(data, "broken.xyzv"), "2451545 1 2");
+            var originalRows = File.ReadLines(Path.Combine(data, "2008TC3.xyzv"))
+                .Where(line => !string.IsNullOrWhiteSpace(line)).Take(3).ToArray();
+            File.WriteAllLines(Path.Combine(data, "duplicate.xyzv"), originalRows.Concat(originalRows));
             var warnings = new List<string>();
             var source = SscBodyCatalogue.Load(root, warning: warnings.Add);
             Assert.Contains(warnings, warning => warning.Contains("Sol/Earth/Corrupt: SampledTrajectory initialization failed: broken.xyzv", StringComparison.Ordinal));
+            Assert.Contains(warnings, warning => warning.Contains("Sol/Earth/DuplicateEpoch: Timeline phase 1: SampledTrajectory initialization failed: duplicate.xyzv: SSC trajectory sample epochs must increase.", StringComparison.Ordinal));
             Assert.Contains(warnings, warning => warning.Contains("Sol/Earth/Missing: Timeline phase 1: SampledTrajectory initialization failed: missing.xyzv", StringComparison.Ordinal));
             string packed = Path.Combine(temporary.FullName, "packed");
             Assert.Equal(1, SscBodyCatalogue.BuildPack(root, packed, warnings.Add));
