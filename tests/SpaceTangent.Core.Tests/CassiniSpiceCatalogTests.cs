@@ -334,6 +334,52 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [CassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void RepeatedMalformedOptionalTextKernelCannotChangeOriginalCassini()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        var scratch = Directory.CreateTempSubdirectory("st-invalid-fk-");
+        try
+        {
+            string root = scratch.FullName;
+            foreach (string file in Directory.EnumerateFiles(original))
+                File.Copy(file, Path.Combine(root, Path.GetFileName(file)));
+            var expected = Assert.Single(SscBodyCatalogue.Load(root));
+            File.WriteAllBytes(Path.Combine(root, "malformed.tf"), [0x4B, 0x50, 0x4C, 0x2F, 0x46, 0x4B, 0x0A, 0xFF]);
+            File.WriteAllText(Path.Combine(root, "z-fallback.ssc"), """
+                "First fallback" "Sol/Saturn" {
+                    FixedPosition [ 1 0 0 ]
+                    SpiceRotation { Kernel "malformed.tf" Frame "CASSINI_SC_COORD" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 1 }
+                }
+                "Second fallback" "Sol/Saturn" {
+                    FixedPosition [ 2 0 0 ]
+                    SpiceRotation { Kernel "malformed.tf" Frame "CASSINI_SC_COORD" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 2 }
+                }
+                """);
+            var warnings = new List<string>();
+            var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+            Assert.Equal(2, warnings.Count);
+            Assert.All(warnings, warning => Assert.Contains("malformed.tf", warning));
+            var epoch = JulianInstant.FromTdbSeconds(141917558.4203589);
+            Assert.Equal(expected.SampleRotation!(epoch), bodies[0].SampleRotation!(epoch));
+            Assert.Equal(expected.Sample(epoch), bodies[0].Sample(epoch));
+            Assert.NotEqual(bodies[1].SampleRotation!(epoch), bodies[2].SampleRotation!(epoch));
+
+            File.Copy(Path.Combine(root, "cas_v43.tf"), Path.Combine(root, "malformed.tf"), overwrite: true);
+            warnings.Clear();
+            bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+            Assert.Empty(warnings);
+            Assert.Equal(bodies[1].SampleRotation!(epoch), bodies[2].SampleRotation!(epoch));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class CassiniKernelTheoryAttribute : TheoryAttribute
     {
         public CassiniKernelTheoryAttribute()

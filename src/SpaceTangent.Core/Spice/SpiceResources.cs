@@ -38,6 +38,7 @@ internal sealed class SpiceResources
         var ordered = new List<(string Path, KernelKind Kind)>();
         var parsedSpk = new Dictionary<string, SpkKernel>(FileNames);
         var parsedCk = new Dictionary<string, CkKernel>(FileNames);
+        var parsedText = new Dictionary<string, IReadOnlyList<SpiceTextKernel.Assignment>>(FileNames);
         var explicitSscLoads = new HashSet<(string File, string Authored)>();
         int visits = 0;
         foreach (var group in groups)
@@ -54,7 +55,7 @@ internal sealed class SpiceResources
                     Expand(group.Root, directory, name, active, ordered, ref visits, 0, explicitSscLoads, pending, authored);
                 }
             }
-            catch (FileNotFoundException error) when (group.Unavailable is not null)
+            catch (Exception error) when (group.Unavailable is not null && IsKernelInputError(error))
             {
                 ordered.RemoveRange(first, ordered.Count - first);
                 active.Clear();
@@ -77,11 +78,13 @@ internal sealed class SpiceResources
                         GetKernel(parsedSpk, path, file => new SpkKernel(file));
                     else if (kind == KernelKind.Attitude)
                         GetKernel(parsedCk, path, file => new CkKernel(file));
+                    else if (kind is KernelKind.Text or KernelKind.Meta)
+                        GetKernel(parsedText, path, SpiceTextKernel.Read);
                 }
                 if (pending is not null)
                     explicitSscLoads.UnionWith(pending);
             }
-            catch (Exception error) when (error is InvalidDataException or EndOfStreamException or FileNotFoundException)
+            catch (Exception error) when (IsKernelInputError(error))
             {
                 ordered.RemoveRange(first, ordered.Count - first);
                 group.Unavailable(error);
@@ -92,7 +95,7 @@ internal sealed class SpiceResources
             var pool = new SpiceTextKernel();
             foreach (var (path, kind) in ordered)
                 if (kind is KernelKind.Meta or KernelKind.Text)
-                    pool.Furnish(path);
+                    pool.Apply(GetKernel(parsedText, path, SpiceTextKernel.Read));
             return pool;
         });
         _trajectories = new(() => Load(KernelKind.Trajectory, parsedSpk, path => new SpkKernel(path)));
@@ -112,6 +115,9 @@ internal sealed class SpiceResources
             return output.ToArray();
         }
     }
+
+    private static bool IsKernelInputError(Exception error) =>
+        error is InvalidDataException or EndOfStreamException or FileNotFoundException or DecoderFallbackException;
 
     private static T GetKernel<T>(Dictionary<string, T> parsed, string path, Func<string, T> parse)
     {

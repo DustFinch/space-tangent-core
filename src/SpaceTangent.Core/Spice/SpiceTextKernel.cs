@@ -16,7 +16,9 @@ internal sealed class SpiceTextKernel
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     private readonly Dictionary<string, string[]> _values = new(StringComparer.OrdinalIgnoreCase);
 
-    internal void Furnish(string path)
+    internal void Furnish(string path) => Apply(Read(path));
+
+    internal static IReadOnlyList<Assignment> Read(string path)
     {
         try
         {
@@ -24,6 +26,7 @@ internal sealed class SpiceTextKernel
             if (file.Length > 2 * 1024 * 1024)
                 throw new InvalidDataException("SPICE text kernel exceeds 2 MiB.");
             using var reader = new StreamReader(file, new UTF8Encoding(false, true));
+            var assignments = new List<Assignment>();
             foreach (Match section in DataSections.Matches(reader.ReadToEnd()))
             foreach (Match assignment in Assignments.Matches(section.Groups[1].Value))
             {
@@ -31,15 +34,22 @@ internal sealed class SpiceTextKernel
                 string[] values = Values.Matches(assignment.Groups[3].Value)
                     .Select(match => match.Value.StartsWith('\'') ? match.Value[1..^1].Replace("''", "'") : match.Value)
                     .ToArray();
-                if (assignment.Groups[2].Value == "+=" && _values.TryGetValue(name, out var previous))
-                    values = [.. previous, .. values];
-                _values[name] = values;
+                assignments.Add(new(name, values, assignment.Groups[2].Value == "+="));
             }
+            return assignments;
         }
         catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Kernel, path))
         {
             throw;
         }
+    }
+
+    internal sealed record Assignment(string Name, string[] Values, bool Append);
+
+    internal void Apply(IReadOnlyList<Assignment> assignments)
+    {
+        foreach (var (name, values, append) in assignments)
+            _values[name] = append && _values.TryGetValue(name, out var previous) ? [.. previous, .. values] : values;
     }
 
     internal bool Contains(string name) => _values.ContainsKey(name);
