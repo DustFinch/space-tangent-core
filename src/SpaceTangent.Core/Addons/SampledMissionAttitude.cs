@@ -16,18 +16,29 @@ public sealed class SampledMissionAttitude
     private readonly double[] _seconds;
     private readonly RigidQuaternion[] _orientations;
 
-    private SampledMissionAttitude(double[] seconds, RigidQuaternion[] orientations)
+    private readonly bool _legacyInterpolation;
+
+    private SampledMissionAttitude(double[] seconds, RigidQuaternion[] orientations, bool legacyInterpolation)
     {
         _seconds = seconds;
         _orientations = orientations;
+        _legacyInterpolation = legacyInterpolation;
     }
 
     public static SampledMissionAttitude Read(string path, bool legacyAxes = false, CancellationToken cancellation = default) =>
+        Read(path, legacyAxes, false, cancellation);
+
+    internal static SampledMissionAttitude ReadLegacy(string path, bool invertSourceAxes, CancellationToken cancellation) =>
+        Read(path, invertSourceAxes, true, cancellation);
+
+    private static SampledMissionAttitude Read(string path, bool legacyAxes, bool legacyInterpolation, CancellationToken cancellation) =>
         AddonDiagnostics.Read(AddonStage.Trajectory, path, () =>
         {
             using var file = AddonDependencies.OpenRead(path, MaximumFileBytes);
+            if (file.Length > MaximumFileBytes)
+                throw new InvalidDataException("The mission attitude file exceeds 64 MiB.");
             using var reader = new StreamReader(file);
-            return Parse(reader.ReadToEnd(), legacyAxes, cancellation);
+            return Parse(reader.ReadToEnd(), legacyAxes, legacyInterpolation, cancellation);
         });
 
     public FrameKinematics Sample(JulianInstant epoch)
@@ -36,6 +47,8 @@ public sealed class SampledMissionAttitude
             throw new ArgumentException("Mission attitude requires TDB.", nameof(epoch));
         double seconds = Seconds(epoch.ToJulianDate());
         int upper = LowerBound(seconds);
+        if (_legacyInterpolation)
+            return SampleLegacy(seconds, upper);
         RigidQuaternion q = _orientations.Length == 0 ? new(1, 0, 0, 0) : upper == 0 ? _orientations[0] :
             upper == _seconds.Length ? _orientations[^1] :
             Interpolate(_orientations[upper - 1], _orientations[upper], (seconds - _seconds[upper - 1]) / (_seconds[upper] - _seconds[upper - 1]));
@@ -44,7 +57,31 @@ public sealed class SampledMissionAttitude
         return new(QuaternionBasis.FromRaw(q.W, q.X, q.Y, q.Z), rate);
     }
 
-    private static SampledMissionAttitude Parse(string text, bool legacyAxes, CancellationToken cancellation)
+    private FrameKinematics SampleLegacy(double seconds, int upper)
+    {
+        bool exact = upper < _seconds.Length && _seconds[upper] == seconds;
+        RigidQuaternion orientation = upper == 0 || exact ? _orientations[upper] :
+            upper == _seconds.Length ? _orientations[^1] :
+            RigidQuaternion.Interpolate(_orientations[upper - 1], _orientations[upper],
+                (seconds - _seconds[upper - 1]) / (_seconds[upper] - _seconds[upper - 1]));
+        int next = exact ? upper + 1 : upper;
+        Vector3d rate = default;
+        if (next > 0 && next < _seconds.Length)
+        {
+            var delta = Product(_orientations[next], Conjugate(_orientations[next - 1])).Normalize();
+            var axis = new Vector3d(delta.X, delta.Y, delta.Z);
+            double length = axis.Length;
+            if (length > 0)
+            {
+                double direction = delta.W < 0 ? -1 : 1;
+                rate = axis * (direction * 2 * Math.Atan2(length, Math.Abs(delta.W)) /
+                    (length * (_seconds[next] - _seconds[next - 1])));
+            }
+        }
+        return new(QuaternionBasis.FromRaw(orientation.W, orientation.X, orientation.Y, orientation.Z), rate);
+    }
+
+    private static SampledMissionAttitude Parse(string text, bool legacyAxes, bool legacyInterpolation, CancellationToken cancellation)
     {
         var seconds = new List<double>();
         var orientations = new List<RigidQuaternion>();
@@ -77,7 +114,8 @@ public sealed class SampledMissionAttitude
             if ((seconds.Count & 4095) == 0)
                 cancellation.ThrowIfCancellationRequested();
             double time = Seconds(row[0]);
-            if (!double.IsFinite(time) || (seconds.Count > 0 && time < seconds[^1]))
+            if (!double.IsFinite(time) || seconds.Count > 0 &&
+                (time < seconds[^1] || legacyInterpolation && time == seconds[^1]))
                 throw new InvalidDataException("Mission attitude epochs must be finite and ordered.");
             if (seconds.Count == MaximumSamples)
                 throw new InvalidDataException("The mission attitude has too many samples.");
@@ -86,13 +124,21 @@ public sealed class SampledMissionAttitude
             if (!(norm > 0) || !double.IsFinite(norm))
                 throw new InvalidDataException("Mission attitude has a zero or nonfinite quaternion norm.");
             var turn = new RigidQuaternion(w / norm, x / norm, y / norm, z / norm);
-            orientations.Add(legacyAxes ? Conjugate(Product(quarterTurn, turn)) : turn);
+            if (legacyAxes)
+                turn = legacyInterpolation
+                    ? Product(Product(quarterTurn, Conjugate(turn)), Conjugate(quarterTurn))
+                    : Conjugate(Product(quarterTurn, turn));
+            orientations.Add(turn);
             seconds.Add(time);
         }
         if (field != 0)
             throw new InvalidDataException("Incomplete sampled mission attitude record.");
 
-        var track = new SampledMissionAttitude(seconds.ToArray(), orientations.ToArray());
+        if (legacyInterpolation && seconds.Count == 0)
+            throw new InvalidDataException("The legacy mission attitude has no samples.");
+        var track = new SampledMissionAttitude(seconds.ToArray(), orientations.ToArray(), legacyInterpolation);
+        if (legacyInterpolation)
+            return track;
         for (int lower = 0; lower + 1 < seconds.Count; lower++)
         {
             if ((lower & 4095) == 0)

@@ -159,8 +159,7 @@ public static partial class SampledMissionCatalog
         }
         if (kind == "sampled")
         {
-            if (Text(spin, "interpolation") != "cosmographiaNative")
-                throw new NotSupportedException("A packed sampled attitude needs the native interpolation profile.");
+            bool legacy = !spin.TryGetProperty("interpolation", out var profile) || profile.GetString() == "legacy";
             string path = PackedAsset(root, "trajectories", Text(spin, "file"));
             bool compatible = Text(spin, "convention") switch
             {
@@ -168,6 +167,13 @@ public static partial class SampledMissionCatalog
                 "celestia" => true,
                 var convention => throw new NotSupportedException($"Unsupported packed attitude convention {convention}.")
             };
+            if (legacy)
+            {
+                var legacySamples = SampledMissionAttitude.ReadLegacy(path, compatible, cancellation);
+                return new MissionFrame.Rotating(parent, legacySamples.Sample);
+            }
+            if (Text(spin, "interpolation") != "cosmographiaNative")
+                throw new NotSupportedException("A packed sampled attitude needs the native interpolation profile.");
             var samples = SampledMissionAttitude.Read(path, compatible, cancellation);
             return new MissionFrame.Rotating(parent, samples.Sample);
         }

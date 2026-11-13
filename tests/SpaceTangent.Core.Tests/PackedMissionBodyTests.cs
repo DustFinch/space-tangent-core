@@ -94,6 +94,73 @@ public sealed class PackedMissionBodyTests
         }
     }
 
+    [MissionVersionsFact]
+    [Trait("Category", "ExternalData")]
+    public void OlderMissionPacksRestoreTheCeresSystemAtMatchingEpochs()
+    {
+        var packed = SampledMissionCatalog.Load("pack.json", Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_MISSION_ROOT")!, Resolve);
+        var baseline = Build(packed);
+        var versions = new List<int>();
+        foreach (string root in Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_MISSION_VERSIONS")!
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "pack.json")));
+            int version = manifest.RootElement.GetProperty("formatVersion").GetInt32();
+            versions.Add(version);
+            var diagnostics = new List<string>();
+            var missions = SampledMissionCatalog.Load("pack.json", root, Resolve, diagnostics.Add);
+            var world = Build(missions);
+            string[] targets = version == 7 ? ["Ceres", "Test Point", "body axes"]
+                : ["Ceres", "Test Point", "body axes", "Cassini", "CubeSat", "frame axes"];
+            foreach (string name in targets)
+            {
+                var mission = Assert.Single(missions, mission => mission.Name == name);
+                foreach (double seconds in new[] { 3d, 20.5, 41 })
+                {
+                    var epoch = JulianInstant.FromJulianDate(2455755 + seconds / 86400, TimeScale.Tdb);
+                    var actual = world.Evaluate(epoch);
+                    var expected = baseline.Evaluate(epoch);
+                    Assert.True(expected.TryState(mission.Id, out var reference), name);
+                    Assert.True(actual.TryState(mission.Id, out var state), $"v{version} {name}");
+                    Compare(reference.PositionKilometers, state.PositionKilometers, .0003);
+                    Assert.True(expected.TryOrientation(mission.Id, out var referenceAttitude), name);
+                    Assert.True(actual.TryOrientation(mission.Id, out var attitude), $"v{version} {name}");
+                    if (version is 8 or 9 && name == "CubeSat")
+                    {
+                        Assert.True(actual.TryMissionReferenceFrame(mission.Id, orbit: false, epoch, out _, out var frame));
+                        // Versions 8 and 9 share the earlier signed witness. Later packs carry an antipodal pair.
+                        var first = System.Numerics.Quaternion.Normalize(new(.1f, -.2f, .3f, .9f));
+                        var second = System.Numerics.Quaternion.Normalize(new(.2f, .1f, -.5f, -.8f));
+                        double join = (2455755.0004745373 - 2455755) * JulianInstant.SecondsPerDay;
+                        var turn = System.Numerics.Quaternion.Slerp(first, second,
+                            (float)((epoch.ToJulianDate() - 2455755) * JulianInstant.SecondsPerDay / join));
+                        var x = System.Numerics.Vector3.Transform(System.Numerics.Vector3.UnitX, turn);
+                        var y = System.Numerics.Vector3.Transform(System.Numerics.Vector3.UnitY, turn);
+                        Compare(frame.ToWorld.Transform(new(x.X, x.Y, x.Z)), attitude.ToWorld.X, 5e-7);
+                        Compare(frame.ToWorld.Transform(new(y.X, y.Y, y.Z)), attitude.ToWorld.Y, 5e-7);
+                    }
+                    else
+                    {
+                        // Several v11 rotations use ICRF in place of the earlier J2000 axes.
+                        Compare(referenceAttitude.ToWorld.X, attitude.ToWorld.X, 2e-7);
+                        Compare(referenceAttitude.ToWorld.Y, attitude.ToWorld.Y, 2e-7);
+                    }
+                }
+            }
+        }
+        Assert.Equal(new[] { 7, 8, 9, 10, 11 }, versions.Order());
+    }
+
+    private sealed class MissionVersionsFactAttribute : FactAttribute
+    {
+        public MissionVersionsFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_MISSION_VERSIONS")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_MISSION_ROOT")))
+                Skip = "Set the original archived mission packs and the version 11 baseline.";
+        }
+    }
+
     private static ObjectId? Resolve(string name) => name is "Sun" or "Sol" ? SolarSystemSample.SunId : null;
 
     private static WorldGraph Build(IReadOnlyList<SampledMission> missions)
