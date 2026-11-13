@@ -23,8 +23,25 @@ public static partial class SampledMissionCatalog
     {
         if (document.TryGetProperty("spiceLoads", out var loads))
         {
-            foreach (var load in loads.EnumerateArray())
+            int count = loads.GetArrayLength();
+            if (count > 256)
+                throw new InvalidDataException("A mission pack may contain at most 256 SPICE load events.");
+            var previews = new bool[count];
+            int next = 0;
+            if (document.TryGetProperty("sscCatalogs", out var catalogues))
             {
+                foreach (var catalogue in catalogues.EnumerateArray())
+                {
+                    var (first, length) = SscBodyCatalogue.ReadSpicePreviewRange(catalogue, count, next);
+                    Array.Fill(previews, true, first, length);
+                    next = first + length;
+                }
+            }
+            for (int index = 0; index < count; index++)
+            {
+                if (previews[index])
+                    continue;
+                var load = loads[index];
                 string policy = Text(load, "policy");
                 if (policy != "furnish")
                     continue;

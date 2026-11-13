@@ -95,6 +95,18 @@ public sealed class SampledMissionCatalogTests
             ["msl-pack/pack.json", "dawn-pack/pack.json"], root, Resolve, messages.Add);
         var msl = Load("msl", "SPACETANGENT_MSL_ROOT", messages);
         var dawn = Load("dawn", "SPACETANGENT_DAWN_ROOT", messages);
+        foreach (string[] order in new[] { new[] { "msl-source/msl.json", "dawn-pack/pack.json" },
+                                          new[] { "dawn-pack/pack.json", "msl-source/msl.json" } })
+        {
+            var mixed = SscBodyCatalogue.LoadWithMissions([], order, root, Resolve, messages.Add).Missions.Missions;
+            Assert.Equal(3, mixed.Count);
+            Assert.Equal(msl.Arcs.Count, Assert.Single(mixed, item => item.Id == msl.Id).Arcs.Count);
+            var packedDawn = Assert.Single(mixed, item => item.Id == dawn.Id);
+            Assert.Equal(dawn.Arcs.Count, packedDawn.Arcs.Count);
+            Assert.Equal(Vesta, packedDawn.Arcs[1].Center);
+            Assert.Equal(2000, Assert.Single(Assert.Single(mixed.Single(item => item.Name == "_Dawn Engine 1")
+                .Geometry!).Shape.ParticleEmitters!).SpawnRate);
+        }
 
         foreach (var (source, days) in new[] { (msl, new[] { 2456000d, 2456145.5, 2456146 }),
                                                 (dawn, new[] { 2454800d, 2455743.5, 2455800, 2456166, 2456300 }) })

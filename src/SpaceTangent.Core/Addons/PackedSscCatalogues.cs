@@ -53,10 +53,7 @@ public static partial class SscBodyCatalogue
             if (name is "." or ".." || Path.GetFileName(name) != name || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 throw new InvalidDataException("Packed SSC document name must be a filename.");
             string context = Path.Combine(root, ".ssc", documents.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            int first = catalogue.TryGetProperty("firstSpiceLoad", out var firstLoad) ? firstLoad.GetInt32() : loads.Length;
-            int count = catalogue.TryGetProperty("spiceLoadCount", out var loadCount) ? loadCount.GetInt32() : 0;
-            if (first < next || first > loads.Length || count < 0 || count > loads.Length - first)
-                throw new InvalidDataException("Packed SSC SPICE preview ranges overlap or exceed the load list.");
+            var (first, count) = ReadSpicePreviewRange(catalogue, loads.Length, next);
             FurnishUntil(first);
             // Even positions insert an SSC catalogue before the corresponding explicit load.
             positions.Add(context, first * 2);
@@ -124,6 +121,14 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException($"Packed SSC field {property} is missing.");
     }
 
+    internal static (int First, int Length) ReadSpicePreviewRange(JsonElement catalogue, int count, int next)
+    {
+        int first = catalogue.TryGetProperty("firstSpiceLoad", out var firstLoad) ? firstLoad.GetInt32() : count;
+        int length = catalogue.TryGetProperty("spiceLoadCount", out var previewLength) ? previewLength.GetInt32() : 0;
+        if (first < next || first > count || length < 0 || length > count - first)
+            throw new InvalidDataException("Packed SSC SPICE preview ranges overlap or exceed the load list.");
+        return (first, length);
+    }
     private static (string Kind, string Directory) PackedResourceKind(string field, AddonStage stage) => field switch
     {
         "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),

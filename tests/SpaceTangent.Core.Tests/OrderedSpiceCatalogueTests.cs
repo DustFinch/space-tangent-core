@@ -331,6 +331,57 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void SourceAndPackedMissionsShareOrderedKernelsAndKeepTheirResourceOwners()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string loose = scratch.CreateSubdirectory("loose").FullName;
+            string packed = scratch.CreateSubdirectory("packed").FullName;
+            File.Copy(Path.Combine(corpus, "a.bsp"), Path.Combine(loose, "track.bsp"));
+            File.Copy(Path.Combine(corpus, "b.bsp"), Path.Combine(packed, "track.bsp"));
+            File.WriteAllText(Path.Combine(loose, "source.json"), """
+                {"version":"1.0","spiceKernels":["track.bsp"],"items":[
+                    {"name":"Source track","center":"Sun","trajectory":{"type":"Spice","target":1999999,"center":0}}]}
+                """);
+            File.WriteAllText(Path.Combine(packed, "pack.json"), """
+                {"formatVersion":19,
+                 "spiceLoads":[{"policy":"furnish","files":["unused-preview.bsp"]},{"policy":"furnish","files":["track.bsp"]}],
+                 "sscCatalogs":[{"name":"preview.ssc","text":"","firstSpiceLoad":0,"spiceLoadCount":1}],
+                 "bodies":[{"path":"Sol/Packed Track","name":"Packed track","parent":"Sol","radiusKm":1,
+                     "rotation":{"kind":"quaternion","frame":{"kind":"equatorJ2000"},"quaternion":[1,0,0,0]},
+                     "orbit":{"kind":"spice","target":1999999,"spiceCenter":0}}]}
+                """);
+            ObjectId sun = new("sol/sun");
+            ObjectId? Resolve(string name) => name is "Sun" or "Sol" ? sun : null;
+            Check(["loose/source.json", "packed/pack.json"], 222);
+            Check(["packed/pack.json", "loose/source.json"], 111);
+
+            void Check(string[] catalogues, double x)
+            {
+                var loaded = SscBodyCatalogue.LoadWithMissions([], catalogues, scratch.FullName, Resolve, _ => { });
+                Assert.Equal(2, loaded.Missions.Missions.Count);
+                var builder = new WorldGraphBuilder();
+                builder.AddTrajectory(sun, _ => new(default, default));
+                foreach (var mission in loaded.Missions.Missions)
+                    builder.AddSampledMission(mission);
+                var snapshot = builder.Build().Evaluate(JulianInstant.FromTdbSeconds(5));
+                foreach (var mission in loaded.Missions.Missions)
+                {
+                    Assert.True(snapshot.TryState(mission.Id, out var state));
+                    Assert.Equal(x, state.PositionKilometers.X, 10);
+                }
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()
