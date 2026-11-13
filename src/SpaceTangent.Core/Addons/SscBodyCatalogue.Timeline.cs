@@ -15,7 +15,7 @@ public static partial class SscBodyCatalogue
     private static readonly JulianInstant LatestTimelineEpoch =
         new(JulianInstant.MaximumDay, JulianInstant.NanosecondsPerDay - 1, TimeScale.Tdb);
 
-    private static IReadOnlyList<Func<Func<string, ObjectId>, MissionArc>> ReadTimeline(SscDefinition item, SscValue value,
+    private static IReadOnlyList<TimelinePhaseBinder> ReadTimeline(SscDefinition item, SscValue value,
         SscResource resolve, CancellationToken cancellation)
     {
         if (value is not SscValue.List { Items.Length: >= 1 and <= 128 } phases)
@@ -24,7 +24,7 @@ public static partial class SscBodyCatalogue
         var curves = new Dictionary<string, SampledStateTrajectory>(OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         long totalBytes = 0;
-        var result = new List<Func<Func<string, ObjectId>, MissionArc>>(phases.Items.Length);
+        var result = new List<TimelinePhaseBinder>(phases.Items.Length);
         var previousEnd = EarliestTimelineEpoch;
         for (int index = 0; index < phases.Items.Length; index++)
         {
@@ -51,7 +51,9 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.ContainsKey("OrbitFrame"))
                 trajectory = ReadTimelineFrame(phase.Object("OrbitFrame"), center, out center);
 
-            var state = ReadTimelineState(phase, center, out double? orbitPeriodSeconds);
+            var state = ReadTimelineState(phase, center, out double? orbitPeriodSeconds, out var surfaceCoordinates);
+            if (surfaceCoordinates.HasValue)
+                trajectory = find => new MissionFrame.BodyFixed(find(center));
             MissionFrameFactory bodyFrame = _ => new MissionFrame.Inertial(TimelineEcliptic);
             if (phase.Fields.ContainsKey("BodyFrame"))
                 bodyFrame = ReadTimelineFrame(phase.Object("BodyFrame"), item.Parent, out _);
@@ -67,10 +69,19 @@ public static partial class SscBodyCatalogue
                 or "SampledOrientation" or "FixedAttitude"))
                 throw new NotSupportedException("This SSC Timeline rotation model is unavailable.");
 
-            result.Add(find =>
+            result.Add((find, radiusKilometers) =>
             {
+                ObjectId origin = find(center);
+                var local = state;
+                if (surfaceCoordinates is { } site)
+                {
+                    double radius = radiusKilometers?.Invoke(origin) ??
+                        throw new InvalidDataException($"SSC surface position requires a radius for {center}.");
+                    var offset = SurfaceOffset(site, radius);
+                    local = _ => new CartesianState(offset, default);
+                }
                 MissionFrame body = bodyFrame(find);
-                return new(start, end, find(center), state, trajectory(find),
+                return new(start, end, origin, local, trajectory(find),
                     spin is null ? body : new MissionFrame.Rotating(body, epoch => spin(epoch)!.Value))
                 {
                     BodyReferenceFrame = body,
@@ -80,9 +91,11 @@ public static partial class SscBodyCatalogue
         }
         return result.AsReadOnly();
 
-        Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center, out double? orbitPeriodSeconds)
+        Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center,
+            out double? orbitPeriodSeconds, out Vector3d? surfaceCoordinates)
         {
             orbitPeriodSeconds = null;
+            surfaceCoordinates = null;
             if (phase.Fields.Keys.Any(key => key is "CustomOrbit" or "SpiceOrbit" or "ScriptedOrbit" or "LongLat"))
                 throw new NotSupportedException("This SSC Timeline orbit model is unavailable.");
             if (phase.Fields.TryGetValue("SampledTrajectory", out var data))
@@ -121,7 +134,14 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.TryGetValue("FixedPosition", out var fixedPosition))
             {
                 if (fixedPosition is SscValue.Map coordinates)
-                    fixedPosition = coordinates.Get("Rectangular");
+                {
+                    if (!coordinates.Fields.TryGetValue("Rectangular", out fixedPosition))
+                    {
+                        surfaceCoordinates = ReadVector(coordinates.Fields.TryGetValue("Planetographic", out var geographic)
+                            ? geographic : coordinates.Get("Planetocentric"));
+                        return _ => null;
+                    }
+                }
                 var state = new CartesianState(ReadVector(fixedPosition), default);
                 return _ => state;
             }
@@ -129,6 +149,19 @@ public static partial class SscBodyCatalogue
         }
     }
 
+    private static Vector3d SurfaceOffset(Vector3d coordinates, double radius)
+    {
+        double distance = radius + coordinates.Z;
+        if (!double.IsFinite(radius) || radius <= 0 || !double.IsFinite(distance) || distance <= 0 ||
+            Math.Abs(coordinates.Y) > 90)
+            throw new InvalidDataException("Invalid SSC fixed surface position or reference radius.");
+        // SSC FixedPosition interprets both coordinate keywords on a reference sphere.
+        var (sinLon, cosLon) = Math.SinCos(coordinates.X * (Math.PI / 180));
+        var (sinLat, cosLat) = Math.SinCos(coordinates.Y * (Math.PI / 180));
+        return new Vector3d(cosLat * cosLon, cosLat * sinLon, sinLat) * distance;
+    }
+
+    private delegate MissionArc TimelinePhaseBinder(Func<string, ObjectId> resolve, Func<ObjectId, double>? radiusKilometers);
     private delegate MissionFrame MissionFrameFactory(Func<string, ObjectId> resolve);
 
     private static MissionFrameFactory ReadTimelineFrame(SscValue.Map frame, string defaultCenter, out string center)

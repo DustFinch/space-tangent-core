@@ -14,6 +14,9 @@ public sealed record SscRings(double InnerKilometers, double OuterKilometers, st
 
 public sealed record SscExtrasolarConic(Func<JulianInstant, CartesianState?> Sample, IReadOnlyList<Vector3d> Points);
 
+public delegate SampledMission SscTimelineBinder(ObjectId id, Func<string, ObjectId> resolve,
+    Func<ObjectId, double>? radiusKilometers = null);
+
 public sealed record SscBodyDefinition(string Names, string Parent, string Center, string Class,
     double RadiusKilometers, Vector3d Color, string? Mesh, Vector3d MeshCenter, Basis3d MeshRotation,
     SscBodyOrientation? Orientation, Func<JulianInstant, CartesianState?> Sample)
@@ -24,7 +27,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public SscRings? Rings { get; init; }
     public string? MeshRoot { get; init; }
     public Func<bool, SscExtrasolarConic>? BindExtrasolarOrbit { get; init; }
-    public Func<ObjectId, Func<string, ObjectId>, SampledMission>? BindTimeline { get; init; }
+    public SscTimelineBinder? BindTimeline { get; init; }
 
     public string Name => Names.Split(':')[0];
 }
@@ -440,8 +443,8 @@ public static partial class SscBodyCatalogue
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
             Rings = rings, BindExtrasolarOrbit = extrasolarOrbit,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
-            BindTimeline = timeline is null ? null : (id, find) =>
-                new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find)).ToArray()))
+            BindTimeline = timeline is null ? null : (id, find, radiusKilometers) =>
+                new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))
         };
 
         Func<JulianInstant, CartesianState?>? TrySpiceOrbit()
