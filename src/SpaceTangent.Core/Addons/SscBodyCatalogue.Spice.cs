@@ -124,7 +124,7 @@ public static partial class SscBodyCatalogue
         int origin = ResolveOrbitId(orbit.Text("Origin"));
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
-        var coverage = SpiceCoverage(orbit, requireIncreasing: false);
+        var coverage = SpiceCoverage(orbit);
         if (target == 0 && origin == 0)
             return _ => default(CartesianState);
 
@@ -155,10 +155,7 @@ public static partial class SscBodyCatalogue
 
         CartesianState? Sample(JulianInstant epoch)
         {
-            if (coverage.Beginning is { } first && epoch.CompareTo(first) < 0)
-                epoch = first;
-            else if (coverage.Ending is { } last && epoch.CompareTo(last) > 0)
-                epoch = last;
+            epoch = ClampSpiceEpoch(epoch, coverage);
             bool found = states.TryNearestState(target, origin, epoch, out var state, out var error);
             if (error is not null && Interlocked.Exchange(ref reportedFailure, 1) == 0)
                 warn($"SpiceOrbit state failed for {target} relative to {origin}. {error.Message}");
@@ -179,10 +176,6 @@ public static partial class SscBodyCatalogue
                 return NaifIds.Resolve(name, resources, allowNumericPrefix: true);
             }
         }
-
-        // The authored SSC interval is in Julian days, with the native model's millisecond inset.
-        static JulianInstant Inset(JulianInstant epoch, double seconds) =>
-            JulianInstant.FromJulianDate(epoch.ToJulianDate() + seconds / JulianInstant.SecondsPerDay, TimeScale.Tdb);
     }
 
     private static Func<JulianInstant, FrameKinematics?> ReadSpiceRotation(SscValue.Map rotation,
@@ -202,33 +195,43 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException($"Unknown SSC SPICE frame {frame} or {baseFrame}.");
         frames.RequireDefinition(frameId);
         frames.RequireDefinition(baseId);
-        var coverage = SpiceCoverage(rotation);
+        var bounds = SpiceCoverage(rotation);
+        var coverage = (bounds.Beginning is { } first ? Inset(first, .001) : (JulianInstant?)null,
+            bounds.Ending is { } last ? Inset(last, -.001) : (JulianInstant?)null);
         return Sample;
 
         FrameKinematics? Sample(JulianInstant epoch)
         {
-            if (!InCoverage(epoch, coverage) || !frames.TrySample(frameId, epoch, false, out var pointing) ||
-                !frames.TrySample(baseId, epoch, false, out var reference))
+            var sample = ClampSpiceEpoch(epoch, coverage);
+            if (!frames.TrySample(frameId, sample, false, out var pointing) ||
+                !frames.TrySample(baseId, sample, false, out var reference))
                 return null;
             Basis3d toWorld = SpiceFixedFrames.Compose(spinFrame, reference.ToWorld.Transpose());
-            Vector3d? velocity = pointing.AngularVelocityRadiansPerSecond is { } bodyRate &&
+            Vector3d? velocity = sample != epoch ? default(Vector3d) : pointing.AngularVelocityRadiansPerSecond is { } bodyRate &&
                 reference.AngularVelocityRadiansPerSecond is { } referenceRate ? toWorld.Transform(bodyRate - referenceRate) : null;
             return new(SpiceFixedFrames.Compose(toWorld, pointing.ToWorld), velocity);
         }
     }
 
-    private static (JulianInstant? Beginning, JulianInstant? Ending) SpiceCoverage(SscValue.Map block, bool requireIncreasing = true)
+    private static (JulianInstant? Beginning, JulianInstant? Ending) SpiceCoverage(SscValue.Map block)
     {
-        JulianInstant? beginning = Date("Beginning"), ending = Date("Ending");
-        if (requireIncreasing && beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
-            throw new InvalidDataException("SSC SPICE ending must follow its beginning.");
-        return (beginning, ending);
+        return (Date("Beginning"), Date("Ending"));
 
         JulianInstant? Date(string name) => block.Fields.TryGetValue(name, out var value)
             ? SscSampledCatalog.ReadDate(value.AsText()) : null;
     }
 
-    private static bool InCoverage(JulianInstant epoch, (JulianInstant? Beginning, JulianInstant? Ending) coverage) =>
-        (coverage.Beginning is not { } first || epoch.CompareTo(first) >= 0) &&
-        (coverage.Ending is not { } last || epoch.CompareTo(last) <= 0);
+    // The authored SSC interval is in Julian days, with the native model's millisecond inset.
+    private static JulianInstant Inset(JulianInstant epoch, double seconds) =>
+        JulianInstant.FromJulianDate(epoch.ToJulianDate() + seconds / JulianInstant.SecondsPerDay, TimeScale.Tdb);
+
+    private static JulianInstant ClampSpiceEpoch(JulianInstant epoch,
+        (JulianInstant? Beginning, JulianInstant? Ending) coverage)
+    {
+        if (coverage.Beginning is { } first && epoch.CompareTo(first) < 0)
+            return first;
+        if (coverage.Ending is { } last && epoch.CompareTo(last) > 0)
+            return last;
+        return epoch;
+    }
 }

@@ -999,6 +999,67 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void BoundedCassiniPointingHoldsTheNativeEndpoints()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        string mission = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_SPK_ARCHIVE")!;
+        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+        var expected = document.RootElement.GetProperty("rows").EnumerateArray()
+            .Single(row => row.GetProperty("case").GetString() == "real-cassini-clamped-rotation")
+            .GetProperty("results");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            File.Copy(Path.Combine(corpus, "late.dat"), Path.Combine(source, "late.dat"));
+            File.Copy(Path.Combine(archive, "naif0012.tls"), Path.Combine(source, "naif0012.tls"));
+            const string ck = "04182_04183pa_soi_itl.bc";
+            File.Copy(Path.Combine(mission, ck), Path.Combine(source, ck));
+            File.WriteAllText(Path.Combine(source, "cassini.ssc"), """
+                "Bounded Cassini" "Sol" {
+                    FixedPosition [ 1 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Kernel [ "04182_04183pa_soi_itl.bc" "naif0012.tls" "late.dat" ]
+                        Frame "META_CASSINI" BaseFrame "J2000" Beginning 2453187.55 Ending 2453187.6 }
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string folder in new[] { source, packed })
+            {
+                var body = Assert.Single(SscBodyCatalogue.Load(folder));
+                foreach (var row in expected.EnumerateArray().Skip(1))
+                {
+                    double day = row.GetProperty("jd").GetDouble();
+                    var orientation = body.SampleRotation!(JulianInstant.FromJulianDate(day, TimeScale.Tdb))!.Value;
+                    var values = row.GetProperty("values").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+                    Assert.InRange((orientation.ToWorld.X - ToEquatorial(new(1, 0, 0), values)).Length, 0, 2e-9);
+                    Assert.InRange((orientation.ToWorld.Y - ToEquatorial(new(0, 1, 0), values)).Length, 0, 2e-9);
+                    Assert.InRange((orientation.ToWorld.Z - ToEquatorial(new(0, 0, 1), values)).Length, 0, 2e-9);
+                    if (day is <= 2453187.55 or >= 2453187.6)
+                        Assert.Equal(default(Vector3d), orientation.AngularVelocityRadiansPerSecond);
+                }
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        static Vector3d ToEquatorial(Vector3d axis, double[] quaternion)
+        {
+            // Undo the reference axis ordering, passive rotation and prime-meridian half-turn.
+            var native = new Vector3d(-axis.X, axis.Z, axis.Y);
+            var imaginary = new Vector3d(-quaternion[1], -quaternion[2], -quaternion[3]);
+            var twiceCross = Vector3d.Cross(imaginary, native) * 2;
+            var rotated = native + twiceCross * quaternion[0] + Vector3d.Cross(imaginary, twiceCross);
+            return new(rotated.X, -rotated.Z, rotated.Y);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
