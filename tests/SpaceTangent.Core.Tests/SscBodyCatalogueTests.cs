@@ -165,6 +165,9 @@ public sealed class SscBodyCatalogueTests
         Check("2060 Chiron", 341.66, 353.77, "chiron-rings.png");
         Check("10199 Chariklo", 382.5, 399.9, "chariklo-rings.png");
         Check("Haumea", 2252, 2322, "haumea-rings.png");
+        double expectedHaumeaApoapsis = 43.1042753471461 * (1 + .1949599020093612) * 149_597_870.7;
+        Assert.InRange(Math.Abs(bodies.Single(body => body.Name == "Haumea").OrbitApoapsisKilometers!.Value -
+            expectedHaumeaApoapsis), 0, .001);
         Check("Quaoar", 2515, 4098, "quaoar-rings.png");
 
         void Check(string name, double inner, double outer, string texture)

@@ -25,6 +25,8 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? SurfaceMap { get; init; }
     public double? GeometricAlbedo { get; init; }
+    /// <summary>The apoapsis distance of the resolved bound catalogue conic, when available.</summary>
+    public double? OrbitApoapsisKilometers { get; init; }
     public SscRings? Rings { get; init; }
     public string? MeshRoot { get; init; }
     public Func<bool, SscExtrasolarConic>? BindExtrasolarOrbit { get; init; }
@@ -206,6 +208,7 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
         double? orbitPeriodSeconds = null;
+        double? orbitApoapsis = null;
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, resolve, spice, Warn, cancellation) : null;
@@ -225,6 +228,9 @@ public static partial class SscBodyCatalogue
                 starScale ? 31_557_600 : 86_400);
             var conic = SscConicOrbits.ReadOrbit(item, orbit, context);
             orbitPeriodSeconds = conic.CharacteristicPeriodSeconds;
+            var elements = conic.Orbit.Elements;
+            if (elements.Eccentricity < 1)
+                orbitApoapsis = elements.PeriapsisKilometers * ((1 + elements.Eccentricity) / (1 - elements.Eccentricity));
             raw = epoch => conic.Orbit.Evaluate(epoch);
             if (!starScale && !item.Parent.StartsWith("Sol/", StringComparison.OrdinalIgnoreCase))
             {
@@ -455,6 +461,7 @@ public static partial class SscBodyCatalogue
         {
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
             Rings = rings, GeometricAlbedo = albedo, BindExtrasolarOrbit = extrasolarOrbit,
+            OrbitApoapsisKilometers = orbitApoapsis is { } distance && double.IsFinite(distance) ? distance : null,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
             BindTimeline = timeline is null ? null : (id, find, radiusKilometers) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))
