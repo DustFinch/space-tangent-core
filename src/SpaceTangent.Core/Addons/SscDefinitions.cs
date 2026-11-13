@@ -12,6 +12,8 @@ internal sealed record SscDefinition(string Names, string Parent, SscValue.Map P
         ? directory : throw new InvalidDataException($"Missing SSC field {field}.");
 }
 
+internal sealed record SscDocument(string File, string? Root, string? Text = null);
+
 internal static class SscDefinitions
 {
     private const int MaximumCatalogBytes = 1024 * 1024;
@@ -22,17 +24,24 @@ internal static class SscDefinitions
 
     internal static IReadOnlyList<SscDefinition> Load(IEnumerable<string> paths, string? root,
         CancellationToken cancellation = default, IReadOnlyDictionary<string, string>? embedded = null)
+        => Load(paths.Select(path =>
+        {
+            string file = root is null ? Path.GetFullPath(path) : Path.GetFullPath(path, root);
+            return new SscDocument(file, root, embedded?[file]);
+        }), cancellation);
+
+    internal static IReadOnlyList<SscDefinition> Load(IEnumerable<SscDocument> documents, CancellationToken cancellation)
     {
         var bodies = new List<SscDefinition>();
         var aliases = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         int longestAliasPath = 0;
-        foreach (string path in paths)
+        foreach (var document in documents)
         {
             cancellation.ThrowIfCancellationRequested();
-            string file = root is null ? Path.GetFullPath(path) : Path.GetFullPath(path, root);
+            string file = document.File;
             try
             {
-                LoadFile(file);
+                LoadFile(document);
             }
             catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog, file))
             {
@@ -41,10 +50,11 @@ internal static class SscDefinitions
         }
         return bodies.AsReadOnly();
 
-        void LoadFile(string file)
+        void LoadFile(SscDocument document)
         {
+            string file = document.File;
             string directory = Path.GetDirectoryName(file)!;
-            string source = embedded is not null ? embedded[file] : ReadFile(file);
+            string source = document.Text ?? ReadFile(file, document.Root);
             foreach (var (disposition, kind, nameList, parentPath, properties) in new SscReader(source, file).ReadDefinitions())
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -79,7 +89,7 @@ internal static class SscDefinitions
                 bodies.Add(new(string.Join(':', names), parent, properties, directories, file));
             }
         }
-        string ReadFile(string file)
+        static string ReadFile(string file, string? root)
         {
             if (root is not null)
                 file = LocalAddonFiles.Resolve(root, root, file);

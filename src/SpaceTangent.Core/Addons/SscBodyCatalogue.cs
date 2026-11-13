@@ -17,6 +17,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public Func<JulianInstant, FrameKinematics?>? SampleRotation { get; init; }
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? SurfaceMap { get; init; }
+    public string? MeshRoot { get; init; }
 
     public string Name => Names.Split(':')[0];
 }
@@ -37,6 +38,13 @@ public static partial class SscBodyCatalogue
         string pack = Path.Combine(root, "pack.json");
         if (AddonDependencies.FileExists(pack))
             return AddonDiagnostics.Read(AddonStage.Catalog, pack, () => ReadPackedSsc(root, pack, scripts, warning, cancellation));
+        var source = ReadLooseDocuments(root);
+        return ReadBodyDefinitions(SscDefinitions.Load(source.Documents, cancellation), _ => root,
+            scripts, warning, source.Resolve, cancellation);
+    }
+
+    private static SscSource ReadLooseDocuments(string root)
+    {
         string data = Path.Combine(root, "data");
         var paths = AddonDependencies.ListFiles(root, "*.ssc").AsEnumerable();
         if (AddonDependencies.DirectoryExists(data))
@@ -44,14 +52,13 @@ public static partial class SscBodyCatalogue
         string[] files = paths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length > 64)
             throw new InvalidDataException("A body catalogue source contains more than 64 SSC files.");
-        var definitions = SscDefinitions.Load(files, root, cancellation);
-        return ReadBodyDefinitions(definitions, root, scripts, warning,
+        return new(files.Select(file => new SscDocument(file, root)).ToArray(),
             (body, field, stage, asset, fallbacks) => SscSampledCatalog.FindAsset(stage, root,
-                body.DirectoryFor(field), asset, fallbacks), cancellation);
+                body.DirectoryFor(field), asset, fallbacks));
     }
 
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
-        string root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation)
+        Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation)
     {
         if (definitions.Count > 512)
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
@@ -91,8 +98,14 @@ public static partial class SscBodyCatalogue
         ArgumentNullException.ThrowIfNull(warning);
         root = Path.GetFullPath(root);
         var bodies = Load(root, cancellation, scripts, warning).ToList();
+        AppendMpc(root, bodies, warning, cancellation);
+        return bodies.AsReadOnly();
+    }
+
+    private static void AppendMpc(string root, List<SscBodyDefinition> bodies, Action<string> warning, CancellationToken cancellation)
+    {
         if (!AddonDependencies.DirectoryExists(root))
-            return bodies.AsReadOnly();
+            return;
 
         string data = Path.Combine(root, "data");
         var paths = AddonDependencies.ListFiles(root, "*.mpc").AsEnumerable();
@@ -122,7 +135,7 @@ public static partial class SscBodyCatalogue
                 if (bodies.Count == 512)
                 {
                     warning($"{label}: the body pack has reached 512 objects. Later MPC records were left out.");
-                    return bodies.AsReadOnly();
+                    return;
                 }
                 known.Add(orbit.Name);
                 known.Add(orbit.Designation);
@@ -131,14 +144,13 @@ public static partial class SscBodyCatalogue
                     new(.70, .65, .60), null, default, Basis3d.Identity, null, epoch => orbit.Sample(epoch)));
             }
         }
-        return bodies.AsReadOnly();
     }
 
     public static string ResolveTexture(string root, string mesh, string relative) =>
         SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
 
-    private static SscBodyDefinition? ReadBody(SscDefinition item, string root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve)
+    private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -272,10 +284,11 @@ public static partial class SscBodyCatalogue
         else if (Text("CustomRotation") is "iau-amalthea" or "iau-thebe")
         {
             int naif = Text("CustomRotation") == "iau-amalthea" ? 505 : 514;
-            string local = Path.Combine(root, "pck00011.tpc");
+            string rotationRoot = root(item.DirectoryFor("CustomRotation"));
+            string local = Path.Combine(rotationRoot, "pck00011.tpc");
             if (AddonDependencies.FileExists(local))
             {
-                var model = new SpicePolynomialBodyFrame(LocalAddonFiles.Resolve(root, root, local), naif);
+                var model = new SpicePolynomialBodyFrame(LocalAddonFiles.Resolve(rotationRoot, rotationRoot, local), naif);
                 spin = epoch => model.Sample(epoch);
             }
             else
@@ -322,7 +335,10 @@ public static partial class SscBodyCatalogue
         }
         return new(item.Names, item.Parent, reference.Center, Text("Class") ?? "asteroid", radius, color,
             mesh, meshCenter, meshRotation, orientation, Sample)
-        { SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap };
+        {
+            SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
+            MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh"))
+        };
 
         T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
         {
@@ -330,7 +346,7 @@ public static partial class SscBodyCatalogue
             {
                 try
                 {
-                    if (make(ScriptRequest(item, field, root, resolve)) is { } model)
+                    if (make(ScriptRequest(item, field, root(item.DirectoryFor(field)), resolve)) is { } model)
                         return model;
                 }
                 catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException)

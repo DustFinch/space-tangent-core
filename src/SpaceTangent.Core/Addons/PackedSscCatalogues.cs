@@ -12,6 +12,15 @@ public static partial class SscBodyCatalogue
     private static IReadOnlyList<SscBodyDefinition> ReadPackedSsc(string root, string file, ISscScriptModels? scripts,
         Action<string>? warning, CancellationToken cancellation)
     {
+        var documents = ReadPackedDocuments(root, file, cancellation);
+        var definitions = SscDefinitions.Load(documents.Documents, cancellation);
+        return ReadBodyDefinitions(definitions, _ => root, scripts, warning, documents.Resolve, cancellation);
+    }
+
+    private sealed record SscSource(IReadOnlyList<SscDocument> Documents, SscResource Resolve);
+
+    private static SscSource ReadPackedDocuments(string root, string file, CancellationToken cancellation)
+    {
         file = LocalAddonFiles.Resolve(root, root, file);
         using var input = AddonDependencies.OpenRead(file, 16 * 1024 * 1024);
         if (input.Length > 16 * 1024 * 1024)
@@ -26,7 +35,7 @@ public static partial class SscBodyCatalogue
         if (catalogues.GetArrayLength() > 64)
             throw new InvalidDataException("A body pack may contain at most 64 SSC documents.");
 
-        var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+        var documents = new List<SscDocument>();
         var assets = new Dictionary<string, Dictionary<(string Kind, string Source), string>>(StringComparer.Ordinal);
         foreach (var catalogue in catalogues.EnumerateArray())
         {
@@ -34,12 +43,12 @@ public static partial class SscBodyCatalogue
             string name = Text(catalogue, "name");
             if (name is "." or ".." || Path.GetFileName(name) != name || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 throw new InvalidDataException("Packed SSC document name must be a filename.");
-            string context = Path.Combine(root, ".ssc", texts.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            string context = Path.Combine(root, ".ssc", documents.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
             string logicalFile = Path.Combine(context, name);
             string source = Text(catalogue, "text");
             if (Encoding.UTF8.GetByteCount(source) > 1024 * 1024)
                 throw new InvalidDataException("Embedded SSC text exceeds 1 MiB.");
-            texts.Add(logicalFile, source);
+            documents.Add(new(logicalFile, root, source));
             var resources = new Dictionary<(string Kind, string Source), string>();
             if (catalogue.TryGetProperty("resources", out var references))
             {
@@ -57,8 +66,7 @@ public static partial class SscBodyCatalogue
             assets.Add(context, resources);
         }
 
-        var definitions = SscDefinitions.Load(texts.Keys, root, cancellation, texts);
-        return ReadBodyDefinitions(definitions, root, scripts, warning, Resolve, cancellation);
+        return new(documents.AsReadOnly(), Resolve);
 
         string Resolve(SscDefinition definition, string field, AddonStage stage, string name, params string[] ignored)
         {
