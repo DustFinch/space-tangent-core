@@ -51,6 +51,40 @@ public sealed class SscBodyCatalogueTests
         }
     }
 
+    [Fact]
+    public void FailedSpiceModelsUseDeclaredOrbitAndRotationAlternatives()
+    {
+        var root = Directory.CreateTempSubdirectory("st-ssc-fallback-");
+        try
+        {
+            string file = Path.Combine(root.FullName, "fallback.ssc");
+            const string source = """
+                "Test probe" "Sol/Earth" {
+                    Radius 2
+                    SpiceOrbit { Target "NOT_A_NAIF_TARGET" Origin "Earth" BoundingRadius 10000 }
+                    EllipticalOrbit { SemiMajorAxis 7000 Period 1 }
+                    SpiceRotation { Frame "UNKNOWN_FRAME" BaseFrame "J2000" }
+                    FixedRotation { Inclination 12 }
+                }
+                """;
+            File.WriteAllText(file, source);
+            var warnings = new List<string>();
+            var fallback = Assert.Single(SscBodyCatalogue.Load(root.FullName, warning: warnings.Add));
+            Assert.Equal(2, warnings.Count);
+            Assert.StartsWith("Sol/Earth/Test probe: SpiceOrbit initialization failed.", warnings[0]);
+            Assert.StartsWith("Sol/Earth/Test probe: SpiceRotation initialization failed.", warnings[1]);
+            File.WriteAllText(file, string.Join('\n', source.Split('\n').Where(line => !line.TrimStart().StartsWith("Spice", StringComparison.Ordinal))));
+            var expected = Assert.Single(SscBodyCatalogue.Load(root.FullName));
+            var epoch = Epoch(2451545);
+            Assert.Equal(expected.Sample(epoch), fallback.Sample(epoch));
+            Assert.Equal(expected.SampleRotation!(epoch), fallback.SampleRotation!(epoch));
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [LocalBodyPackFact]
     [Trait("Category", "ExternalData")]
     public void OriginalStationAndAsteroidArcHaveRealStates()

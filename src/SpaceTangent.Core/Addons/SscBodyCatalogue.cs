@@ -198,18 +198,13 @@ public static partial class SscBodyCatalogue
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, resolve, cancellation) : null;
-        bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit") && !fields.Fields.ContainsKey("SpiceOrbit");
-        SscScriptOrbit? scripted = usesScriptOrbit
-            ? TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) : null;
+        bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
         if (timeline is not null)
             raw = _ => null; // A timeline needs its bound graph to select a center and frame.
-        else if (fields.Fields.TryGetValue("SpiceOrbit", out var spiceOrbit))
-        {
-            if (spiceOrbit is not SscValue.Map parameters)
-                throw new InvalidDataException("SSC SpiceOrbit must be an object.");
-            raw = ReadSpiceOrbit(parameters, spice);
-        }
-        else if (scripted is not null)
+        else if (TrySpiceOrbit() is { } spiceSample)
+            raw = spiceSample;
+        else if (usesScriptOrbit &&
+            TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) is { } scripted)
             raw = ScriptOrbit(scripted);
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {
@@ -327,8 +322,8 @@ public static partial class SscBodyCatalogue
 
         Func<JulianInstant, FrameKinematics?>? spin = null;
         bool usesScriptRotation = fields.Fields.ContainsKey("ScriptedRotation");
-        if (fields.Fields.ContainsKey("SpiceRotation"))
-            spin = ReadSpiceRotation(fields.Object("SpiceRotation"), spice, spinFrame);
+        if (TrySpiceRotation() is { } spiceSpin)
+            spin = spiceSpin;
         else if (usesScriptRotation &&
             TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
             spin = ScriptRotation(scriptedRotation, spinFrame);
@@ -429,6 +424,43 @@ public static partial class SscBodyCatalogue
             BindTimeline = timeline is null ? null : (id, find) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find)).ToArray()))
         };
+
+        Func<JulianInstant, CartesianState?>? TrySpiceOrbit()
+        {
+            if (!fields.Fields.ContainsKey("SpiceOrbit"))
+                return null;
+            try
+            {
+                return ReadSpiceOrbit(fields.Object("SpiceOrbit"), spice);
+            }
+            catch (Exception error) when (HasAlternative("ScriptedOrbit", "EllipticalOrbit", "FixedPosition",
+                "SampledOrbit", "SampledTrajectory") && CanUseFallback(error))
+            {
+                Warn($"SpiceOrbit initialization failed. {error.Message}");
+                return null;
+            }
+        }
+
+        Func<JulianInstant, FrameKinematics?>? TrySpiceRotation()
+        {
+            if (!fields.Fields.ContainsKey("SpiceRotation"))
+                return null;
+            try
+            {
+                return ReadSpiceRotation(fields.Object("SpiceRotation"), spice, spinFrame);
+            }
+            catch (Exception error) when (HasAlternative("ScriptedRotation", "SampledOrientation",
+                "CustomRotation", "UniformRotation", "FixedRotation") && CanUseFallback(error))
+            {
+                Warn($"SpiceRotation initialization failed. {error.Message}");
+                return null;
+            }
+        }
+
+        bool HasAlternative(params string[] keys) => keys.Any(fields.Fields.ContainsKey);
+
+        static bool CanUseFallback(Exception error) =>
+            error is InvalidDataException or NotSupportedException or FormatException or ArgumentException;
 
         T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
         {
