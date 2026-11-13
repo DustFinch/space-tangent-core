@@ -467,6 +467,63 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [CassiniJsonFact]
+    [Trait("Category", "ExternalData")]
+    public void MissionCataloguePackRelocatesOriginalKernelsMeshAndCameraFields()
+    {
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
+        var saturn = new ObjectId("sol/saturn");
+        ObjectId? Resolve(string name) => name == "Saturn" ? saturn : null;
+        var temporary = Directory.CreateTempSubdirectory("st-mission-pack-");
+        try
+        {
+            string output = Path.Combine(temporary.FullName, "built");
+            Assert.Equal((3, 0, 0), MissionCataloguePack.Build(source, output, Resolve));
+            string install = Path.Combine(temporary.FullName, "перенесённая миссия");
+            Directory.Move(output, install);
+            var sourceGraph = Build(SampledMissionCatalog.Load("cassini.json", source, Resolve));
+            var installed = SampledMissionCatalog.Load("перенесённая миссия/pack.json", temporary.FullName, Resolve);
+            var installedGraph = Build(installed);
+            var craft = Assert.Single(installed, mission => mission.Name == "Cassini SOI");
+            Assert.Equal(Path.Combine(install, "content", "cassini.3ds"), craft.MeshPath);
+            Assert.Equal(File.ReadAllBytes(Path.Combine(source, "cassini.3ds")), File.ReadAllBytes(craft.MeshPath!));
+            Assert.Equal(2, installed.Count(mission => mission.Geometry?.Any(span => span.Shape.Sensor is not null) == true));
+
+            foreach (double seconds in new[] { 141911269.46157101, 141917558.4203589 })
+            {
+                var epoch = JulianInstant.FromTdbSeconds(seconds);
+                var baseline = sourceGraph.Evaluate(epoch);
+                var relocated = installedGraph.Evaluate(epoch);
+                foreach (var mission in installed)
+                {
+                    Assert.True(baseline.TryState(mission.Id, out var state));
+                    Assert.True(relocated.TryState(mission.Id, out var relocatedState));
+                    Assert.Equal(state, relocatedState);
+                    Assert.True(baseline.TryOrientation(mission.Id, out var orientation));
+                    Assert.True(relocated.TryOrientation(mission.Id, out var relocatedOrientation));
+                    Assert.Equal(orientation, relocatedOrientation);
+                }
+            }
+
+            File.Delete(Path.Combine(install, "content", "soi.tm"));
+            File.Copy(Path.Combine(source, "soi.tm"), Path.Combine(install, "soi.tm"));
+            Assert.Throws<FileNotFoundException>(() => SampledMissionCatalog.Load("перенесённая миссия/pack.json", temporary.FullName, Resolve));
+        }
+        finally
+        {
+            temporary.Delete(recursive: true);
+        }
+
+        WorldGraph Build(IReadOnlyList<SampledMission> missions)
+        {
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(saturn, _ => default(CartesianState));
+            foreach (var mission in missions)
+                builder.AddSampledMission(mission);
+            return builder.Build();
+        }
+    }
+
     private sealed class PackedCassiniTheoryAttribute : TheoryAttribute
     {
         public PackedCassiniTheoryAttribute()

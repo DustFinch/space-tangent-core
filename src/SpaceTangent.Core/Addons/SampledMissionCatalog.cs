@@ -90,9 +90,9 @@ public static partial class SampledMissionCatalog
         var viewpointItems = new List<(JsonElement Item, bool Packed)>();
         var names = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<ObjectId>();
-        var kernelLoads = new List<(string Directory, string Name)>();
+        var kernelLoads = new List<SpiceResources.KernelGroup>();
         var instrumentFrames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var definitions = new List<(string Source, JsonElement Item, bool Packed)>();
+        var definitions = new List<(string Source, string Owner, JsonElement Item, bool Packed)>();
         var documents = new Dictionary<string, JsonDocument>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var active = new HashSet<string>(documents.Comparer);
         const int MaximumCatalogueBytes = 4 * 1024 * 1024;
@@ -101,9 +101,8 @@ public static partial class SampledMissionCatalog
         try
         {
             foreach (string entry in catalogPaths)
-                Visit(LocalAddonFiles.Resolve(root, root, entry), 0);
-            var resources = bindPool is null ? new SpiceResources(root, kernelLoads) :
-                bindPool(kernelLoads.Select(load => new SpiceResources.KernelGroup(root, [load])).ToArray());
+                Visit(LocalAddonFiles.Resolve(root, root, entry), root, 0);
+            var resources = bindPool is null ? new SpiceResources(kernelLoads) : bindPool(kernelLoads);
             var rejected = new HashSet<ObjectId>();
             var loaded = new List<(SampledMission Mission, HashSet<ObjectId> References)>();
             var timedChildren = definitions.Where(definition => definition.Packed && definition.Item.TryGetProperty("geometryBounds", out _))
@@ -126,7 +125,7 @@ public static partial class SampledMissionCatalog
                             ? ReadPackedParticleMission(definition.Item, TrackReference, directory, warning)
                             : ReadPackedBody(definition.Item, TrackReference, directory, resources, warning, cancellation,
                                 timedChildren.GetValueOrDefault((definition.Source, Text(definition.Item, "path"))))
-                        : ReadItem(definition.Item, Resolve, root, directory, resources,
+                        : ReadItem(definition.Item, Resolve, definition.Owner, directory, resources,
                             name => instrumentFrames.GetValueOrDefault(name), warning, cancellation));
                     loaded.Add((mission, references));
                 }
@@ -194,7 +193,7 @@ public static partial class SampledMissionCatalog
                 document.Dispose();
         }
 
-        void Visit(string path, int depth)
+        void Visit(string path, string owner, int depth, bool sourceOnly = false)
         {
             cancellation.ThrowIfCancellationRequested();
             if (active.Contains(path))
@@ -214,12 +213,27 @@ public static partial class SampledMissionCatalog
                     new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
                 documents.Add(path, json);
                 JsonElement catalogue = json.RootElement;
+                if (MissionCataloguePack.IsManifest(catalogue))
+                {
+                    if (sourceOnly)
+                        throw new InvalidDataException("A mission pack must contain loose source catalogues.");
+                    active.Add(path);
+                    string contentRoot = MissionCataloguePack.ContentRoot(path);
+                    foreach (string entry in MissionCataloguePack.ReadEntries(catalogue, contentRoot))
+                        Visit(entry, contentRoot, depth + 1, sourceOnly: true);
+                    active.Remove(path);
+                    return true;
+                }
+                var loads = new List<(string Directory, string Name)>();
                 if (catalogue.TryGetProperty("formatVersion", out var packedVersion))
                 {
                     int version = packedVersion.GetInt32();
                     if (version is < 3 or > 19)
                         throw new NotSupportedException($"Packed mission format version {version} is outside 3–19.");
-                    ReadPackedKernelLoads(catalogue, root, Path.GetDirectoryName(path)!, kernelLoads);
+                    if (sourceOnly)
+                        throw new InvalidDataException("A mission pack must contain loose source catalogues.");
+                    ReadPackedKernelLoads(catalogue, owner, Path.GetDirectoryName(path)!, loads);
+                    AddKernelLoads(owner, loads);
                     if (catalogue.TryGetProperty("annotations", out var packedAnnotations))
                         foreach (var annotation in packedAnnotations.EnumerateArray())
                             AddAnnotation(annotation, packed: true);
@@ -243,7 +257,7 @@ public static partial class SampledMissionCatalog
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
                             HasPackedSpice(body))
-                            Register(body, path, packed: true);
+                            Register(body, path, owner, packed: true);
                     return true;
                 }
                 if (Text(catalogue, "version") != "1.0")
@@ -259,25 +273,34 @@ public static partial class SampledMissionCatalog
                             throw new InvalidDataException("A mission dependency requires a nonempty local path.");
                         string resource = requirement.GetString()!;
                         string dependency;
-                        try { dependency = LocalAddonFiles.ResolveRelative(root, Path.GetDirectoryName(path)!, resource); }
+                        try { dependency = LocalAddonFiles.ResolveRelative(owner, Path.GetDirectoryName(path)!, resource); }
                         catch (FileNotFoundException)
                         {
                             warning?.Invoke($"{Path.GetFileName(path)} requires {resource}; resolving references against installed objects.");
                             continue;
                         }
-                        Visit(dependency, depth + 1);
+                        Visit(dependency, owner, depth + 1, sourceOnly);
                     }
                 }
-                ReadSpiceLoads(catalogue, Path.GetDirectoryName(path)!, kernelLoads);
+                ReadSpiceLoads(catalogue, Path.GetDirectoryName(path)!, loads);
+                AddKernelLoads(owner, loads);
                 if (catalogue.TryGetProperty("items", out var items))
                     foreach (JsonElement item in items.EnumerateArray())
-                        Register(item, path);
+                        Register(item, path, owner);
                 active.Remove(path);
                 return true;
             });
         }
 
-        void Register(JsonElement item, string path, bool packed = false)
+        void AddKernelLoads(string owner, List<(string Directory, string Name)> loads)
+        {
+            if (loads.Count > 256 - kernelLoads.Count)
+                throw new InvalidDataException("The sampled mission catalogues declare too many SPICE kernels.");
+            foreach (var load in loads)
+                kernelLoads.Add(new(owner, [load]));
+        }
+
+        void Register(JsonElement item, string path, string owner, bool packed = false)
         {
             if (!packed && item.TryGetProperty("type", out var type) && type.GetString() == "AnnotationScript")
             {
@@ -326,7 +349,7 @@ public static partial class SampledMissionCatalog
             if (!packed && item.TryGetProperty("bodyFrame", out var attitude) && attitude.ValueKind == JsonValueKind.Object &&
                 Text(attitude, "type") == "Spice")
                 instrumentFrames.Add(name, Text(attitude, "name"));
-            definitions.Add((path, item, packed));
+            definitions.Add((path, owner, item, packed));
         }
 
         void AddAnnotation(JsonElement value, bool packed)

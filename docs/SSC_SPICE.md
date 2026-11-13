@@ -29,3 +29,14 @@ The world graph can register a body from a local SPK with an IAU polynomial PCK 
 [NAIF Cassini kernels](https://naif.jpl.nasa.gov/pub/naif/CASSINI/kernels/spk/)
 
 [NAIF field of view definitions](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/getfov_c.html) · [NAIF reference frames](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/frames.html)
+
+### Portable JSON mission packs
+
+Build from an isolated add-on folder containing loose version 1.0 mission catalogues at its root or in `catalog/`. Keep relative `require` paths, meshes, textures and SPICE kernels in that folder. The output contains a versioned `pack.json` and preserves the source tree in `content/`.
+
+```sh
+dotnet run --project tools/SpaceTangent.PackTool -- import-missions ./cassini-source --pack ./cassini-pack
+dotnet run --project tools/SpaceTangent.PackTool -- check ./cassini-pack/pack.json --strict
+```
+
+Install the resulting folder directly inside the simulator's sampled mission directory. The loader resolves mission resources inside the pack and uses the installed world for named body references. For CLI validation of a mission that references additional installed bodies, pass `--body <name>` for each such body. The archive's compiled mission formats are read separately.
