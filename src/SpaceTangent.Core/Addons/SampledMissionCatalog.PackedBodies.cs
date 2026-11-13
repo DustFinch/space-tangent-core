@@ -58,22 +58,19 @@ public static partial class SampledMissionCatalog
             : ReadPackedShape(body, root, name, radius, resolve, warning, cancellation);
         var geometry = new List<MissionGeometrySpan>();
         AddGeometry(body, shape);
-        MissionGeometryBounds? bounds = null;
-        if (body.TryGetProperty("geometryBounds", out var terms))
+        var bounds = body.TryGetProperty("geometryBounds", out var terms)
+            ? ReadPackedGeometryBounds(terms, root, name, warning, cancellation) : null;
+        foreach (var child in children ?? [])
         {
-            bounds = ReadPackedGeometryBounds(terms, root, name, warning, cancellation);
-            foreach (var child in children ?? [])
-            {
-                cancellation.ThrowIfCancellationRequested();
-                double childRadius = PackedPositive(child, "radiusKm");
-                var childShape = ReadPackedShape(child, root, name, childRadius, resolve, warning, cancellation);
-                if (childShape is null && (!child.TryGetProperty("visible", out var visible) || visible.GetBoolean()))
-                    childShape = new(null, childRadius, Basis3d.Identity, default)
+            cancellation.ThrowIfCancellationRequested();
+            double childRadius = PackedPositive(child, "radiusKm");
+            var childShape = ReadPackedShape(child, root, name, childRadius, resolve, warning, cancellation);
+            if (childShape is null && (!child.TryGetProperty("visible", out var visible) || visible.GetBoolean()))
+                childShape = new(null, childRadius, Basis3d.Identity, default)
                 {
                     EllipsoidRadiiKilometers = new(childRadius, childRadius, PackedPositive(child, "polarRadiusKm"))
                 };
-                AddGeometry(child, childShape);
-            }
+            AddGeometry(child, childShape);
         }
         return new(id, name, shape?.MeshPath, radius, arcs.AsReadOnly())
         {

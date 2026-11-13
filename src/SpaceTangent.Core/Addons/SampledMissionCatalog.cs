@@ -95,6 +95,7 @@ public static partial class SampledMissionCatalog
         var definitions = new List<(string Source, string Owner, JsonElement Item, bool Packed)>();
         var documents = new Dictionary<string, JsonDocument>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var active = new HashSet<string>(documents.Comparer);
+        var timedChildren = new Dictionary<(string Source, string Path), List<JsonElement>>();
         const int MaximumCatalogueBytes = 4 * 1024 * 1024;
         const int MaximumTotalBytes = 16 * 1024 * 1024;
         long bytes = 0;
@@ -105,11 +106,7 @@ public static partial class SampledMissionCatalog
             var resources = bindPool is null ? new SpiceResources(kernelLoads) : bindPool(kernelLoads);
             var rejected = new HashSet<ObjectId>();
             var loaded = new List<(SampledMission Mission, HashSet<ObjectId> References)>();
-            var timedChildren = definitions.Where(definition => definition.Packed && definition.Item.TryGetProperty("geometryBounds", out _))
-                .ToDictionary(definition => (definition.Source, Text(definition.Item, "path")), _ => new List<JsonElement>());
-            foreach (var definition in definitions.Where(definition => definition.Packed && IsTimedComponent(definition.Item)))
-                if (timedChildren.TryGetValue((definition.Source, Text(definition.Item, "parent")), out var children))
-                    children.Add(definition.Item);
+
             foreach (var definition in definitions)
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -249,8 +246,19 @@ public static partial class SampledMissionCatalog
                     }
                     if (bodies.GetArrayLength() > 512 || bodies.GetArrayLength() == 0 && !metadata)
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
-                    var timedParents = bodies.EnumerateArray().Where(body => body.TryGetProperty("geometryBounds", out _))
-                        .Select(body => Text(body, "path")).ToHashSet(StringComparer.Ordinal);
+                    var groups = bodies.EnumerateArray().Where(IsTimedComponent)
+                        .ToLookup(body => Text(body, "parent"), StringComparer.Ordinal);
+                    var timedParents = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var body in bodies.EnumerateArray())
+                    {
+                        string key = Text(body, "path");
+                        // Early exports used timed components before they carried explicit geometry bounds.
+                        if (body.TryGetProperty("geometryBounds", out _) || body.TryGetProperty("shown", out _) && groups.Contains(key))
+                        {
+                            timedParents.Add(key);
+                            timedChildren.TryAdd((path, key), groups[key].ToList());
+                        }
+                    }
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (timedParents.Contains(Text(body, "path")) ||
                             (IsTimedComponent(body) && timedParents.Contains(Text(body, "parent"))) ||

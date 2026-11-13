@@ -76,6 +76,21 @@ public sealed class MissionSensorTests
         };
         var loose = SampledMissionCatalog.Load("sensor-verification.json", source, Resolve);
         var packed = SampledMissionCatalog.Load("pack.json", archive, Resolve);
+        var timed = Assert.Single(packed, body => body.Name == "TimeSwitchModel");
+        Assert.DoesNotContain(packed, body => body.Name.StartsWith("TimeSwitchModel (", StringComparison.Ordinal));
+        var originalTimed = Assert.Single(SampledMissionCatalog.Load("time-switch-verification.json", source, Resolve));
+        foreach (double day in new[] { 2455754.99, 2455755, 2455755.01, 2455755.02, 2455755.03, 2455755.04 })
+        {
+            string? expected = MeshAt(originalTimed, day);
+            Assert.Equal(expected, MeshAt(timed, day));
+        }
+
+        static string? MeshAt(SampledMission body, double day)
+        {
+            var epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
+            var span = body.Geometry!.SingleOrDefault(span => epoch.CompareTo(span.Start) >= 0 && epoch.CompareTo(span.End) < 0);
+            return Path.GetFileNameWithoutExtension(span?.Shape.MeshPath);
+        }
         foreach (var original in loose)
         {
             var actual = Assert.Single(packed, body => body.Id == original.Id);
