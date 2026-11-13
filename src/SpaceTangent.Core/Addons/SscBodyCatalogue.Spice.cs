@@ -24,6 +24,7 @@ public static partial class SscBodyCatalogue
     }
 
     private static SscSpiceInput ReadSpiceResources(IReadOnlyList<SscDefinition> definitions,
+        IReadOnlyList<SscDefinition> declarations,
         Func<string, string> root, SscResource resolve, CancellationToken cancellation,
         string[] roots, IReadOnlyList<PackedKernel> furnished,
         IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder)
@@ -31,6 +32,13 @@ public static partial class SscBodyCatalogue
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
         var unavailable = new Dictionary<(SscValue.Map Properties, string Field), Exception>();
         var prefixes = new Dictionary<(SscValue.Map Properties, string Field), int>();
+        var effective = new Dictionary<SscValue.Map, (SscValue.Map Fields, bool Optional)>(ReferenceEqualityComparer.Instance);
+        foreach (var item in definitions)
+        foreach (var (fields, timeline) in ModelScopes(item.Properties))
+        foreach (string field in new[] { "SpiceOrbit", "SpiceRotation" })
+            if (fields.Fields.GetValueOrDefault(field) is SscValue.Map block)
+                effective.Add(block, (fields, HasSpiceAlternative(fields, field, timeline)));
+
         var supplied = furnished.Select(item => (Group: new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]), item.Order, Sequence: 0));
         var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Group.Root].First())
             .ThenBy(item => item.Order).ThenBy(item => item.Sequence).Select(item => item.Group).Concat(missionLoads ?? []));
@@ -38,7 +46,7 @@ public static partial class SscBodyCatalogue
 
         IEnumerable<(SpiceResources.KernelGroup Group, int Order, int Sequence)> Sources()
         {
-            foreach (var item in definitions)
+            foreach (var item in declarations)
             foreach (var (properties, timeline) in ModelScopes(item.Properties))
             foreach (string field in new[] { "SpiceOrbit", "SpiceRotation" })
             {
@@ -48,16 +56,26 @@ public static partial class SscBodyCatalogue
                 string ownerField = timeline ? "Timeline" : field;
                 string directory = item.DirectoryFor(ownerField);
                 string owner = root(directory);
-                var key = (properties, field);
-                bool optional = HasSpiceAlternative(properties, field, timeline);
-                string[] authored = parameters.Fields.TryGetValue("Kernel", out var kernel)
-                    ? (kernel is SscValue.List list ? list.Items : [kernel]).Select(name => name.AsText()).ToArray() : [];
+                bool retained = effective.TryGetValue(parameters, out var model);
+                bool hasKernel = parameters.Fields.TryGetValue("Kernel", out var kernel);
+                if (!retained && !hasKernel)
+                    continue;
+                string[] authored = hasKernel
+                    ? (kernel is SscValue.List list ? list.Items : [kernel!]).Select(name => name.AsText()).ToArray() : [];
+                var key = (model.Fields, field);
+                Action<Exception>? unavailableModel = retained && !model.Optional ? null : OnUnavailable;
                 yield return (new SpiceResources.KernelGroup(owner, authored.Select(name => (directory, name)).ToArray(),
-                    optional ? error => unavailable.Add(key, error) : null, SkipRepeatedExplicit: true)
+                    unavailableModel, SkipRepeatedExplicit: true)
                     {
                         ResolveExplicit = name => resolve(item, ownerField, AddonStage.Kernel, name, "data"),
-                        RecordPrefix = count => prefixes.Add(key, count)
+                        RecordPrefix = retained ? count => prefixes.Add(key, count) : null
                     }, kernelOrder?.GetValueOrDefault(directory) ?? 0, item.FieldOrder[ownerField]);
+
+                void OnUnavailable(Exception error)
+                {
+                    if (retained)
+                        unavailable.Add(key, error);
+                }
             }
         }
     }

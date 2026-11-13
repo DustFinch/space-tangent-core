@@ -30,7 +30,8 @@ internal static class SscDefinitions
             return new SscDocument(file, root, embedded?[file]);
         }), cancellation);
 
-    internal static IReadOnlyList<SscDefinition> Load(IEnumerable<SscDocument> documents, CancellationToken cancellation)
+    internal static IReadOnlyList<SscDefinition> Load(IEnumerable<SscDocument> documents, CancellationToken cancellation,
+        List<SscDefinition>? declarations = null)
     {
         var bodies = new List<SscDefinition>();
         var aliases = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -69,6 +70,9 @@ internal static class SscDefinitions
                 int sequence = operation++;
                 var positions = properties.Fields.Keys.ToDictionary(key => key, _ => sequence, StringComparer.Ordinal);
 
+                var declaration = new SscDefinition(string.Join(':', names), parent, properties, directories, positions, file);
+                declarations?.Add(declaration);
+
                 if (aliases.TryGetValue(primaryPath, out int index))
                 {
                     if (disposition == SscDisposition.Add)
@@ -88,7 +92,7 @@ internal static class SscDefinitions
                         throw new InvalidDataException($"Duplicate SSC body alias {parent}/{name}.");
                     longestAliasPath = Math.Max(longestAliasPath, aliasPath.Length);
                 }
-                bodies.Add(new(string.Join(':', names), parent, properties, directories, positions, file));
+                bodies.Add(declaration);
             }
         }
         static string ReadFile(string file, string? root)

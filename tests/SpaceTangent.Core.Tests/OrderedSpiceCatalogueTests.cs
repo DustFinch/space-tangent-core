@@ -826,6 +826,61 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void ReplacedAndModifiedBodiesLeaveTheirPreviouslyLoadedKernelsAvailable()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            string data = Directory.CreateDirectory(Path.Combine(source, "data")).FullName;
+            foreach (string file in new[] { "linear.bsp", "alias-a.tf" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+            foreach (string file in new[] { "wide.bsp", "alias-b.tf", "aliases.bsp" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(data, file));
+            File.WriteAllText(Path.Combine(source, "01-initial.ssc"), """
+                "Loader" "Sol" {
+                    SpiceOrbit { Kernel [ "linear.bsp" "alias-a.tf" ] Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                "Observer" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Target "PREFIX_BODY" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Missing" "Sol" {
+                    SpiceOrbit { Kernel "absent.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                """);
+            File.WriteAllText(Path.Combine(data, "02-edits.ssc"), """
+                Modify "Loader" "Sol" {
+                    SpiceOrbit { Kernel [ "alias-b.tf" "aliases.bsp" "wide.bsp" ] Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                Replace "Loader" "Sol" { FixedPosition [ 4 0 0 ] }
+                Replace "Missing" "Sol" { FixedPosition [ 5 0 0 ] }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(3, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string folder in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(folder, warning: warnings.Add);
+                Assert.Empty(warnings);
+                var epoch = JulianInstant.FromTdbSeconds(25);
+                Assert.Equal(4d, bodies[0].Sample(epoch)!.Value.PositionKilometers.X);
+                Assert.Equal(5d, bodies[2].Sample(epoch)!.Value.PositionKilometers.X);
+                var state = bodies[1].Sample(epoch)!.Value;
+                Assert.InRange(state.PositionKilometers.X, 1019.99795, 1019.99797);
+                Assert.InRange(state.VelocityKilometersPerSecond.X, 1.99999999, 2.00000001);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);

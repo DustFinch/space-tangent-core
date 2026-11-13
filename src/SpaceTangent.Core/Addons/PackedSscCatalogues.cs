@@ -13,8 +13,9 @@ public static partial class SscBodyCatalogue
         Action<string>? warning, CancellationToken cancellation)
     {
         var documents = ReadPackedDocuments(root, file, cancellation);
-        var definitions = SscDefinitions.Load(documents.Documents, cancellation);
-        return ReadBodyDefinitions(definitions, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels, documents.KernelOrder);
+        var declarations = new List<SscDefinition>();
+        var definitions = SscDefinitions.Load(documents.Documents, cancellation, declarations);
+        return ReadBodyDefinitions(definitions, declarations, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels, documents.KernelOrder);
     }
 
     private sealed record SscSource(IReadOnlyList<SscDocument> Documents, SscResource Resolve,

@@ -44,7 +44,8 @@ public static partial class SscBodyCatalogue
             using var reader = new StreamReader(file, new UTF8Encoding(false, true));
             return document with { Text = reader.ReadToEnd() };
         }).ToArray();
-        var definitions = SscDefinitions.Load(documents, cancellation);
+        var declarations = new List<SscDefinition>();
+        var definitions = SscDefinitions.Load(documents, cancellation, declarations);
         var resources = new Dictionary<string, Dictionary<(string Kind, string Source), PackResource>>(StringComparer.Ordinal);
         foreach (var document in documents)
             resources.TryAdd(Path.GetDirectoryName(document.File)!, new());
@@ -64,7 +65,7 @@ public static partial class SscBodyCatalogue
             }
         }
 
-        var bodies = ReadBodyDefinitions(definitions, _ => root, null, warning, Resolve, cancellation, [root], []);
+        var bodies = ReadBodyDefinitions(definitions, declarations, _ => root, null, warning, Resolve, cancellation, [root], []);
         Directory.CreateDirectory(parent);
         string stage = Path.Combine(parent, ".body-pack-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(stage);

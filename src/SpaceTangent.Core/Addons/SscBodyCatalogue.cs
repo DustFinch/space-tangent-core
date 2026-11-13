@@ -52,7 +52,9 @@ public static partial class SscBodyCatalogue
         if (AddonDependencies.FileExists(pack))
             return AddonDiagnostics.Read(AddonStage.Catalog, pack, () => ReadPackedSsc(root, pack, scripts, warning, cancellation));
         var source = ReadLooseDocuments(root);
-        return ReadBodyDefinitions(SscDefinitions.Load(source.Documents, cancellation), _ => root,
+        var declarations = new List<SscDefinition>();
+        var definitions = SscDefinitions.Load(source.Documents, cancellation, declarations);
+        return ReadBodyDefinitions(definitions, declarations, _ => root,
             scripts, warning, source.Resolve, cancellation, [root], source.Kernels);
     }
 
@@ -71,18 +73,20 @@ public static partial class SscBodyCatalogue
     }
 
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
+        IReadOnlyList<SscDefinition> declarations,
         Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
         string[] roots, IReadOnlyList<PackedKernel> kernels, IReadOnlyDictionary<string, int>? kernelOrder = null) =>
-        ReadBodyDefinitions(definitions, root, scripts, warning, resolve, cancellation, roots, kernels, out _, null, kernelOrder);
+        ReadBodyDefinitions(definitions, declarations, root, scripts, warning, resolve, cancellation, roots, kernels, out _, null, kernelOrder);
 
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
+        IReadOnlyList<SscDefinition> declarations,
         Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
         string[] roots, IReadOnlyList<PackedKernel> kernels, out SpiceResources resources,
         IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder)
     {
         if (definitions.Count > 512)
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
-        var spice = ReadSpiceResources(definitions, root, resolve, cancellation, roots, kernels, missionLoads, kernelOrder);
+        var spice = ReadSpiceResources(definitions, declarations, root, resolve, cancellation, roots, kernels, missionLoads, kernelOrder);
         resources = spice.Pool;
         var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
         var result = new List<SscBodyDefinition>();

@@ -101,8 +101,9 @@ public static partial class SscBodyCatalogue
                 owners[Path.GetDirectoryName(document.File)!] = (root, source.Resolve);
             }
         }
-        var definitions = SscDefinitions.Load(documents, cancellation);
-        var bodies = ReadBodyDefinitions(definitions, directory => owners[directory].Root, scripts, warning,
+        var declarations = new List<SscDefinition>();
+        var definitions = SscDefinitions.Load(documents, cancellation, declarations);
+        var bodies = ReadBodyDefinitions(definitions, declarations, directory => owners[directory].Root, scripts, warning,
             (body, field, stage, name, fallbacks) => owners[body.DirectoryFor(field)].Resolve(body, field, stage, name, fallbacks),
             cancellation, roots, kernels, out resources, missionLoads, kernelOrder).ToList();
         foreach (string root in roots)
