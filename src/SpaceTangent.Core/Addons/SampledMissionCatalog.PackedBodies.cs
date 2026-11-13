@@ -234,15 +234,19 @@ public static partial class SampledMissionCatalog
             var offset = model.TryGetProperty("offset", out var position) ? sourceAxes.Transpose().Transform(Vector(position)) : default;
             return new(path, size, rotation, offset);
         }
-        if (appearance.TryGetProperty("texture", out var texture))
+        var maps = ReadGlobeMaps(appearance, root, root, name, packed: true, cancellation);
+        if (appearance.TryGetProperty("texture", out var texture) || maps is not null)
         {
-            string file = texture.GetString() ?? throw new InvalidDataException("A packed globe requires a texture name.");
-            string? path;
-            try { path = PackedAsset(root, "textures", file); }
-            catch (FileNotFoundException) { path = null; warning?.Invoke($"{name}: globe map {file} is missing; the shape is available."); }
+            string? path = null;
+            if (texture.ValueKind == JsonValueKind.String && texture.GetString() is { Length: > 0 } file)
+            {
+                try { path = PackedAsset(root, "textures", file); }
+                catch (FileNotFoundException) { warning?.Invoke($"{name}: globe map {file} is missing; the shape is available."); }
+            }
             return new(null, radius, Basis3d.Identity, default)
             {
-                EllipsoidRadiiKilometers = new(radius, radius, PackedPositive(body, "polarRadiusKm")), GlobeTexturePath = path
+                EllipsoidRadiiKilometers = new(radius, radius, PackedPositive(body, "polarRadiusKm")),
+                GlobeTexturePath = path, SurfaceMaps = maps
             };
         }
         return null;

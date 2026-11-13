@@ -96,8 +96,8 @@ public static class LocalSurfaceMaps
         return results.AsReadOnly();
     }
 
-    private static SurfaceTilePyramid? ReadMap(JsonElement appearance, string key, string root, bool packed,
-        CancellationToken cancellation)
+    internal static SurfaceTilePyramid? ReadMap(JsonElement appearance, string key, string root, bool packed,
+        CancellationToken cancellation, string? sourceDirectory = null)
     {
         if (!Property(appearance, key, out var map) || Text(map, "type") != "NameTemplate")
             return null;
@@ -116,7 +116,7 @@ public static class LocalSurfaceMaps
         var tiles = new Dictionary<SurfaceTileAddress, string>();
         if (Property(map, "localFiles", out var localFiles))
         {
-            string textureDirectory = packed ? Path.Combine(root, "textures") : root;
+            string textureDirectory = packed ? Path.Combine(root, "textures") : sourceDirectory ?? root;
             foreach (var entry in localFiles.EnumerateObject())
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -137,7 +137,7 @@ public static class LocalSurfaceMaps
         }
         else
         {
-            ReadTemplate(root, template, levels, hasRows, tiles, cancellation);
+            ReadTemplate(root, sourceDirectory ?? root, template, levels, hasRows, tiles, cancellation);
         }
         bool packedNormals = template.EndsWith(".dds", StringComparison.OrdinalIgnoreCase) ||
             template.EndsWith(".dxt5nm", StringComparison.OrdinalIgnoreCase);
@@ -145,7 +145,7 @@ public static class LocalSurfaceMaps
             new System.Collections.ObjectModel.ReadOnlyDictionary<SurfaceTileAddress, string>(tiles));
     }
 
-    private static void ReadTemplate(string root, string template, int levels, bool hasRows,
+    private static void ReadTemplate(string root, string directory, string template, int levels, bool hasRows,
         Dictionary<SurfaceTileAddress, string> tiles, CancellationToken cancellation)
     {
         var pieces = new List<(string Literal, int Token)>();
@@ -160,9 +160,9 @@ public static class LocalSurfaceMaps
         if (end < template.Length)
             pieces.Add((template[end..], -1));
         string[] templateParts = template.Split('/');
-        foreach (string candidate in MatchPaths(root, templateParts, 0, cancellation))
+        foreach (string candidate in MatchPaths(directory, templateParts, 0, cancellation))
         {
-            string relative = Path.GetRelativePath(root, candidate).Replace('\\', '/');
+            string relative = Path.GetRelativePath(directory, candidate).Replace('\\', '/');
             Parse(0, 0, null, null, null);
 
             void Parse(int piece, int offset, int? level, int? column, int? northRow)

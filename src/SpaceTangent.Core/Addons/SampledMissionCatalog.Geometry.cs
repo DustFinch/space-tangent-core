@@ -12,6 +12,7 @@ public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Bas
     public IReadOnlyList<MissionParticleEmitter>? ParticleEmitters { get; init; }
     public Vector3d? EllipsoidRadiiKilometers { get; init; }
     public string? GlobeTexturePath { get; init; }
+    public BodySurfaceMaps? SurfaceMaps { get; init; }
     public MissionAxesStyle? Axes { get; init; }
     public MissionVectorStyle? VectorOverlay { get; init; }
     public MissionSwarmStyle? Swarm { get; init; }
@@ -45,7 +46,7 @@ public static partial class SampledMissionCatalog
             return [new(start, end, mesh)];
         }
         if (type == "Globe")
-            return [new(start, end, ReadGlobe(value, root, directory, name, warning))];
+            return [new(start, end, ReadGlobe(value, root, directory, name, warning, cancellation))];
         if (type != "TimeSwitched")
         {
             warning?.Invoke($"{name}: {type} geometry is not supported by the sampled mission reader.");
@@ -145,7 +146,8 @@ public static partial class SampledMissionCatalog
             };
     }
 
-    private static MissionShape ReadGlobe(JsonElement value, string root, string directory, string name, Action<string>? warning)
+    private static MissionShape ReadGlobe(JsonElement value, string root, string directory, string name, Action<string>? warning,
+        CancellationToken cancellation)
     {
         Vector3d radii;
         if (value.TryGetProperty("radii", out var ellipsoid))
@@ -166,14 +168,23 @@ public static partial class SampledMissionCatalog
                 try { texture = LocalAddonFiles.ResolveRelative(root, directory, source); }
                 catch (FileNotFoundException) { warning?.Invoke($"{name}: globe map {source} is missing; the shape is available."); }
             }
-            else if (map.ValueKind == JsonValueKind.Object)
-                warning?.Invoke($"{name}: a tiled globe map requires a supported local surface pack.");
+            else if (map.ValueKind == JsonValueKind.Object && Text(map, "type") != "NameTemplate")
+                warning?.Invoke($"{name}: the globe map type has no local tile reader.");
         }
         return new(null, Math.Max(radii.X, Math.Max(radii.Y, radii.Z)), Basis3d.Identity, default)
         {
             EllipsoidRadiiKilometers = radii,
-            GlobeTexturePath = texture
+            GlobeTexturePath = texture,
+            SurfaceMaps = ReadGlobeMaps(value, root, directory, name, packed: false, cancellation)
         };
+    }
+
+    private static BodySurfaceMaps? ReadGlobeMaps(JsonElement value, string root, string directory, string name,
+        bool packed, CancellationToken cancellation)
+    {
+        var color = LocalSurfaceMaps.ReadMap(value, packed ? "tiledMap" : "baseMap", root, packed, cancellation, directory);
+        var normal = LocalSurfaceMaps.ReadMap(value, packed ? "normalTiledMap" : "normalMap", root, packed, cancellation, directory);
+        return color is null && normal is null ? null : new(name, color, normal);
     }
 
     private static MissionShape ReadMesh(JsonElement value, string root, string directory, string name, Action<string>? warning)
