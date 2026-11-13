@@ -17,6 +17,13 @@ public static class SpiceJsonCatalog
     /// <summary>Loads local catalogues into one ordered kernel pool before binding spacecraft or instruments.</summary>
     public static SpiceCatalogResult Load(IEnumerable<string> catalogues, string assetRoot)
     {
+        var bind = Read(catalogues, assetRoot, out var loads);
+        return bind(new SpiceResources(loads));
+    }
+
+    internal static Func<SpiceResources, SpiceCatalogResult> Read(IEnumerable<string> catalogues, string assetRoot,
+        out IReadOnlyList<SpiceResources.KernelGroup> loads)
+    {
         ArgumentNullException.ThrowIfNull(catalogues);
         string root = Path.GetFullPath(assetRoot);
         var items = new List<(string Directory, JsonElement Item)>();
@@ -39,8 +46,8 @@ public static class SpiceJsonCatalog
                 using JsonDocument json = JsonDocument.Parse(stream);
                 JsonElement catalog = json.RootElement;
                 Require(catalog, "version", "1.0");
-                if (catalog.TryGetProperty("spiceKernels", out var loads))
-                    kernels.AddRange(loads.EnumerateArray().Select(file => (directory, Text(file))));
+                if (catalog.TryGetProperty("spiceKernels", out var listedKernels))
+                    kernels.AddRange(listedKernels.EnumerateArray().Select(file => (directory, Text(file))));
                 if (catalog.TryGetProperty("items", out var definitions))
                     items.AddRange(definitions.EnumerateArray().Select(item => (directory, item.Clone())));
                 if (items.Count > 512)
@@ -49,7 +56,14 @@ public static class SpiceJsonCatalog
             });
         }
 
-        var resources = new SpiceResources(root, kernels);
+        loads = kernels.Select(file => new SpiceResources.KernelGroup(root, [file])).ToArray();
+        return Bind;
+
+        SpiceCatalogResult Bind(SpiceResources resources) => BindItems(root, items, resources);
+    }
+
+    private static SpiceCatalogResult BindItems(string root, List<(string Directory, JsonElement Item)> items, SpiceResources resources)
+    {
         var tracks = new List<SpiceSpacecraft>();
         var sensorItems = new List<JsonElement>();
         foreach (var (directory, item) in items)

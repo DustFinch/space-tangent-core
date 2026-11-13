@@ -134,6 +134,12 @@ public sealed class OrderedSpiceCatalogueTests
             var combined = SscBodyCatalogue.LoadWithMissions([bodies], catalogues, missions, Resolve, _ => { });
             var ssc = Assert.Single(combined.Bodies);
             var craft = Assert.Single(combined.Missions.Missions, item => item.Name == "Cassini SOI");
+            string dedicatedFile = Path.Combine(missions, "cassini-catalog.json");
+            var withDedicated = SscBodyCatalogue.LoadWithMissions([bodies], [], missions, Resolve, _ => { },
+                dedicatedMission: dedicatedFile);
+            var dedicated = Assert.Single(withDedicated.DedicatedMission!.Spacecraft);
+            Assert.Equal(2, withDedicated.DedicatedMission.SensorCount);
+            var dedicatedSsc = Assert.Single(withDedicated.Bodies);
             Assert.Equal(3, combined.Missions.Missions.Count);
             var graph = new WorldGraphBuilder();
             graph.AddTrajectory(saturn, _ => new(default, default));
@@ -149,6 +155,11 @@ public sealed class OrderedSpiceCatalogueTests
                 Assert.InRange((fromSsc.PositionKilometers - state.PositionKilometers).Length, 0, .001);
                 Assert.InRange((fromSsc.VelocityKilometersPerSecond - state.VelocityKilometersPerSecond).Length, 0, 1e-8);
                 Assert.Equal(attitude, ssc.SampleRotation!(epoch)!.Value);
+                Assert.True(dedicated.TrySample(epoch, out var dedicatedState));
+                Assert.Equal(state, dedicatedState);
+                Assert.Equal(fromSsc, dedicatedSsc.Sample(epoch)!.Value);
+                Assert.True(dedicated.TryAttitude(epoch, out var pointing));
+                Assert.Equal(attitude.ToWorld, pointing);
             }
         }
         finally

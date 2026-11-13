@@ -15,11 +15,22 @@ public static class SscSpiceCatalog
         string root = Path.GetFullPath(assetRoot);
         var result = new List<SpiceSpacecraft>();
         foreach (var definition in SscDefinitions.Load(catalogPaths, root))
-            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () => ReadSpacecraft(root, definition)));
+            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () => ReadSpacecraft(root, definition, new SpiceResources(root, ReadKernels(definition, requireOrbitKernel: true)))));
         return result.AsReadOnly();
     }
 
-    private static SpiceSpacecraft ReadSpacecraft(string root, SscDefinition definition)
+    internal static Func<SpiceResources, SpiceCatalogResult> Read(IEnumerable<string> catalogPaths, string assetRoot,
+        out IReadOnlyList<SpiceResources.KernelGroup> loads)
+    {
+        string root = Path.GetFullPath(assetRoot);
+        var definitions = SscDefinitions.Load(catalogPaths, root);
+        loads = definitions.SelectMany(definition => ReadKernels(definition, requireOrbitKernel: false))
+            .Select(file => new SpiceResources.KernelGroup(root, [file])).ToArray();
+        return resources => new(Array.AsReadOnly(definitions.Select(definition =>
+            AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () => ReadSpacecraft(root, definition, resources))).ToArray()), []);
+    }
+
+    private static SpiceSpacecraft ReadSpacecraft(string root, SscDefinition definition, SpiceResources resources)
     {
         var fields = definition.Properties;
         if (fields.Text("Class") != "spacecraft" || fields.Fields.ContainsKey("Timeline"))
@@ -35,7 +46,7 @@ public static class SscSpiceCatalog
         SscValue.Map orbit = fields.Object("SpiceOrbit");
         int target = NaifIds.Resolve(orbit.Text("Target"));
         int center = NaifIds.Resolve(orbit.Text("Origin"));
-        var kernels = KernelSources(definition.DirectoryFor("SpiceOrbit"), orbit.Get("Kernel"));
+
 
         string? attitude = null, baseFrame = null;
         if (fields.Fields.TryGetValue("SpiceRotation", out var rotation))
@@ -44,11 +55,25 @@ public static class SscSpiceCatalog
                 throw new InvalidDataException("SSC SpiceRotation must be an object.");
             attitude = pointing.Text("Frame");
             baseFrame = pointing.Text("BaseFrame");
-            if (pointing.Fields.TryGetValue("Kernel", out var pointingKernels))
-                kernels = kernels.Concat(KernelSources(definition.DirectoryFor("SpiceRotation"), pointingKernels));
+
         }
         return new(definition.Names, definition.Parent, target, center, mesh, radius, attitude, baseFrame,
-            new SpiceResources(root, kernels));
+            resources);
+    }
+
+    private static IEnumerable<(string Directory, string Name)> ReadKernels(SscDefinition definition, bool requireOrbitKernel)
+    {
+        var fields = definition.Properties;
+        if (fields.Text("Class") != "spacecraft" || fields.Fields.ContainsKey("Timeline"))
+            throw new NotSupportedException("This SSC adapter expects spacecraft with a SpiceOrbit.");
+        var orbit = fields.Object("SpiceOrbit");
+        if (orbit.Fields.TryGetValue("Kernel", out var orbitKernels) || requireOrbitKernel)
+            foreach (var file in KernelSources(definition.DirectoryFor("SpiceOrbit"), orbitKernels ?? orbit.Get("Kernel")))
+                yield return file;
+        if (fields.Fields.TryGetValue("SpiceRotation", out var rotation) && rotation is SscValue.Map pointing &&
+            pointing.Fields.TryGetValue("Kernel", out var pointingKernels))
+            foreach (var file in KernelSources(definition.DirectoryFor("SpiceRotation"), pointingKernels))
+                yield return file;
     }
 
     private static IEnumerable<(string Directory, string Name)> KernelSources(string directory, SscValue source) =>

@@ -4,7 +4,10 @@ using SpaceTangent.Core.Spice;
 
 namespace SpaceTangent.Core.Addons;
 
-public sealed record InstalledMissionCatalogues(IReadOnlyList<SscBodyDefinition> Bodies, SampledMissionContent Missions);
+public sealed record InstalledMissionCatalogues(IReadOnlyList<SscBodyDefinition> Bodies, SampledMissionContent Missions)
+{
+    public SpiceCatalogResult? DedicatedMission { get; init; }
+}
 
 public static partial class SscBodyCatalogue
 {
@@ -17,15 +20,38 @@ public static partial class SscBodyCatalogue
     public static InstalledMissionCatalogues LoadWithMissions(IEnumerable<string> sscDirectories,
         IEnumerable<string> missionCatalogues, string missionRoot, Func<string, ObjectId?> resolveBody,
         Action<string> sscWarning, Action<string>? missionWarning = null, CancellationToken cancellation = default,
-        ISscScriptModels? scripts = null)
+        ISscScriptModels? scripts = null, string? dedicatedMission = null,
+        IEnumerable<string>? dedicatedSscCatalogues = null)
     {
         IReadOnlyList<SscBodyDefinition> bodies = [];
+        IReadOnlyList<SpiceResources.KernelGroup> dedicatedLoads = [];
+        Func<SpiceResources, SpiceCatalogResult>? bindDedicated = null;
+        if (dedicatedMission is not null)
+        {
+            string file = Path.GetFullPath(dedicatedMission);
+            string root = Path.GetDirectoryName(file)!;
+            try
+            {
+                bindDedicated = Path.GetExtension(file).ToLowerInvariant() switch
+                {
+                    ".ssc" => SscSpiceCatalog.Read(dedicatedSscCatalogues ?? [file], root, out dedicatedLoads),
+                    ".json" => SpiceJsonCatalog.Read([file], root, out dedicatedLoads),
+                    _ => throw new NotSupportedException("Use an SSC or JSON mission catalogue.")
+                };
+            }
+            catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog, file, source: "SPICE mission"))
+            {
+                throw;
+            }
+        }
+        SpiceResources? pool = null;
         var missions = SampledMissionCatalog.LoadContent(missionCatalogues, missionRoot, resolveBody, missionWarning,
             cancellation, loads =>
             {
                 try
                 {
-                    bodies = LoadSources(sscDirectories, sscWarning, cancellation, scripts, loads, out var resources);
+                    bodies = LoadSources(sscDirectories, sscWarning, cancellation, scripts, [.. loads, .. dedicatedLoads], out var resources);
+                    pool = resources;
                     return resources;
                 }
                 catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog, source: "SSC body catalogue"))
@@ -33,7 +59,11 @@ public static partial class SscBodyCatalogue
                     throw;
                 }
             });
-        return new(bodies, missions);
+        return new(bodies, missions)
+        {
+            DedicatedMission = bindDedicated is null ? null : AddonDiagnostics.Read(AddonStage.Catalog, dedicatedMission,
+                () => bindDedicated(pool!))
+        };
     }
 
     private static IReadOnlyList<SscBodyDefinition> LoadSources(IEnumerable<string> directories, Action<string> warning,
