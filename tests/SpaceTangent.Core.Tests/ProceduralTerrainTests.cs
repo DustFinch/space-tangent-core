@@ -34,6 +34,29 @@ public sealed class ProceduralTerrainTests
     }
 
     [Fact]
+    public void ChildMorphMatchesParentTriangleAndSharedEdges()
+    {
+        var terrain = new ProceduralTerrain(new ProceduralSurface(3, 5200, ProceduralWorldKind.Desert), 5185);
+        var parent = terrain.Build(new(0, 5, 16, 15));
+        var left = terrain.Build(new(0, 6, 32, 30));
+        var right = terrain.Build(new(0, 6, 33, 30));
+        var coarse = Assert.IsType<ProceduralTerrainVertex[]>(left.ParentVertices);
+        var neighbour = Assert.IsType<ProceduralTerrainVertex[]>(right.ParentVertices);
+        int grid = ProceduralTerrain.Grid, row = grid + 1;
+        var diagonal = (parent.Vertices[1].PositionKilometers + parent.Vertices[row].PositionKilometers) * .5;
+        Assert.InRange((coarse[row + 1].PositionKilometers + left.CenterKilometers - (diagonal + parent.CenterKilometers)).Length, 0, 1e-9);
+        Assert.InRange((coarse[0].PositionKilometers + left.CenterKilometers -
+            (parent.Vertices[0].PositionKilometers + parent.CenterKilometers)).Length, 0, 1e-9);
+        for (int y = 0; y <= grid; y++)
+        {
+            var a = coarse[y * row + grid];
+            var b = neighbour[y * row];
+            Assert.InRange((a.PositionKilometers + left.CenterKilometers - (b.PositionKilometers + right.CenterKilometers)).Length, 0, 1e-9);
+            Assert.Equal(a.Albedo, b.Albedo);
+        }
+    }
+
+    [Fact]
     public void DescendingRefinesVisiblePatchesWithinABoundedBudget()
     {
         var surface = new ProceduralSurface(1, 5900);
