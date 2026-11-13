@@ -108,5 +108,10 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.cs",
     "sha256": "97ebae0587762b8c613ec88aabc47a900b9a894869769902fce5263dfadbef55",
     "reason": "Exact archived body classification tag."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "81c9e0c5d108432b31921f576bacd541bbc2120e350b709c304053c0514ee3af",
+    "reason": "Exact wire value for the archived two-vector trajectory velocity policy."
   }
 ]

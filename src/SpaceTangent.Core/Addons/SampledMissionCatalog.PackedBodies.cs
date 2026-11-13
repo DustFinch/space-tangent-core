@@ -169,6 +169,22 @@ public static partial class SampledMissionCatalog
         string kind = Text(orbit, "kind");
         if (kind == "spice")
             return ReadPackedSpiceOrbit(orbit, resources, resolve, owner);
+        if (kind == "twoVectorFrame")
+        {
+            if (nested || Text(orbit, "velocityPolicy") != "cosmographia-native-zero")
+                throw new InvalidDataException("Invalid packed two-vector trajectory or velocity policy.");
+            var trajectory = orbit.GetProperty("trajectory");
+            if (!center.Equals(Text(trajectory, "center"), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The packed two-vector trajectory changed its centre.");
+            var local = PackedTrajectory(trajectory.GetProperty("orbit"), center, resolve, owner, root, resources, nested: true);
+            if (local.Frame is not MissionFrame.Inertial source ||
+                PackedFrame(orbit.GetProperty("frame"), resolve, owner) is not MissionFrame.TwoVector axes)
+                throw new NotSupportedException("A packed two-vector frame needs an inertial local trajectory and two directions.");
+            return new(Sample, axes);
+
+            CartesianState? Sample(JulianInstant epoch) => local.Local(epoch) is { } state
+                ? new(source.ToWorld.Transform(state.PositionKilometers), source.ToWorld.Transform(state.VelocityKilometersPerSecond)) : null;
+        }
         if (kind == "movingFrame")
         {
             if (nested)

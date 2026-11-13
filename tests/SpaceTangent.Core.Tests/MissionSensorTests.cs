@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.World;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -107,6 +108,52 @@ public sealed class MissionSensorTests
             Assert.InRange((a.Boresight - b.Boresight).Length, 0, 1e-5);
             for (int ray = 0; ray < b.Boundary.Count; ray++)
                 Assert.InRange((a.Boundary[ray] - b.Boundary[ray]).Length, 0, 1e-5);
+        }
+    }
+
+    [ArchivedSensorFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedNestedTrajectoriesRetainWorldPositionAndNativeVelocity()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SENSOR_PACK")!;
+        var satellites = PackedSatelliteCatalog.Load(root);
+        ObjectId? Resolve(string name) => name switch
+        {
+            "Earth" => SolarSystemSample.EarthId, "Sun" or "Sol" => SolarSystemSample.SunId,
+            _ => satellites.FirstOrDefault(satellite => satellite.Name == name)?.Id
+        };
+        var missions = SampledMissionCatalog.Load("pack.json", root, Resolve);
+        var earth = new CartesianState(new(8000, -3000, 2000), new(5, 12, -2));
+        var builder = new WorldGraphBuilder();
+        builder.AddTrajectory(SolarSystemSample.EarthId, _ => earth);
+        builder.AddTrajectory(SolarSystemSample.SunId, _ => default(CartesianState));
+        foreach (var satellite in satellites)
+            builder.AddScienceSatellite(satellite);
+        foreach (var mission in missions)
+            builder.AddSampledMission(mission);
+        var graph = builder.Build();
+        foreach (double day in new[] { 2455755.0, 2455755.01, 2455755.03 })
+        {
+            var snapshot = graph.Evaluate(JulianInstant.FromJulianDate(day, TimeScale.Tdb));
+            var jason = Resolve("Jason-1")!.Value;
+            var sorce = Resolve("SORCE")!.Value;
+            Assert.True(snapshot.TryOrientation(jason, out var jasonAttitude));
+            Assert.True(snapshot.TryOrientation(sorce, out var sorceAttitude));
+            Assert.True(snapshot.TryState(jason, out var jasonState));
+            var jasonRadial = (jasonState - earth).PositionKilometers;
+            Check("sciencenestedprobe", jasonAttitude.ToWorld.X * 12000);
+            double obliquity = 84381.448 * Math.PI / (180 * 3600);
+            Check("sciencenestedsorceprobe", sorceAttitude.ToWorld.Transform(
+                new(0, -12000 * Math.Sin(obliquity), 12000 * Math.Cos(obliquity))));
+            Check("sciencetwovectorprobe", jasonRadial * (12000 / jasonRadial.Length));
+
+            void Check(string id, Vector3d expected)
+            {
+                Assert.True(snapshot.TryState(new("mission/" + id), out var actual), id);
+                Assert.True((actual.PositionKilometers - earth.PositionKilometers - expected).Length <= 2e-6,
+                    $"{id}: {actual.PositionKilometers - earth.PositionKilometers} vs {expected}");
+                Assert.Equal(earth.VelocityKilometersPerSecond, actual.VelocityKilometersPerSecond);
+            }
         }
     }
 
