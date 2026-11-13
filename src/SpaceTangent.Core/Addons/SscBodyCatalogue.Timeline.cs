@@ -114,9 +114,9 @@ public static partial class SscBodyCatalogue
             {
                 bool heliocentric = center.Equals("Sol", StringComparison.OrdinalIgnoreCase);
                 var context = new SscOrbitContext(Icrs, heliocentric ? AuKilometers : 1, heliocentric ? 31_557_600 : 86_400);
-                var conic = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
-                orbitPeriodSeconds = Number(((SscValue.Map)orbit).Get("Period")) * context.SecondsPerPeriodUnit;
-                return epoch => conic.Evaluate(epoch);
+                var conic = SscConicOrbits.ReadOrbit(item, orbit, context);
+                orbitPeriodSeconds = conic.CharacteristicPeriodSeconds;
+                return epoch => conic.Orbit.Evaluate(epoch);
             }
             if (phase.Fields.TryGetValue("FixedPosition", out var fixedPosition))
             {

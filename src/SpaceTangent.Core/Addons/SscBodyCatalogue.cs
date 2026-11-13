@@ -210,23 +210,35 @@ public static partial class SscBodyCatalogue
         {
             var context = new SscOrbitContext(Icrs, starScale ? AuKilometers : 1,
                 starScale ? 31_557_600 : 86_400);
-            var curve = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
-            orbitPeriodSeconds = Number(((SscValue.Map)orbit).Get("Period")) * context.SecondsPerPeriodUnit;
-            raw = epoch => curve.Evaluate(epoch);
+            var conic = SscConicOrbits.ReadOrbit(item, orbit, context);
+            orbitPeriodSeconds = conic.CharacteristicPeriodSeconds;
+            raw = epoch => conic.Orbit.Evaluate(epoch);
             if (!starScale && !item.Parent.StartsWith("Sol/", StringComparison.OrdinalIgnoreCase))
             {
                 extrasolarOrbit = orbitsStar =>
                 {
                     var units = new SscOrbitContext(Icrs, orbitsStar ? AuKilometers : 1,
                         orbitsStar ? 31_557_600 : 86_400);
-                    var externalOrbit = SscConicOrbits.ReadOrbit(item, orbit, units).Orbit;
+                    var external = SscConicOrbits.ReadOrbit(item, orbit, units);
+                    var externalOrbit = external.Orbit;
                     var axes = reference.Axes == SscConicAxes.ParentDefault ? Ecliptic : orbitFrame;
-                    double period = Number(((SscValue.Map)orbit).Get("Period")) * units.SecondsPerPeriodUnit;
+                    double period = external.CharacteristicPeriodSeconds;
+                    double eccentricity = externalOrbit.Elements.Eccentricity;
                     const int segments = 120;
                     var points = new Vector3d[segments + 1];
-                    for (int index = 0; index < segments; index++)
-                        points[index] = axes.Transform(externalOrbit.EvaluateElapsedSeconds(period * index / segments).PositionKilometers);
-                    points[segments] = points[0];
+                    for (int index = 0; index <= segments; index++)
+                    {
+                        double fraction = (double)index / segments;
+                        double elapsed = period * fraction;
+                        if (eccentricity > 1)
+                        {
+                            double anomaly = 6 * fraction - 3;
+                            elapsed = (eccentricity * Math.Sinh(anomaly) - anomaly) / Math.Tau * period;
+                        }
+                        points[index] = axes.Transform(externalOrbit.EvaluateElapsedSeconds(elapsed).PositionKilometers);
+                    }
+                    if (eccentricity < 1)
+                        points[segments] = points[0];
                     return new(SampleExternal, Array.AsReadOnly(points));
 
                     CartesianState? SampleExternal(JulianInstant epoch)
@@ -375,6 +387,8 @@ public static partial class SscBodyCatalogue
             return null;
         else if (fields.Fields.ContainsKey("CustomRotation"))
             throw new NotSupportedException("This body catalogue needs a different rotation model.");
+        else if (ReadTimeQuantity(fields, "RotationPeriod", 3_600) is { } legacyPeriod)
+            spin = ReadUniformSpin(new SscValue.Map(new Dictionary<string, SscValue>()), spinFrame, legacyPeriod);
         if (spin is not null && orientation is not null)
             throw new NotSupportedException("This SSC spin model currently needs an inertial body frame.");
 
@@ -499,8 +513,8 @@ public static partial class SscBodyCatalogue
     private static Func<JulianInstant, FrameKinematics?> ReadUniformSpin(SscValue.Map fields, Basis3d frame,
         double? orbitPeriodSeconds, bool stationary = false, bool precessing = false)
     {
-        double period = stationary ? 0 : ReadRotationPeriod(fields, "Period", 3_600) ?? orbitPeriodSeconds ?? 0;
-        double precessionPeriod = precessing ? ReadRotationPeriod(fields, "PrecessionPeriod", 31_557_600) ?? 0 : 0;
+        double period = stationary ? 0 : ReadTimeQuantity(fields, "Period", 3_600) ?? orbitPeriodSeconds ?? 0;
+        double precessionPeriod = precessing ? ReadTimeQuantity(fields, "PrecessionPeriod", 31_557_600) ?? 0 : 0;
         var epoch = JulianInstant.FromJulianDate(Get("Epoch", JulianInstant.J2000Day), TimeScale.Tdb);
         Vector3d pole = new(0, 0, 1);
         double node = Angle("AscendingNode");
@@ -532,7 +546,7 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static double? ReadRotationPeriod(SscValue.Map fields, string name, double defaultScale)
+    internal static double? ReadTimeQuantity(SscValue.Map fields, string name, double defaultScale)
     {
         double? seconds = null;
         foreach (var (key, value) in fields.Fields)
@@ -540,7 +554,7 @@ public static partial class SscBodyCatalogue
             if (key != name && !key.StartsWith(name + "<", StringComparison.Ordinal))
                 continue;
             if (seconds is not null)
-                throw new InvalidDataException($"Duplicate SSC rotation period {name}.");
+                throw new InvalidDataException($"Duplicate SSC time field {name}.");
             double scale = key == name ? defaultScale : key[name.Length..] switch
             {
                 "<s>" => 1,
@@ -552,7 +566,7 @@ public static partial class SscBodyCatalogue
             };
             seconds = Number(value) * scale;
             if (!double.IsFinite(seconds.Value))
-                throw new InvalidDataException($"SSC rotation period {name} must be finite.");
+                throw new InvalidDataException($"SSC time field {name} must be finite.");
         }
         return seconds;
     }

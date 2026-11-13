@@ -11,9 +11,10 @@ public readonly record struct SscConicReference(SscConicAxes Axes, string Center
 public sealed record SscConicOrbit(string Name, string Parent, JulianInstant ElementEpoch, ConicOrbit Orbit)
 {
     public SscConicReference Reference { get; init; } = new(SscConicAxes.ParentDefault, Parent, null, null);
+    internal double CharacteristicPeriodSeconds { get; init; }
 }
 
-/// <summary>Reads the static EllipticalOrbit blocks of an SSC catalogue.</summary>
+/// <summary>Reads the bound and open conics in static SSC EllipticalOrbit blocks.</summary>
 public static class SscConicOrbits
 {
     public static IReadOnlyList<SscConicOrbit> Read(string path, Func<string, SscOrbitContext> resolveParent)
@@ -84,13 +85,19 @@ public static class SscConicOrbits
     {
         if (block is not SscValue.Map orbit)
             throw new InvalidDataException("Expected an SSC EllipticalOrbit object.");
-        double a = Number(orbit, "SemiMajorAxis") * context.KilometersPerDistanceUnit;
-        double period = Number(orbit, "Period") * context.SecondsPerPeriodUnit;
         double e = Number(orbit, "Eccentricity", 0);
-        if (!(double.IsFinite(a) && a > 0 && double.IsFinite(period) && period > 0 && e >= 0 && e < 1))
-            throw new InvalidDataException("SSC elliptical elements or unit scales are invalid.");
+        double a = (orbit.Fields.ContainsKey("SemiMajorAxis") ? Number(orbit, "SemiMajorAxis") :
+            Number(orbit, "PericenterDistance") / (1 - e)) * context.KilometersPerDistanceUnit;
+        double period = SscBodyCatalogue.ReadTimeQuantity(orbit, "Period", context.SecondsPerPeriodUnit) ??
+            throw new InvalidDataException("Missing SSC orbital period.");
+        bool closed = a > 0 && e >= 0 && e < 1;
+        bool open = a < 0 && e > 1;
+        if (!(double.IsFinite(a) && period > 0 && (closed || open)))
+            throw new InvalidDataException("SSC conic elements or unit scales are invalid.");
+        // For a hyperbola, Period specifies the mean motion of the open trajectory.
         double motion = Math.Tau / period;
-        double mu = motion * motion * a * a * a;
+        double semimajorLength = Math.Abs(a);
+        double mu = motion * motion * semimajorLength * semimajorLength * semimajorLength;
         double radians = Math.PI / 180;
         JulianInstant epoch = JulianInstant.FromJulianDate(Number(orbit, "Epoch", JulianInstant.J2000Day), TimeScale.Tdb);
         double node = Number(orbit, "AscendingNode", 0);
@@ -99,12 +106,12 @@ public static class SscConicOrbits
             orbit.Fields.ContainsKey("LongOfPericenter") ? Number(orbit, "LongOfPericenter") - node : 0;
         double anomaly = orbit.Fields.ContainsKey("MeanAnomaly") ? Number(orbit, "MeanAnomaly") :
             orbit.Fields.ContainsKey("MeanLongitude") ? Number(orbit, "MeanLongitude") - (argument + node) : 0;
-        double mean = Math.IEEERemainder(anomaly * radians, Math.Tau);
+        double mean = closed ? Math.IEEERemainder(anomaly * radians, Math.Tau) : anomaly * radians;
         JulianInstant periapsis = epoch.AddSeconds(-mean / motion);
 
         var elements = new ConicElements(a * (1 - e), e, Number(orbit, "Inclination", 0) * radians,
             node * radians, argument * radians, periapsis, mu, context.Frame);
-        return new(entry.Names, entry.Parent, epoch, new ConicOrbit(elements));
+        return new(entry.Names, entry.Parent, epoch, new ConicOrbit(elements)) { CharacteristicPeriodSeconds = period };
     }
 
     private static double Number(SscValue.Map map, string name, double? fallback = null)
