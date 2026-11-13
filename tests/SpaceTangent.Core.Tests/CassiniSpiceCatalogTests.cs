@@ -273,6 +273,7 @@ public sealed class CassiniSpiceCatalogTests
                 Assert.True(snapshot.TryOrientation(mission.Id, out var frame));
                 Assert.Equal(48, sensor.Boundary.Count);
                 Assert.Equal(camera.RangeKilometers, sensor.RangeKilometers);
+                Assert.Equal(camera.FootprintOpacity, sensor.FootprintOpacity);
                 Assert.InRange((frame.ToWorld.Transform(sensor.Boresight) - body.Transform(camera.BoresightInBody)).Length, 0, 1e-12);
             }
         }

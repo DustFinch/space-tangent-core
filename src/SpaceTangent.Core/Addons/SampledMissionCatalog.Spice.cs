@@ -82,12 +82,22 @@ public static partial class SampledMissionCatalog
         if (!(range > 0) || end.CompareTo(start) <= 0)
             throw new InvalidDataException("A SPICE sensor requires a positive range and an increasing availability window.");
         var sensor = new MissionSensor(target, range, color, opacity, field.Boresight,
-            SensorEdgeRays(field.Corners), field.Corners.Length);
+            SensorEdgeRays(field.Corners), field.Corners.Length)
+        {
+            FootprintOpacity = ReadFootprintOpacity(geometry)
+        };
         ObjectId center = resolve(parent);
         return new(resolve(name), name, null, .001,
             [new(start, end, center, _ => new CartesianState(default, default), Equatorial, new MissionFrame.BodyFixed(center))])
             { Geometry = [new(start, end, new(null, .001, Basis3d.Identity, default, sensor))] };
     }
+    private static double ReadFootprintOpacity(JsonElement geometry)
+    {
+        double opacity = geometry.TryGetProperty("footprintOpacity", out var value) ? value.GetDouble() : 1;
+        return opacity is >= 0 and <= 1 ? opacity :
+            throw new InvalidDataException("A SPICE footprint opacity must be between zero and one.");
+    }
+
     private static IReadOnlyList<Vector3d> SensorEdgeRays(IReadOnlyList<Vector3d> corners)
     {
         const int samplesPerEdge = 12;

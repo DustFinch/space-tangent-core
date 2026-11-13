@@ -4,7 +4,10 @@ using SpaceTangent.Contracts;
 namespace SpaceTangent.Core.Addons;
 
 public sealed record MissionSensor(ObjectId Target, double RangeKilometers, Vector3d Color, double Opacity,
-    Vector3d Boresight, IReadOnlyList<Vector3d> Boundary, int GridSpokes);
+    Vector3d Boresight, IReadOnlyList<Vector3d> Boundary, int GridSpokes)
+{
+    public double FootprintOpacity { get; init; }
+}
 
 public readonly record struct MissionSensorRay(Vector3d FrustumEnd, Vector3d? SurfacePoint);
 
