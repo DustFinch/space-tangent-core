@@ -275,6 +275,62 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void MissingExplicitKernelDoesNotStopTheNextSscModelFromLoadingItsOtherKernels()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            File.Copy(Path.Combine(corpus, "b.bsp"), Path.Combine(scratch.FullName, "b.bsp"));
+            string path = Path.Combine(scratch.FullName, "priority.ssc");
+            File.WriteAllText(path, """
+                "First" "Sol" {
+                    OrbitFrame { EclipticJ2000 {} }
+                    SpiceOrbit { Kernel "absent.bsp" Target "1999999" Origin "0" BoundingRadius 300 }
+                    FixedPosition [ 1 0 0 ]
+                }
+                "Second" "Sol" {
+                    OrbitFrame { EclipticJ2000 {} }
+                    SpiceOrbit { Kernel [ "absent.bsp" "b.bsp" ] Target "1999999" Origin "0" BoundingRadius 300 }
+                }
+                "Third" "Sol" {
+                    OrbitFrame { EclipticJ2000 {} }
+                    SpiceOrbit { Kernel "absent.bsp" Target "1999999" Origin "0" BoundingRadius 300 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                """);
+            var epoch = JulianInstant.FromTdbSeconds(5);
+            var warnings = new List<string>();
+            var bodies = SscBodyCatalogue.Load(scratch.FullName, warning: warnings.Add);
+            Assert.Equal(new[] { 1d, 222d, 3d }, bodies.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+            Assert.Equal(2, warnings.Count);
+            string pack = Path.Combine(scratch.FullName, "packed");
+            string loose = Path.Combine(scratch.FullName, "loose");
+            Directory.CreateDirectory(loose);
+            File.Copy(path, Path.Combine(loose, "priority.ssc"));
+            File.Copy(Path.Combine(scratch.FullName, "b.bsp"), Path.Combine(loose, "b.bsp"));
+            warnings.Clear();
+            Assert.Equal(3, SscBodyCatalogue.BuildPack(loose, pack, warnings.Add));
+            Assert.Equal(2, warnings.Count);
+            warnings.Clear();
+            var packed = SscBodyCatalogue.Load(pack, warning: warnings.Add);
+            Assert.Equal(new[] { 1d, 222d, 3d }, packed.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+            Assert.Equal(2, warnings.Count);
+
+            File.Copy(Path.Combine(corpus, "a.bsp"), Path.Combine(scratch.FullName, "absent.bsp"));
+            warnings.Clear();
+            bodies = SscBodyCatalogue.Load(scratch.FullName, warning: warnings.Add);
+            Assert.Equal(new[] { 222d, 222d, 222d }, bodies.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+            Assert.Empty(warnings);
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()

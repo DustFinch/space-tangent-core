@@ -26,7 +26,7 @@ internal sealed class SpiceResources
     internal sealed record KernelGroup(string Root, IReadOnlyList<(string Directory, string Name)> Files,
         Action<Exception>? Unavailable = null, bool SkipRepeatedExplicit = false)
     {
-        internal IReadOnlyList<string>? AuthoredNames { get; init; }
+        internal Func<string, string>? ResolveExplicit { get; init; }
     }
 
     internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
@@ -40,6 +40,7 @@ internal sealed class SpiceResources
         var parsedCk = new Dictionary<string, CkKernel>(FileNames);
         var parsedText = new Dictionary<string, IReadOnlyList<SpiceTextKernel.Assignment>>(FileNames);
         var explicitSscLoads = new HashSet<(string File, string Authored)>();
+        var missingExplicit = new Dictionary<(string Directory, string Name), FileNotFoundException>();
         int visits = 0;
         foreach (var group in groups)
         {
@@ -47,13 +48,40 @@ internal sealed class SpiceResources
             HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
             try
             {
-                for (int index = 0; index < group.Files.Count; index++)
+                FileNotFoundException? skippedMissing = null;
+                bool hasOtherKernel = false;
+                foreach (var (directory, name) in group.Files)
                 {
-                    var (directory, name) = group.Files[index];
-                    // Keep authored spelling for explicit SSC residency and resolve the physical file separately.
-                    string? authored = pending is null ? null : group.AuthoredNames?[index] ?? name;
-                    Expand(group.Root, directory, name, active, ordered, ref visits, 0, explicitSscLoads, pending, authored);
+                    string physicalDirectory = directory, physicalName = name;
+                    if (group.ResolveExplicit is { } resolve)
+                    {
+                        var key = (directory, name);
+                        if (missingExplicit.TryGetValue(key, out var previousFailure))
+                        {
+                            skippedMissing ??= previousFailure;
+                            continue;
+                        }
+                        try
+                        {
+                            string file = resolve(name);
+                            physicalDirectory = Path.GetDirectoryName(file)!;
+                            physicalName = Path.GetFileName(file);
+                        }
+                        catch (FileNotFoundException error) when (group.Unavailable is not null)
+                        {
+                            missingExplicit.TryAdd(key, error);
+                            throw;
+                        }
+                    }
+                    // Explicit SSC residency uses authored spelling as well as the resolved file.
+                    string? authored = pending is null ? null : name;
+                    Expand(group.Root, physicalDirectory, physicalName, active, ordered, ref visits, 0,
+                        explicitSscLoads, pending, authored);
+                    hasOtherKernel = true;
                 }
+                // A declaration relying exclusively on missing kernels must still fall back or fail.
+                if (!hasOtherKernel && skippedMissing is not null)
+                    throw skippedMissing;
             }
             catch (Exception error) when (group.Unavailable is not null && IsKernelInputError(error))
             {
