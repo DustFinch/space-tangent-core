@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using Xunit;
@@ -39,6 +40,50 @@ public sealed class PackedSatelliteCatalogTests
         }
 
         static void Compare(Vector3d source, Vector3d packed) => Assert.InRange((source - packed).Length, 0, 1e-5);
+    }
+
+    [PackedScienceVersionsFact]
+    [Trait("Category", "ExternalData")]
+    public void ReadsOriginalSciencePacksAcrossTheirArchivedVersions()
+    {
+        string input = Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_SCIENCE_VERSIONS")!;
+        var reference = PackedSatelliteCatalog.Load(Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_SCIENCE")!);
+        var versions = new List<int>();
+        foreach (string directory in input.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "pack.json")));
+            int version = manifest.RootElement.GetProperty("formatVersion").GetInt32();
+            versions.Add(version);
+            var diagnostics = new List<string>();
+            var actual = PackedSatelliteCatalog.Load(directory, diagnostics.Add);
+            Assert.Contains(diagnostics, message => message.EndsWith("not a modeled Earth satellite in this pack.", StringComparison.Ordinal));
+            foreach (var expected in reference)
+            {
+                var installed = Assert.Single(actual, satellite => satellite.Id == expected.Id);
+                Assert.True(File.Exists(installed.MeshPath), $"Version {version} lost the mesh for {expected.Name}.");
+                Assert.Equal(expected.Epoch, installed.Epoch);
+                Assert.Equal(expected.SizeKilometers, installed.SizeKilometers);
+                foreach (double offset in new[] { 0.0, 45.0, 3600.0 })
+                {
+                    var epoch = expected.Epoch.AddSeconds(offset);
+                    Assert.True(expected.TrySample(epoch, out var source));
+                    Assert.True(installed.TrySample(epoch, out var packed));
+                    Assert.Equal(source.EarthRelativeState, packed.EarthRelativeState);
+                    Assert.Equal(source.BodyToTrajectory, packed.BodyToTrajectory);
+                }
+            }
+        }
+        Assert.Equal(new[] { 1, 2, 4, 5, 6, 7, 12 }, versions.Order());
+    }
+
+    private sealed class PackedScienceVersionsFactAttribute : FactAttribute
+    {
+        public PackedScienceVersionsFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_SCIENCE_VERSIONS")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_PACKED_SCIENCE")))
+                Skip = "Set the archived science packs and their baseline.";
+        }
     }
 
     private sealed class PackedScienceFactAttribute : FactAttribute
