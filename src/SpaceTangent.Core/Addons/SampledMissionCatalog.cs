@@ -106,17 +106,26 @@ public static partial class SampledMissionCatalog
                 bindPool(kernelLoads.Select(load => new SpiceResources.KernelGroup(root, [load])).ToArray());
             var rejected = new HashSet<ObjectId>();
             var loaded = new List<(SampledMission Mission, HashSet<ObjectId> References)>();
+            var timedChildren = definitions.Where(definition => definition.Packed && definition.Item.TryGetProperty("geometryBounds", out _))
+                .ToDictionary(definition => (definition.Source, Text(definition.Item, "path")), _ => new List<JsonElement>());
+            foreach (var definition in definitions.Where(definition => definition.Packed && IsTimedComponent(definition.Item)))
+                if (timedChildren.TryGetValue((definition.Source, Text(definition.Item, "parent")), out var children))
+                    children.Add(definition.Item);
             foreach (var definition in definitions)
             {
                 cancellation.ThrowIfCancellationRequested();
                 string directory = Path.GetDirectoryName(definition.Source)!;
+                if (definition.Packed && IsTimedComponent(definition.Item) &&
+                    timedChildren.ContainsKey((definition.Source, Text(definition.Item, "parent"))))
+                    continue;
                 var references = new HashSet<ObjectId>();
                 try
                 {
                     var mission = AddonDiagnostics.Read(AddonStage.Catalog, definition.Source, () =>
                         definition.Packed ? definition.Item.TryGetProperty("particles", out _)
                             ? ReadPackedParticleMission(definition.Item, TrackReference, directory, warning)
-                            : ReadPackedBody(definition.Item, TrackReference, directory, resources, warning, cancellation)
+                            : ReadPackedBody(definition.Item, TrackReference, directory, resources, warning, cancellation,
+                                timedChildren.GetValueOrDefault((definition.Source, Text(definition.Item, "path"))))
                         : ReadItem(definition.Item, Resolve, root, directory, resources,
                             name => instrumentFrames.GetValueOrDefault(name), warning, cancellation));
                     loaded.Add((mission, references));
@@ -226,8 +235,12 @@ public static partial class SampledMissionCatalog
                     }
                     if (bodies.GetArrayLength() > 512 || bodies.GetArrayLength() == 0 && !metadata)
                         throw new InvalidDataException("A packed mission catalogue requires one to 512 bodies.");
+                    var timedParents = bodies.EnumerateArray().Where(body => body.TryGetProperty("geometryBounds", out _))
+                        .Select(body => Text(body, "path")).ToHashSet(StringComparer.Ordinal);
                     foreach (JsonElement body in bodies.EnumerateArray())
-                        if (body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
+                        if (timedParents.Contains(Text(body, "path")) ||
+                            (IsTimedComponent(body) && timedParents.Contains(Text(body, "parent"))) ||
+                            body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
                             HasPackedSpice(body))
                             Register(body, path, packed: true);
@@ -352,6 +365,11 @@ public static partial class SampledMissionCatalog
             throw new InvalidDataException($"Unknown packed mission reference {path}.");
         }
     }
+
+    private static bool IsTimedComponent(JsonElement item) =>
+        item.TryGetProperty("class", out var kind) && kind.ValueEquals("component") && item.TryGetProperty("shown", out _) &&
+        item.TryGetProperty("displayName", out var display) &&
+        Text(item, "path").StartsWith(Text(item, "parent") + "/" + display.GetString() + " (", StringComparison.Ordinal);
 
     private static SampledMission ReadItem(JsonElement item, Func<string, ObjectId> resolve, string root, string directory,
         SpiceResources resources, Func<string, string?> instrumentFrame, Action<string>? warning, CancellationToken cancellation)

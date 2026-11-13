@@ -98,5 +98,15 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.Swarms.cs",
     "sha256": "f14f07e30429a1c8d79ef8f807c37cdb3789a323f403e665639ca3a110c2d60f",
     "reason": "Exact convention value in the archived native swarm pack schema."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBounds.cs",
+    "sha256": "b5d89a4207860e788e9a5fde10f3dd0c10a2486e7a38ae85c1148598bca76a0b",
+    "reason": "Exact archived mesh size and scale tags."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.cs",
+    "sha256": "97ebae0587762b8c613ec88aabc47a900b9a894869769902fce5263dfadbef55",
+    "reason": "Exact archived body classification tag."
   }
 ]

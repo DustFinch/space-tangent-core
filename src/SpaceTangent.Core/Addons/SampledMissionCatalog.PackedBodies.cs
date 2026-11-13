@@ -11,7 +11,7 @@ namespace SpaceTangent.Core.Addons;
 public static partial class SampledMissionCatalog
 {
     private static SampledMission ReadPackedBody(JsonElement body, Func<string, ObjectId> resolve,
-        string root, SpiceResources resources, Action<string>? warning, CancellationToken cancellation)
+        string root, SpiceResources resources, Action<string>? warning, CancellationToken cancellation, IReadOnlyList<JsonElement>? children)
     {
         string name = Text(body, "name");
         ObjectId id = resolve(Text(body, "path"));
@@ -53,17 +53,45 @@ public static partial class SampledMissionCatalog
         MissionShape? shape = body.TryGetProperty("sensor", out var sensor) && sensor.TryGetProperty("instrument", out _)
             ? ReadPackedSpiceSensor(sensor, body, resources, resolve)
             : ReadPackedShape(body, root, name, radius, resolve, warning, cancellation);
-        var shown = body.TryGetProperty("shown", out var interval) ? interval : default;
-        var visibleFrom = shown.ValueKind == JsonValueKind.Object ? Date(shown, "fromJdTdb", start) : start;
-        var visibleTo = shown.ValueKind == JsonValueKind.Object ? Date(shown, "untilJdTdb", end) : end;
-        if (visibleFrom.CompareTo(start) < 0)
-            visibleFrom = start;
-        if (visibleTo.CompareTo(end) > 0)
-            visibleTo = end;
+        var geometry = new List<MissionGeometrySpan>();
+        AddGeometry(body, shape);
+        MissionGeometryBounds? bounds = null;
+        if (body.TryGetProperty("geometryBounds", out var terms))
+        {
+            bounds = ReadPackedGeometryBounds(terms, root, name, warning, cancellation);
+            foreach (var child in children ?? [])
+            {
+                cancellation.ThrowIfCancellationRequested();
+                double childRadius = PackedPositive(child, "radiusKm");
+                var childShape = ReadPackedShape(child, root, name, childRadius, resolve, warning, cancellation);
+                if (childShape is null && (!child.TryGetProperty("visible", out var visible) || visible.GetBoolean()))
+                    childShape = new(null, childRadius, Basis3d.Identity, default)
+                {
+                    EllipsoidRadiiKilometers = new(childRadius, childRadius, PackedPositive(child, "polarRadiusKm"))
+                };
+                AddGeometry(child, childShape);
+            }
+        }
         return new(id, name, shape?.MeshPath, radius, arcs.AsReadOnly())
         {
-            Geometry = shape is null || visibleTo.CompareTo(visibleFrom) <= 0 ? [] : [new(visibleFrom, visibleTo, shape)]
+            Geometry = geometry.OrderBy(span => span.Start).ToArray(),
+            GeometryBounds = bounds
         };
+
+        void AddGeometry(JsonElement item, MissionShape? visibleShape)
+        {
+            if (visibleShape is null)
+                return;
+            var shown = item.TryGetProperty("shown", out var interval) ? interval : default;
+            var from = shown.ValueKind == JsonValueKind.Object ? Date(shown, "fromJdTdb", start) : start;
+            var until = shown.ValueKind == JsonValueKind.Object ? Date(shown, "untilJdTdb", end) : end;
+            if (from.CompareTo(start) < 0)
+                from = start;
+            if (until.CompareTo(end) > 0)
+                until = end;
+            if (until.CompareTo(from) > 0)
+                geometry.Add(new(from, until, visibleShape));
+        }
 
         void AddArc(JulianInstant from, JulianInstant until, string center, JsonElement orbit)
         {
@@ -283,7 +311,7 @@ public static partial class SampledMissionCatalog
             catch (FileNotFoundException) { path = null; warning?.Invoke($"{name}: mesh {file} is missing; the trajectory is available."); }
             double size = Text(model, "geometryConvention") switch
             {
-                "cosmographiaSize" => PackedPositive(model, "geometryValue"),
+                PackedMeshSize => PackedPositive(model, "geometryValue"),
                 var kind => throw new NotSupportedException($"Unsupported packed mesh size convention {kind}.")
             };
             var orientation = Quaternion(model.GetProperty("orientation"));

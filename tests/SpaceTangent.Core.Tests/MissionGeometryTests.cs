@@ -117,6 +117,46 @@ public sealed class MissionGeometryTests
         Assert.Null((bounds with { Complete = false }).Resolve(_ => throw new InvalidOperationException()));
     }
 
+    [PackedGeometryFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedV5RestoresTimedChildrenAndTheHiddenMeshBound()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_TIMED_BOUNDS_PACK")!;
+        var earth = SolarSystemSample.EarthId;
+        var sorce = new ObjectId("norad/27880");
+        var jason = new ObjectId("norad/26997");
+        var mission = Assert.Single(SampledMissionCatalog.Load("pack.json", root, name => name switch
+        {
+            "Earth" => earth,
+            "SORCE" => sorce,
+            "Jason-1" => jason,
+            _ => null
+        }));
+        var geometry = Assert.IsAssignableFrom<IReadOnlyList<MissionGeometrySpan>>(mission.Geometry);
+        Assert.Equal(3, geometry.Count);
+        Assert.Equal("sorce.glb", Path.GetFileName(geometry[0].Shape.MeshPath));
+        Assert.NotNull(geometry[1].Shape.EllipsoidRadiiKilometers);
+        Assert.Equal("sorce.glb", Path.GetFileName(geometry[2].Shape.MeshPath));
+        Assert.Equal(2455755.01, geometry[1].Start.ToJulianDate(), 8);
+        Assert.Equal(2455755.02, geometry[1].End.ToJulianDate(), 8);
+        var bounds = Assert.IsType<MissionGeometryBounds>(mission.GeometryBounds);
+        Assert.True(bounds.Complete);
+        var hidden = Assert.Single(bounds.Meshes, term => Path.GetFileName(term.Path) == "ghost-jason.glb");
+        Assert.Equal(.01, hidden.SizeKilometers);
+        Assert.Equal(Math.Sqrt(21.875), hidden.Offset.Length, 10);
+        Assert.Equal((double)(float)((3f + MathF.Sqrt(21.875f)) * .005f),
+            bounds.Resolve(_ => (4, 3)));
+    }
+
+    private sealed class PackedGeometryFactAttribute : FactAttribute
+    {
+        public PackedGeometryFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_TIMED_BOUNDS_PACK")))
+                Skip = "Set the original v5 geometry pack.";
+        }
+    }
+
     private sealed class NativeGeometryFactAttribute : FactAttribute
     {
         public NativeGeometryFactAttribute()

@@ -18,7 +18,10 @@ public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Bas
     public MissionSwarmStyle? Swarm { get; init; }
 }
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
-public sealed record MissionMeshBound(string Path, double SizeKilometers, Vector3d Offset);
+public sealed record MissionMeshBound(string Path, double SizeKilometers, Vector3d Offset)
+{
+    public double? Scale { get; init; }
+}
 public sealed record MissionGeometryBounds(double RadiusKilometers, IReadOnlyList<MissionMeshBound> Meshes, bool Complete)
 {
     public double? Resolve(Func<string, (float Extent, float OriginRadius)> meshMetrics)
@@ -29,7 +32,7 @@ public sealed record MissionGeometryBounds(double RadiusKilometers, IReadOnlyLis
         foreach (var mesh in Meshes)
         {
             var (extent, radius) = meshMetrics(mesh.Path);
-            float scale = (float)(mesh.SizeKilometers * 2 / extent);
+            float scale = (float)(mesh.Scale ?? mesh.SizeKilometers * 2 / extent);
             float x = (float)mesh.Offset.X, y = (float)mesh.Offset.Y, z = (float)mesh.Offset.Z;
             bound = MathF.Max(bound, (radius + MathF.Sqrt(x * x + y * y + z * z)) * scale);
         }
