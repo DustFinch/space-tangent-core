@@ -75,41 +75,15 @@ public static partial class SscBodyCatalogue
         return new(new(Axis(native.X), Axis(native.Z * -1), Axis(native.Y)), null);
     }
 
-    private static Func<JulianInstant, FrameKinematics?> ReadSampledSpin(string file, Basis3d reference)
+    private static Func<JulianInstant, FrameKinematics?> ReadSampledSpin(string file, Basis3d reference,
+        CancellationToken cancellation)
     {
-        using var stream = AddonDependencies.OpenRead(file, 16 * 1024 * 1024);
-        using var reader = new StreamReader(stream);
-        var times = new List<double>();
-        var turns = new List<RigidQuaternion>();
-        while (reader.ReadLine() is { } raw)
-        {
-            string line = raw.Split('#', 2)[0].Trim();
-            if (line.Length == 0)
-                continue;
-            string[] fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length != 5 || times.Count >= 1_000_000)
-                throw new InvalidDataException("Invalid sampled orientation row.");
-            double[] row = fields.Select(field => Number(new SscValue.Atom(field))).ToArray();
-            if (times.Count > 0 && row[0] <= times[^1])
-                throw new InvalidDataException("Sampled orientation epochs must increase.");
-            times.Add(row[0]);
-            turns.Add(new RigidQuaternion(row[1], row[2], row[3], row[4]).Normalize());
-        }
-        if (times.Count == 0)
-            throw new InvalidDataException("Sampled orientation has no rows.");
-        double[] dates = times.ToArray();
+        var samples = SampledMissionAttitude.ReadSsc(file, cancellation);
         return epoch =>
         {
-            double day = epoch.ToJulianDate();
-            int index = Array.BinarySearch(dates, day);
-            if (index >= 0)
-                return ResolveRotation(turns[index], reference);
-            int upper = ~index;
-            if (upper == 0 || upper == dates.Length)
-                return null;
-            int lower = upper - 1;
-            double fraction = (day - dates[lower]) / (dates[upper] - dates[lower]);
-            return ResolveRotation(RigidQuaternion.Interpolate(turns[lower], turns[upper], fraction), reference);
+            var local = samples.Sample(epoch);
+            return new FrameKinematics(SampledMissionCatalog.Multiply(reference, local.ToWorld),
+                local.AngularVelocityRadiansPerSecond is { } rate ? reference.Transform(rate) : null);
         };
     }
 }

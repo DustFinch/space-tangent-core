@@ -111,6 +111,66 @@ public sealed class SscTimelineTests
         };
     }
 
+    [Fact]
+    public void PackedSampledAttitudeInterpolatesInsideThePhaseAndHoldsAtBothEnds()
+    {
+        using var fixture = new TemporaryAttitude();
+        Verify(SscBodyCatalogue.Load(fixture.Source));
+        Assert.Equal(1, SscBodyCatalogue.BuildPack(fixture.Source, fixture.Pack, _ => { }));
+        Verify(SscBodyCatalogue.Load(fixture.Pack));
+
+        static void Verify(IReadOnlyList<SscBodyDefinition> bodies)
+        {
+            var target = new ObjectId("probe");
+            var center = SolarSystemSample.SunId;
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(center, _ => new CartesianState(default, default));
+            builder.AddSampledMission(Assert.Single(bodies).BindTimeline!(target, _ => center));
+            var graph = builder.Build();
+            Check(2451545.25, new(1, 0, 0), 0);
+            Check(2451546.5, new(Math.Sqrt(.5), -Math.Sqrt(.5), 0), -Math.PI / 172800);
+            Check(2451547.5, new(0, -1, 0), 0);
+            Check(2451548, new(0, -1, 0), 0);
+            Assert.False(graph.Evaluate(JulianInstant.FromJulianDate(2451549, TimeScale.Tdb)).TryOrientation(target, out _));
+
+            void Check(double day, Vector3d x, double rate)
+            {
+                var snapshot = graph.Evaluate(JulianInstant.FromJulianDate(day, TimeScale.Tdb));
+                Assert.True(snapshot.TryOrientation(target, out var frame));
+                Assert.InRange((frame.ToWorld.X - x).Length, 0, 1e-12);
+                Assert.InRange((frame.AngularVelocityRadiansPerSecond!.Value - new Vector3d(0, 0, rate)).Length, 0, 1e-14);
+            }
+        }
+    }
+
+    private sealed class TemporaryAttitude : IDisposable
+    {
+        private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("space-tangent-ssc-attitude-");
+        internal string Source => Path.Combine(_root.FullName, "source");
+        internal string Pack => Path.Combine(_root.FullName, "pack");
+
+        internal TemporaryAttitude()
+        {
+            Directory.CreateDirectory(Path.Combine(Source, "data"));
+            File.WriteAllText(Path.Combine(Source, "probe.ssc"), """
+                "Probe" "Sol" {
+                    Timeline [
+                        { Beginning 2451545 Ending 2451548 FixedPosition [ 1 0 0 ]
+                          BodyFrame { EquatorJ2000 {} } SampledOrientation "probe.q" }
+                        { Ending 2451549 FixedPosition [ 1 0 0 ]
+                          BodyFrame { EquatorJ2000 {} } FixedRotation { MeridianAngle 90 } }
+                    ]
+                }
+                """);
+            File.WriteAllText(Path.Combine(Source, "data", "probe.q"), """
+                2451546 1 0 0 0
+                2451547 -0.7071067811865476 0 -0.7071067811865476 0
+                """);
+        }
+
+        public void Dispose() => _root.Delete(recursive: true);
+    }
+
     private sealed class GalileoFactAttribute : FactAttribute
     {
         public GalileoFactAttribute()

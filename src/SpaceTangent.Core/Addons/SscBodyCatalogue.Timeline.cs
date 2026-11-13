@@ -23,6 +23,7 @@ public static partial class SscBodyCatalogue
 
         var curves = new Dictionary<string, SampledStateTrajectory>(OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var attitudes = new Dictionary<string, Func<JulianInstant, FrameKinematics?>>(curves.Comparer);
         long totalBytes = 0;
         var result = new List<TimelinePhaseBinder>(phases.Items.Length);
         var previousEnd = EarliestTimelineEpoch;
@@ -59,14 +60,25 @@ public static partial class SscBodyCatalogue
                 bodyFrame = ReadTimelineFrame(phase.Object("BodyFrame"), item.Parent, out _);
 
             Func<JulianInstant, FrameKinematics?>? spin = null;
-            if (phase.Fields.ContainsKey("PrecessingRotation"))
+            if (phase.Fields.TryGetValue("SampledOrientation", out var orientation))
+            {
+                string path = resolve(item, "Timeline", AddonStage.Trajectory, orientation.AsText(),
+                    Path.Combine("models", "trajectories"), "data", "trajectories");
+                if (!attitudes.TryGetValue(path, out spin))
+                {
+                    CountBytes(path);
+                    spin = ReadSampledSpin(path, Basis3d.Identity, cancellation);
+                    attitudes.Add(path, spin);
+                }
+            }
+            else if (phase.Fields.ContainsKey("PrecessingRotation"))
                 spin = ReadUniformSpin(phase.Object("PrecessingRotation"), Basis3d.Identity, orbitPeriodSeconds, precessing: true);
             else if (phase.Fields.ContainsKey("UniformRotation"))
                 spin = ReadUniformSpin(phase.Object("UniformRotation"), Basis3d.Identity, orbitPeriodSeconds);
             else if (phase.Fields.ContainsKey("FixedRotation"))
                 spin = ReadUniformSpin(phase.Object("FixedRotation"), Basis3d.Identity, null, stationary: true);
             if (phase.Fields.Keys.Any(key => key is "CustomRotation" or "SpiceRotation" or "ScriptedRotation"
-                or "SampledOrientation" or "FixedAttitude"))
+                or "FixedAttitude"))
                 throw new NotSupportedException("This SSC Timeline rotation model is unavailable.");
 
             result.Add((find, radiusKilometers) =>
@@ -91,6 +103,13 @@ public static partial class SscBodyCatalogue
         }
         return result.AsReadOnly();
 
+        void CountBytes(string path)
+        {
+            totalBytes += new FileInfo(path).Length;
+            if (totalBytes > 128L * 1024 * 1024)
+                throw new InvalidDataException("SSC Timeline trajectory and attitude data exceed 128 MiB.");
+        }
+
         Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center,
             out double? orbitPeriodSeconds, out Vector3d? surfaceCoordinates)
         {
@@ -108,9 +127,7 @@ public static partial class SscBodyCatalogue
                 string path = resolve(item, "Timeline", AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories");
                 if (!curves.TryGetValue(path, out var curve))
                 {
-                    totalBytes += new FileInfo(path).Length;
-                    if (totalBytes > 128L * 1024 * 1024)
-                        throw new InvalidDataException("SSC Timeline trajectories exceed 128 MiB.");
+                    CountBytes(path);
                     curve = Path.GetExtension(path).ToLowerInvariant() switch
                     {
                         ".xyzv" => SampledStateTrajectory.ReadXyzv(path, Icrs),

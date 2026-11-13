@@ -21,6 +21,9 @@ public sealed class SscScriptModelCatalogueTests
         var sample = JulianInstant.FromJulianDate(2453187.55, TimeScale.Tdb);
         Assert.NotNull(loaded[0].Sample(sample));
         Assert.NotNull(loaded[1].SampleRotation!(sample));
+        var held = Assert.IsType<SpaceTangent.Core.World.FrameKinematics>(loaded[1].SampleRotation!(
+            JulianInstant.FromJulianDate(2453189, TimeScale.Tdb)));
+        Assert.Equal(default(Vector3d), held.AngularVelocityRadiansPerSecond);
         Assert.Equal(Basis3d.Identity, loaded[2].SampleRotation!(sample)!.Value.ToWorld);
         var satellite = loaded[2].Sample(sample)!.Value;
         Assert.InRange(satellite.PositionKilometers.Length, 100_002, 100_003);

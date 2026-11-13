@@ -351,7 +351,7 @@ public static partial class SscBodyCatalogue
             try
             {
                 string file = resolve(item, "SampledOrientation", AddonStage.Trajectory, name, "data", "trajectories");
-                spin = ReadSampledSpin(file, spinFrame);
+                spin = ReadSampledSpin(file, spinFrame, cancellation);
             }
             catch (FileNotFoundException) when (usesScriptRotation)
             {

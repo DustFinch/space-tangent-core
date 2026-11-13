@@ -31,12 +31,16 @@ public sealed class SampledMissionAttitude
     internal static SampledMissionAttitude ReadLegacy(string path, bool invertSourceAxes, CancellationToken cancellation) =>
         Read(path, invertSourceAxes, true, cancellation);
 
-    private static SampledMissionAttitude Read(string path, bool legacyAxes, bool legacyInterpolation, CancellationToken cancellation) =>
+    internal static SampledMissionAttitude ReadSsc(string path, CancellationToken cancellation) =>
+        Read(path, true, true, cancellation, 16 * 1024 * 1024);
+
+    private static SampledMissionAttitude Read(string path, bool legacyAxes, bool legacyInterpolation,
+        CancellationToken cancellation, int maximumBytes = MaximumFileBytes) =>
         AddonDiagnostics.Read(AddonStage.Trajectory, path, () =>
         {
-            using var file = AddonDependencies.OpenRead(path, MaximumFileBytes);
-            if (file.Length > MaximumFileBytes)
-                throw new InvalidDataException("The mission attitude file exceeds 64 MiB.");
+            using var file = AddonDependencies.OpenRead(path, maximumBytes);
+            if (file.Length > maximumBytes)
+                throw new InvalidDataException($"The mission attitude file exceeds {maximumBytes / (1024 * 1024)} MiB.");
             using var reader = new StreamReader(file);
             return Parse(reader.ReadToEnd(), legacyAxes, legacyInterpolation, cancellation);
         });
