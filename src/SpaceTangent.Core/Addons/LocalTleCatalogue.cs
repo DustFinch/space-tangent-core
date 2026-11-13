@@ -57,20 +57,27 @@ public static class LocalTleCatalogue
 
     public static IReadOnlyList<LocalTleSatellite> Load(string directory, Action<string>? warning = null,
         CancellationToken cancellation = default)
+        => LoadSources([directory], warning, cancellation);
+
+    public static IReadOnlyList<LocalTleSatellite> LoadSources(IEnumerable<string> directories,
+        Action<string>? warning = null, CancellationToken cancellation = default)
     {
-        string root = Path.GetFullPath(directory);
-        if (!AddonDependencies.DirectoryExists(root))
-            return [];
-        string[] files = [.. AddonDependencies.ListFiles(root, "*.tle"), .. AddonDependencies.ListFiles(root, "*.txt")];
-        if (files.Length > MaximumFiles)
-            throw new InvalidDataException("A TLE directory may contain at most 64 catalogues.");
         var entries = new List<Entry>();
-        foreach (string path in files.Order(StringComparer.Ordinal))
-            AddonDiagnostics.Read(AddonStage.Catalog, path, () =>
-            {
-                ReadFile(LocalAddonFiles.Resolve(root, root, path), entries, warning, cancellation);
-                return true;
-            });
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        foreach (string root in directories.Select(Path.GetFullPath).Distinct(comparer))
+        {
+            if (!AddonDependencies.DirectoryExists(root))
+                continue;
+            string[] files = [.. AddonDependencies.ListFiles(root, "*.tle"), .. AddonDependencies.ListFiles(root, "*.txt")];
+            if (files.Length > MaximumFiles)
+                throw new InvalidDataException("A TLE directory may contain at most 64 catalogues.");
+            foreach (string path in files.Order(StringComparer.Ordinal))
+                AddonDiagnostics.Read(AddonStage.Catalog, path, () =>
+                {
+                    ReadFile(LocalAddonFiles.Resolve(root, root, path), entries, warning, cancellation);
+                    return true;
+                });
+        }
 
         var satellites = new List<LocalTleSatellite>();
         foreach (var group in entries.GroupBy(entry => entry.Elements.CatalogNumber, StringComparer.Ordinal))
@@ -96,6 +103,21 @@ public static class LocalTleCatalogue
         if (entries.Count != 0 && satellites.Count == 0)
             throw new InvalidDataException("No supported orbits were found in the TLE directory.");
         return satellites.AsReadOnly();
+    }
+
+    /// <summary>Checks a downloaded group before it replaces the existing cache file.</summary>
+    public static void ValidateGroup(string path, CancellationToken cancellation = default)
+    {
+        var entries = new List<Entry>();
+        ReadFile(path, entries, message => throw new InvalidDataException(message), cancellation);
+        if (entries.Count == 0)
+            throw new InvalidDataException("The response contains no TLE records.");
+        foreach (Entry entry in entries)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            try { _ = new Sgp4Orbit(entry.Elements); }
+            catch (ArgumentException error) { throw new InvalidDataException(error.Message, error); }
+        }
     }
 
     private static void ReadFile(string path, List<Entry> entries, Action<string>? warning, CancellationToken cancellation)
