@@ -7,6 +7,16 @@ namespace SpaceTangent.Core.Spice;
 internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
 {
     private const int MaximumChainLength = 64;
+
+    internal JulianInstant? FirstEpoch(int target)
+    {
+        JulianInstant? start = null;
+        foreach (var kernel in kernels)
+        foreach (var coverage in kernel.TargetCoverage(target))
+            if (start is null || coverage.Start.CompareTo(start.Value) < 0)
+                start = coverage.Start;
+        return start;
+    }
     internal bool TryState(int target, int center, JulianInstant epoch, out CartesianState state)
     {
         if (epoch.Scale != TimeScale.Tdb)

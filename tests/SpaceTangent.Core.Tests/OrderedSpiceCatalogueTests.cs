@@ -382,6 +382,47 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void DisconnectedInitialSpkStateSelectsTheAuthoredAlternate()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            File.Copy(Path.Combine(corpus, "a.bsp"), Path.Combine(source, "a.bsp"));
+            File.WriteAllText(Path.Combine(source, "fallback.ssc"), """
+                "Disconnected" "Sol" {
+                    SpiceOrbit { Kernel "a.bsp" Target "1999999" Origin "1999998" BoundingRadius 300 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Connected" "Sol" {
+                    SpiceOrbit { Kernel "a.bsp" Target "1999999" Origin "0" BoundingRadius 300 }
+                    FixedPosition [ 4 0 0 ]
+                }
+                """);
+            Check(source);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Check(packed);
+
+            void Check(string root)
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(new[] { 3d, 111d }, bodies.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+                Assert.Contains("No connected SPICE state", Assert.Single(warnings));
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()

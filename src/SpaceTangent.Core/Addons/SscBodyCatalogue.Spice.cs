@@ -94,13 +94,20 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources)
+    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, bool preflight)
     {
         int target = NaifIds.Resolve(orbit.Text("Target")), origin = NaifIds.Resolve(orbit.Text("Origin"));
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
         var coverage = SpiceCoverage(orbit);
         var states = resources.States;
+        if (preflight && target != origin)
+        {
+            var first = coverage is { Beginning: { } beginning, Ending: not null } ? beginning :
+                states.FirstEpoch(target) ?? throw new InvalidDataException("No SPK coverage for the requested target.");
+            if (!states.TryState(target, origin, first.AddSeconds(.001), out _))
+                throw new InvalidDataException("No connected SPICE state at interval beginning.");
+        }
         var j2000ToEcliptic = SpiceReferenceFrames.InertialBasis(SpiceReferenceFrames.Id("ECLIPJ2000"))!.Value.Transpose();
         return epoch => InCoverage(epoch, coverage) && states.TryState(target, origin, epoch, out var state)
             ? new(j2000ToEcliptic.Transform(state.PositionKilometers), j2000ToEcliptic.Transform(state.VelocityKilometersPerSecond))

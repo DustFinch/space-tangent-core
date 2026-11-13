@@ -53,7 +53,8 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.ContainsKey("OrbitFrame"))
                 trajectory = ReadTimelineFrame(phase.Object("OrbitFrame"), center, out center);
 
-            var state = TrySpiceModel(phase, spice, "SpiceOrbit", ReadSpiceOrbit, WarnPhase, timeline: true);
+            var state = TrySpiceModel(phase, spice, "SpiceOrbit",
+                (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true)), WarnPhase, timeline: true);
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
             state ??= ReadTimelineState(phase, center, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
