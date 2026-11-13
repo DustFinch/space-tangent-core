@@ -18,35 +18,56 @@ public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Bas
     public MissionSwarmStyle? Swarm { get; init; }
 }
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
+public sealed record MissionMeshBound(string Path, double SizeKilometers, Vector3d Offset);
+public sealed record MissionGeometryBounds(double RadiusKilometers, IReadOnlyList<MissionMeshBound> Meshes, bool Complete)
+{
+    public double? Resolve(Func<string, (float Extent, float OriginRadius)> meshMetrics)
+    {
+        if (!Complete)
+            return null;
+        float bound = (float)RadiusKilometers;
+        foreach (var mesh in Meshes)
+        {
+            var (extent, radius) = meshMetrics(mesh.Path);
+            float scale = (float)(mesh.SizeKilometers * 2 / extent);
+            float x = (float)mesh.Offset.X, y = (float)mesh.Offset.Y, z = (float)mesh.Offset.Z;
+            bound = MathF.Max(bound, (radius + MathF.Sqrt(x * x + y * y + z * z)) * scale);
+        }
+        return float.IsFinite(bound) ? bound : throw new InvalidDataException("Mission geometry has an invalid navigation bound.");
+    }
+}
 
 public static partial class SampledMissionCatalog
 {
     private static IReadOnlyList<MissionGeometrySpan> ReadGeometry(JsonElement value, string root, string directory,
-        string name, JulianInstant start, JulianInstant end, Func<string, ObjectId> resolve, Action<string>? warning, CancellationToken cancellation, int depth = 0)
+        string name, JulianInstant start, JulianInstant end, Func<string, ObjectId> resolve, Action<string>? warning,
+        CancellationToken cancellation, GeometryBoundsBuilder? bounds, int depth = 0)
     {
+        cancellation.ThrowIfCancellationRequested();
         if (depth >= 16)
             throw new InvalidDataException("Mission geometry exceeds 16 nested levels.");
         string type = Text(value, "type");
         if (type == "Axes")
         {
             var axes = SourceAxes(value, MissionAxesKind.Geometry, "scale");
-            return [new(start, end, AxesShape(axes))];
+            return Leaf(AxesShape(axes));
         }
         if (type is "PlaneVisualizer" or "DirectionVisualizer")
-            return [new(start, end, ReadVectorShape(value, type == "PlaneVisualizer", resolve))];
+            return Leaf(ReadVectorShape(value, type == "PlaneVisualizer", resolve));
         if (type == "Sensor")
-            return [new(start, end, new(null, .001, Basis3d.Identity, default, ReadSensor(value, resolve)))];
+            return Leaf(new(null, .001, Basis3d.Identity, default, ReadSensor(value, resolve)));
         if (type == "KeplerianSwarm")
-            return [new(start, end, ReadSwarm(value, root, directory, cancellation))];
+            return Leaf(ReadSwarm(value, root, directory, cancellation));
         if (type == "ParticleSystem")
-            return [new(start, end, ReadParticles(value, root, directory, warning))];
+            return Leaf(ReadParticles(value, root, directory, warning));
         if (type == "Mesh")
         {
             var mesh = ReadMesh(value, root, directory, name, warning);
+            bounds?.AddMesh(mesh);
             return [new(start, end, mesh)];
         }
         if (type == "Globe")
-            return [new(start, end, ReadGlobe(value, root, directory, name, warning, cancellation))];
+            return Leaf(ReadGlobe(value, root, directory, name, warning, cancellation));
         if (type != "TimeSwitched")
         {
             warning?.Invoke($"{name}: {type} geometry is not supported by the sampled mission reader.");
@@ -68,7 +89,7 @@ public static partial class SampledMissionCatalog
                 throw new InvalidDataException("A mission geometry step is missing its start time.");
             times[index] = Date(step, "startTime", start);
             shapes[index] = step.TryGetProperty("geometry", out var geometry) && geometry.ValueKind == JsonValueKind.Object
-                ? ReadGeometry(geometry, root, directory, name, start, end, resolve, warning, cancellation, depth + 1) : [];
+                ? ReadGeometry(geometry, root, directory, name, start, end, resolve, warning, cancellation, bounds, depth + 1) : [];
         }
 
         // The source selects the first matching adjacent interval, or its last item when none match.
@@ -102,6 +123,43 @@ public static partial class SampledMissionCatalog
             }
         }
         return spans.AsReadOnly();
+
+        IReadOnlyList<MissionGeometrySpan> Leaf(MissionShape shape)
+        {
+            bounds?.AddRadius(shape.Sensor?.RangeKilometers ?? shape.RadiusKilometers);
+            return [new(start, end, shape)];
+        }
+    }
+
+    private sealed class GeometryBoundsBuilder
+    {
+        private readonly List<MissionMeshBound> _meshes = [];
+        private double _radius;
+        private int _terms;
+        private bool _complete = true;
+
+        internal void AddRadius(double radius)
+        {
+            CountTerm();
+            _radius = Math.Max(_radius, radius);
+        }
+
+        internal void AddMesh(MissionShape shape)
+        {
+            CountTerm();
+            if (shape.MeshPath is { } path)
+                _meshes.Add(new(path, shape.RadiusKilometers, shape.MeshOffset));
+            else
+                _complete = false;
+        }
+
+        internal MissionGeometryBounds Build() => new(_radius, _meshes.AsReadOnly(), _complete);
+
+        private void CountTerm()
+        {
+            if (++_terms > 4096)
+                throw new InvalidDataException("A mission geometry may contain at most 4096 bound terms.");
+        }
     }
 
     private static MissionShape AxesShape(MissionAxesStyle axes) => new(null,

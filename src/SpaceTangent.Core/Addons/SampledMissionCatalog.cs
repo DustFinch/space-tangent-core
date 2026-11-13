@@ -15,6 +15,8 @@ public sealed record SampledMission(ObjectId Id, string Name, string? MeshPath, 
     public JulianInstant Start => Arcs[0].Start;
     public JulianInstant End => Arcs[^1].End;
     public IReadOnlyList<MissionGeometrySpan>? Geometry { get; init; }
+    public MissionGeometryBounds? GeometryBounds { get; init; }
+    public double? NavigationRadiusKilometers { get; init; }
 }
 
 public sealed record MissionArc(JulianInstant Start, JulianInstant End, ObjectId Center,
@@ -357,8 +359,10 @@ public static partial class SampledMissionCatalog
                 [new(start, finish, target, _ => new CartesianState(default, default), Equatorial, Equatorial)])
                 { Geometry = [], Observation = observation };
         }
-        IReadOnlyList<MissionGeometrySpan>? geometry = item.TryGetProperty("geometry", out var shown)
-            ? ReadGeometry(shown, root, directory, name, start, finish, resolve, warning, cancellation) : null;
+        var bounds = special.ValueKind == JsonValueKind.Object && Text(special, "type") == "TimeSwitched"
+            ? new GeometryBoundsBuilder() : null;
+        IReadOnlyList<MissionGeometrySpan>? geometry = special.ValueKind == JsonValueKind.Object
+            ? ReadGeometry(special, root, directory, name, start, finish, resolve, warning, cancellation, bounds) : null;
         if (geometry is not null && item.TryGetProperty("visible", out var visible) && !visible.GetBoolean())
             geometry = Array.AsReadOnly(geometry.Select(span => span with { Shape = span.Shape switch
             {
@@ -394,7 +398,7 @@ public static partial class SampledMissionCatalog
         }
         double radius = geometry is { Count: > 0 } ? geometry.Max(span => span.Shape.RadiusKilometers) : .005;
         return new(resolve(name), name, geometry?.FirstOrDefault()?.Shape.MeshPath, radius, result.AsReadOnly())
-            { Geometry = geometry };
+            { Geometry = geometry, GeometryBounds = bounds?.Build() };
     }
 
     private static MissionFrame Frame(JsonElement arc, string property, Func<string, ObjectId> resolve,

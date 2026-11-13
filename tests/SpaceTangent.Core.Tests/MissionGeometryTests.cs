@@ -84,6 +84,39 @@ public sealed class MissionGeometryTests
         finally { folder.Delete(recursive: true); }
     }
 
+    [NativeGeometryFact]
+    [Trait("Category", "ExternalData")]
+    public void TimeSwitchBoundsIncludeEveryNativeChildEvenWhenItsIntervalIsUnreachable()
+    {
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")!;
+        using var oracle = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(archive, "geometry-bounds-reference.json")));
+        var folder = Directory.CreateTempSubdirectory("st-bounds-");
+        try
+        {
+            foreach (var item in oracle.RootElement.GetProperty("switches").EnumerateArray())
+            {
+                File.WriteAllText(Path.Combine(folder.FullName, "mission.json"),
+                    """{"version":"1.0","items":[{"name":"Example","center":"Earth","trajectory":{"type":"FixedPoint","position":[1,0,0]},"geometry":""" +
+                    item.GetProperty("geometry").GetRawText() + "}]}");
+                var mission = Assert.Single(SampledMissionCatalog.Load("mission.json", folder.FullName, _ => SolarSystemSample.EarthId));
+                var bounds = Assert.IsType<MissionGeometryBounds>(mission.GeometryBounds);
+                Assert.True(bounds.Complete);
+                Assert.Empty(bounds.Meshes);
+                Assert.Equal(item.GetProperty("bound").GetDouble(), bounds.Resolve(_ => throw new InvalidOperationException()));
+            }
+        }
+        finally { folder.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void TimedMeshNavigationBoundUsesLongestExtentRawOriginAndOffset()
+    {
+        var bounds = new MissionGeometryBounds(4,
+            [new("hidden-model", 6, new(3, 4, 0)), new("other-model", 1, default)], true);
+        Assert.Equal(24d, bounds.Resolve(path => path == "hidden-model" ? (4, 3) : (1, 2)));
+        Assert.Null((bounds with { Complete = false }).Resolve(_ => throw new InvalidOperationException()));
+    }
+
     private sealed class NativeGeometryFactAttribute : FactAttribute
     {
         public NativeGeometryFactAttribute()
