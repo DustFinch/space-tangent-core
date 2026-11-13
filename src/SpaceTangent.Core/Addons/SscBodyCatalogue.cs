@@ -106,10 +106,18 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException($"SSC parent cycle at {path}.");
             if (!byPath.TryGetValue(item.Parent, out var parent) || Read(parent))
             {
-                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation));
-                installed = body is not null;
-                if (body is not null)
-                    result.Add(body);
+                try
+                {
+                    var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile,
+                        () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation));
+                    installed = body is not null;
+                    if (body is not null)
+                        result.Add(body);
+                }
+                catch (RejectedSampleTable error)
+                {
+                    warning?.Invoke($"{path}: {error.Message}");
+                }
             }
             reading.Remove(path);
             visited[path] = installed;
@@ -239,21 +247,11 @@ public static partial class SscBodyCatalogue
             }
             else
                 name = data.AsText();
-            string file;
-            try
-            {
-                file = resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories");
-            }
-            catch (FileNotFoundException) when (usesScriptOrbit)
-            {
-                Warn($"The alternate {key} resource is unavailable.");
-                return null;
-            }
+            string file = ResolveSampleTable(name,
+                () => resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories"));
             if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
                 throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
-            var curve = SampledStateTrajectory.ReadXyzv(file, Icrs);
-            if (curve.Count == 0)
-                throw new InvalidDataException("The SSC trajectory contains no samples.");
+            var curve = ReadSampleTable(name, () => SampledStateTrajectory.ReadXyzv(file, Icrs));
             raw = epoch => epoch.CompareTo(curve.Start!.Value) >= 0 && epoch.CompareTo(curve.End!.Value) <= 0 &&
                 curve.TrySample(epoch, out CartesianState state) ? state : null;
         }
@@ -492,6 +490,38 @@ public static partial class SscBodyCatalogue
                 raw(epoch) is not { } state)
                 return null;
             return new(orbitFrame.Transform(state.PositionKilometers), orbitFrame.Transform(state.VelocityKilometersPerSecond));
+        }
+    }
+
+    private sealed class RejectedSampleTable(string name, string detail, Exception cause, string? context)
+        : Exception($"{context}SampledTrajectory initialization failed: {name}: {detail}", cause);
+
+    private static string ResolveSampleTable(string name, Func<string> resolve, string? context = null)
+    {
+        try
+        {
+            return resolve();
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException or UnauthorizedAccessException)
+        {
+            throw new RejectedSampleTable(name, error.Message, error, context);
+        }
+    }
+
+    private static SampledStateTrajectory ReadSampleTable(string name, Func<SampledStateTrajectory> read,
+        string? context = null)
+    {
+        try
+        {
+            var curve = read();
+            if (curve.Count == 0)
+                throw new InvalidDataException("The SSC trajectory contains no samples.");
+            return curve;
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or
+                                      ArgumentException or OverflowException)
+        {
+            throw new RejectedSampleTable(name, error.Message, error, context);
         }
     }
 

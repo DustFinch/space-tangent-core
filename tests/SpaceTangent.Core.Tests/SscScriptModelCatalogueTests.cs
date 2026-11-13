@@ -33,7 +33,7 @@ public sealed class SscScriptModelCatalogueTests
         warnings.Clear();
         var disabled = SscBodyCatalogue.Load(root, warning: warnings.Add);
         Assert.Equal(["Fallback Sample", "Fallback Spin"], disabled.Select(body => body.Name));
-        Assert.Contains(warnings, warning => warning.Contains("alternate SampledTrajectory resource is unavailable", StringComparison.Ordinal));
+        Assert.Contains(warnings, warning => warning.Contains("SampledTrajectory initialization failed:", StringComparison.Ordinal));
     }
 
     [PackedFactoryCorpusFact]

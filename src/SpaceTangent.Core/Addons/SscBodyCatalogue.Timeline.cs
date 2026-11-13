@@ -58,7 +58,7 @@ public static partial class SscBodyCatalogue
                 (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
-            state ??= ReadTimelineState(phase, center, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
+            state ??= ReadTimelineState(phase, center, phaseNumber, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
             if (surfaceCoordinates.HasValue)
                 trajectory = find => new MissionFrame.BodyFixed(find(center));
             MissionFrameFactory bodyFrame = _ => new MissionFrame.Inertial(TimelineEcliptic);
@@ -132,7 +132,7 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException("SSC Timeline trajectory and attitude data exceed 128 MiB.");
         }
 
-        Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center,
+        Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center, int phaseNumber,
             Action<string> warnPhase, out double? orbitPeriodSeconds, out Vector3d? surfaceCoordinates)
         {
             orbitPeriodSeconds = null;
@@ -146,18 +146,18 @@ public static partial class SscBodyCatalogue
                     (source.Fields.TryGetValue("DoublePrecision", out var precision) && precision.AsText() != "true"))
                     throw new NotSupportedException("This SSC Timeline needs cubic double-precision samples.");
                 string name = source.Text("Source");
-                string path = resolve(item, "Timeline", AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories");
+                string context = $"Timeline phase {phaseNumber}: ";
+                string path = ResolveSampleTable(name, () => resolve(item, "Timeline", AddonStage.Trajectory, name,
+                    Path.Combine("models", "trajectories"), "data", "trajectories"), context);
                 if (!curves.TryGetValue(path, out var curve))
                 {
                     CountBytes(path);
-                    curve = Path.GetExtension(path).ToLowerInvariant() switch
+                    curve = ReadSampleTable(name, () => Path.GetExtension(path).ToLowerInvariant() switch
                     {
                         ".xyzv" => SampledStateTrajectory.ReadXyzv(path, Icrs),
                         ".xyz" => SampledStateTrajectory.ReadXyz(path, Icrs),
                         _ => throw new NotSupportedException("An SSC Timeline needs XYZ or XYZV samples.")
-                    };
-                    if (curve.Count == 0)
-                        throw new InvalidDataException("An SSC Timeline trajectory has no samples.");
+                    }, context);
                     curves.Add(path, curve);
                 }
                 return epoch => curve.TrySample(epoch, out var sample) ? sample : null;

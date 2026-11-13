@@ -147,6 +147,48 @@ public sealed class SscBodyCatalogueTests
         }
     }
 
+    [LocalBodyPackFact]
+    [Trait("Category", "ExternalData")]
+    public void InvalidSampleTableSkipsOnlyItsBranchOfAnOriginalCatalogue()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_SSC_ADDON_PACK")!;
+        var temporary = Directory.CreateTempSubdirectory("st-ssc-rejected-samples-");
+        try
+        {
+            string root = Directory.CreateDirectory(Path.Combine(temporary.FullName, "source")).FullName;
+            string data = Directory.CreateDirectory(Path.Combine(root, "data")).FullName;
+            foreach (string asset in new[] { "2008-tc3.ssc", "2008TC3.xyzv" })
+                File.Copy(Path.Combine(original, "data", asset), Path.Combine(data, asset));
+            File.WriteAllText(Path.Combine(data, "rejected.ssc"), """
+                "Corrupt" "Sol/Earth" {
+                    SampledTrajectory { Source "broken.xyzv" }
+                    FixedPosition [ 5 6 7 ]
+                }
+                "Child" "Sol/Earth/Corrupt" { FixedPosition [ 1 2 3 ] }
+                "Missing" "Sol/Earth" {
+                    Timeline [ { SampledTrajectory { Source "missing.xyzv" } } ]
+                }
+                """);
+            File.WriteAllText(Path.Combine(data, "broken.xyzv"), "2451545 1 2");
+            var warnings = new List<string>();
+            var source = SscBodyCatalogue.Load(root, warning: warnings.Add);
+            Assert.Contains(warnings, warning => warning.Contains("Sol/Earth/Corrupt: SampledTrajectory initialization failed: broken.xyzv", StringComparison.Ordinal));
+            Assert.Contains(warnings, warning => warning.Contains("Sol/Earth/Missing: Timeline phase 1: SampledTrajectory initialization failed: missing.xyzv", StringComparison.Ordinal));
+            string packed = Path.Combine(temporary.FullName, "packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(root, packed, warnings.Add));
+            var restored = SscBodyCatalogue.Load(packed);
+            var epoch = Epoch(2454013.5);
+            var expected = Assert.Single(SscBodyCatalogue.Load(original), item => item.Name == "2008 TC3");
+            Assert.Equal("2008 TC3", Assert.Single(source).Name);
+            Assert.Equal(expected.Sample(epoch), Assert.Single(source).Sample(epoch));
+            Assert.Equal(expected.Sample(epoch), Assert.Single(restored).Sample(epoch));
+        }
+        finally
+        {
+            temporary.Delete(recursive: true);
+        }
+    }
+
     [OriginalSpacecraftFact]
     [Trait("Category", "ExternalData")]
     public void OriginalConicSpacecraftKeepMissionWindowsAndModels()
