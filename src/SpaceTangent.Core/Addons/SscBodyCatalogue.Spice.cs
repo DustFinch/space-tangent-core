@@ -8,12 +8,15 @@ namespace SpaceTangent.Core.Addons;
 public static partial class SscBodyCatalogue
 {
     private sealed record SscSpiceInput(SpiceResources Pool,
-        IReadOnlyDictionary<(string Body, string Field), FileNotFoundException> Missing)
+        IReadOnlyDictionary<(string Body, string Field), Exception> Unavailable)
     {
         internal SpiceResources ForModel(SscDefinition body, string field)
         {
-            if (Missing.TryGetValue((body.Parent + "/" + body.Name, field), out var error))
-                throw new FileNotFoundException(error.Message, error.FileName, error);
+            if (Unavailable.TryGetValue((body.Parent + "/" + body.Name, field), out var error))
+            {
+                string? file = AddonDiagnostics.Get(error)?.File;
+                throw new InvalidDataException(file is null ? error.Message : $"{file}: {error.Message}", error);
+            }
             return Pool;
         }
     }
@@ -23,10 +26,10 @@ public static partial class SscBodyCatalogue
         string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> furnished)
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
-        var missing = new Dictionary<(string Body, string Field), FileNotFoundException>();
+        var unavailable = new Dictionary<(string Body, string Field), Exception>();
         var supplied = furnished.Select(item => new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]));
         var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Root].First()));
-        return new(pool, missing);
+        return new(pool, unavailable);
 
         IEnumerable<SpiceResources.KernelGroup> Sources()
         {
@@ -48,12 +51,12 @@ public static partial class SscBodyCatalogue
                 }
                 catch (FileNotFoundException error) when (optional)
                 {
-                    missing.Add(key, error);
+                    unavailable.Add(key, error);
                     continue;
                 }
                 yield return new SpiceResources.KernelGroup(owner,
                     files.Select(file => (Path.GetDirectoryName(file)!, Path.GetFileName(file))).ToArray(),
-                    optional ? error => missing.Add(key, error) : null);
+                    optional ? error => unavailable.Add(key, error) : null);
             }
         }
     }

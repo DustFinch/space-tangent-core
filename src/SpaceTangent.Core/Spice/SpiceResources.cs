@@ -24,7 +24,7 @@ internal sealed class SpiceResources
         : this(sources.Select(source => (root, source.Directory, source.Name))) { }
 
     internal sealed record KernelGroup(string Root, IReadOnlyList<(string Directory, string Name)> Files,
-        Action<FileNotFoundException>? Missing = null);
+        Action<Exception>? Unavailable = null);
 
     internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
         : this(sources.Select(source => new KernelGroup(source.Root, [(source.Directory, source.Name)]))) { }
@@ -33,6 +33,8 @@ internal sealed class SpiceResources
     {
         var active = new HashSet<string>(FileNames);
         var ordered = new List<(string Path, KernelKind Kind)>();
+        var parsedSpk = new Dictionary<string, SpkKernel>(FileNames);
+        var parsedCk = new Dictionary<string, CkKernel>(FileNames);
         int visits = 0;
         foreach (var group in groups)
         {
@@ -42,11 +44,31 @@ internal sealed class SpiceResources
                 foreach (var (directory, name) in group.Files)
                     Expand(group.Root, directory, name, active, ordered, ref visits, 0);
             }
-            catch (FileNotFoundException error) when (group.Missing is not null)
+            catch (FileNotFoundException error) when (group.Unavailable is not null)
             {
                 ordered.RemoveRange(first, ordered.Count - first);
                 active.Clear();
-                group.Missing(error);
+                group.Unavailable(error);
+                continue;
+            }
+            if (group.Unavailable is null)
+                continue;
+
+            try
+            {
+                for (int index = first; index < ordered.Count; index++)
+                {
+                    var (path, kind) = ordered[index];
+                    if (kind == KernelKind.Trajectory)
+                        GetKernel(parsedSpk, path, file => new SpkKernel(file));
+                    else if (kind == KernelKind.Attitude)
+                        GetKernel(parsedCk, path, file => new CkKernel(file));
+                }
+            }
+            catch (Exception error) when (error is InvalidDataException or EndOfStreamException or FileNotFoundException)
+            {
+                ordered.RemoveRange(first, ordered.Count - first);
+                group.Unavailable(error);
             }
         }
         _text = new(() =>
@@ -57,25 +79,32 @@ internal sealed class SpiceResources
                     pool.Furnish(path);
             return pool;
         });
-        _trajectories = new(() => Load(KernelKind.Trajectory, path => new SpkKernel(path)));
-        _attitudes = new(() => Load(KernelKind.Attitude, path => new CkKernel(path)));
+        _trajectories = new(() => Load(KernelKind.Trajectory, parsedSpk, path => new SpkKernel(path)));
+        _attitudes = new(() => Load(KernelKind.Attitude, parsedCk, path => new CkKernel(path)));
         _frames = new(() => new SpiceFramePool(Text, () => _attitudes.Value));
         _states = new(() => new SpiceStatePool(TrajectoryKernels(), Frames));
 
-        T[] Load<T>(KernelKind wanted, Func<string, T> parse)
+        T[] Load<T>(KernelKind wanted, Dictionary<string, T> parsed, Func<string, T> parse)
         {
-            var parsed = new Dictionary<string, T>(FileNames);
             var output = new List<T>();
             foreach (var (path, kind) in ordered)
             {
                 if (kind != wanted)
                     continue;
-                if (!parsed.TryGetValue(path, out var kernel))
-                    parsed.Add(path, kernel = parse(path));
-                output.Add(kernel);
+                output.Add(GetKernel(parsed, path, parse));
             }
             return output.ToArray();
         }
+    }
+
+    private static T GetKernel<T>(Dictionary<string, T> parsed, string path, Func<string, T> parse)
+    {
+        if (!parsed.TryGetValue(path, out var kernel))
+        {
+            kernel = AddonDiagnostics.Read(AddonStage.Kernel, path, () => parse(path));
+            parsed.Add(path, kernel);
+        }
+        return kernel;
     }
 
     internal SpiceTextKernel Text => _text.Value;

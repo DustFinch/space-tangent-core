@@ -209,9 +209,11 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
-    [CassiniFact]
+    [CassiniKernelTheory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Category", "ExternalData")]
-    public void MissingChildOfOptionalMetakernelKeepsCassiniPointing()
+    public void BadChildOfOptionalMetakernelKeepsCassiniPointing(bool damaged)
     {
         string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
         var workspace = Directory.CreateTempSubdirectory("st-cassini-optional-kernel-");
@@ -224,9 +226,11 @@ public sealed class CassiniSpiceCatalogTests
             File.WriteAllText(Path.Combine(root, "optional.tm"), """
                 KPL/MK
                 \begindata
-                KERNELS_TO_LOAD = ( 'cas_v43.tf' 'missing.tpc' )
+                KERNELS_TO_LOAD = ( 'cas_v43.tf' 'child.bsp' )
                 \begintext
                 """);
+            if (damaged)
+                File.WriteAllText(Path.Combine(root, "child.bsp"), "DAF/SPK");
             string alternate = Path.Combine(root, "z-alternative.ssc");
             const string catalogue = """
                 "Backup test" "Sol/Saturn" {
@@ -248,12 +252,23 @@ public sealed class CassiniSpiceCatalogTests
             Assert.NotNull(Assert.Single(loaded, body => body.Name == "Backup test").Sample(epoch));
 
             File.WriteAllText(alternate, catalogue.Replace("FixedPosition [ 8000 0 0 ]", "", StringComparison.Ordinal));
-            var failure = Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.Load(root));
-            Assert.EndsWith("missing.tpc", failure.FileName);
+            if (damaged)
+                Assert.Throws<InvalidDataException>(() => SscBodyCatalogue.Load(root));
+            else
+                Assert.EndsWith("child.bsp", Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.Load(root)).FileName);
         }
         finally
         {
             workspace.Delete(recursive: true);
+        }
+    }
+
+    private sealed class CassiniKernelTheoryAttribute : TheoryAttribute
+    {
+        public CassiniKernelTheoryAttribute()
+        {
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")))
+                Skip = "Set the original Cassini SSC input.";
         }
     }
 
