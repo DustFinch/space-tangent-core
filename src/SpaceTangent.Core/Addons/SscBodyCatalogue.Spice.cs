@@ -124,23 +124,25 @@ public static partial class SscBodyCatalogue
         int origin = ResolveOrbitId(orbit.Text("Origin"));
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
-        var coverage = SpiceCoverage(orbit);
+        var coverage = SpiceCoverage(orbit, requireIncreasing: false);
         if (target == 0 && origin == 0)
             return _ => default(CartesianState);
 
         var initialStates = initial.StatesAtInitialization;
+        var intervals = initialStates.SscTargetIntervals(target);
         bool bounded = coverage is { Beginning: not null, Ending: not null };
         if (bounded)
             coverage = (Inset(coverage.Beginning!.Value, .001), Inset(coverage.Ending!.Value, -.001));
-        else if (target != 0 && initialStates.FirstTargetInterval(target) is { } interval)
-            coverage = (Inset(interval.Start, .001), Inset(interval.End, -.001));
+        else if (intervals.Count > 0)
+            coverage = (Inset(intervals[0].Start, .001), Inset(intervals[0].End, -.001));
         else if (preflight && target != 0)
             throw new InvalidDataException("No SPK coverage for the requested target.");
 
         if (preflight)
         {
-            var first = coverage.Beginning ?? initialStates.FirstTargetInterval(origin)?.Start;
-            if (bounded && target != 0 && !initialStates.CoversTarget(target, coverage.Beginning!.Value, coverage.Ending!.Value))
+            var first = coverage.Beginning ?? (target == 0 ? initialStates.FirstTargetEpoch(origin) : null);
+            if (bounded && target != 0 && !intervals.Any(span =>
+                coverage.Beginning!.Value.CompareTo(span.Start) >= 0 && coverage.Ending!.Value.CompareTo(span.End) <= 0))
                 throw new InvalidDataException("The specified SSC interval is not entirely covered by SPK.");
             if (first is null || !initialStates.TryState(target, origin, first.Value, out _))
                 throw new InvalidDataException("No connected SPICE state at interval beginning.");
@@ -215,10 +217,10 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static (JulianInstant? Beginning, JulianInstant? Ending) SpiceCoverage(SscValue.Map block)
+    private static (JulianInstant? Beginning, JulianInstant? Ending) SpiceCoverage(SscValue.Map block, bool requireIncreasing = true)
     {
         JulianInstant? beginning = Date("Beginning"), ending = Date("Ending");
-        if (beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
+        if (requireIncreasing && beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
             throw new InvalidDataException("SSC SPICE ending must follow its beginning.");
         return (beginning, ending);
 

@@ -940,6 +940,65 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void SscCoverageCapacityAndShortWindowsMatchNativeInitialization()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+        using var definitions = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "cases.json")));
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            foreach (string name in new[] { "ten-coverage-intervals", "eleven-coverage-intervals",
+                "coverage-overflow-before-wide-bridge", "ssb-ignores-coverage-cell-overflow",
+                "explicit-inverted-window", "explicit-point-window", "explicit-narrow-window" })
+            {
+                var input = definitions.RootElement.EnumerateArray().Single(row => row.GetProperty("name").GetString() == name)
+                    .GetProperty("operations")[0].GetProperty("orbit");
+                var expected = document.RootElement.GetProperty("rows").EnumerateArray()
+                    .Single(row => row.GetProperty("case").GetString() == name).GetProperty("results");
+                string source = scratch.CreateSubdirectory(name).FullName;
+                string[] files = input.GetProperty("kernels").EnumerateArray().Select(value => value.GetString()!).ToArray();
+                foreach (string file in files)
+                    File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+                string kernels = string.Join(" ", files.Select(file => $"\"{file}\""));
+                string target = input.TryGetProperty("target", out var specified) ? specified.GetString()! : "1999999";
+                string window = "";
+                if (input.TryGetProperty("boundsSeconds", out var bounds))
+                    window = FormattableString.Invariant($"Beginning {2451545 + bounds[0].GetDouble() / 86400:R} Ending {2451545 + bounds[1].GetDouble() / 86400:R}");
+                File.WriteAllText(Path.Combine(source, "test.ssc"), $$"""
+                    "Coverage" "Sol" {
+                        OrbitFrame { EquatorJ2000 {} }
+                        SpiceOrbit { Kernel [ {{kernels}} ] Target "{{target}}" Origin "0" BoundingRadius 500 {{window}} }
+                        FixedPosition [ 4 0 0 ]
+                    }
+                    """);
+                string packed = source + "-packed";
+                Assert.Equal(1, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+                foreach (string root in new[] { source, packed })
+                {
+                    var warnings = new List<string>();
+                    var body = Assert.Single(SscBodyCatalogue.Load(root, warning: warnings.Add));
+                    if (expected[0].GetProperty("ok").GetBoolean())
+                    {
+                        Assert.Empty(warnings);
+                        CheckState(body, expected[1]);
+                    }
+                    else
+                    {
+                        Assert.Contains("coverage exceeds ten intervals", Assert.Single(warnings));
+                        Assert.Equal(4d, body.Sample(JulianInstant.FromTdbSeconds(5))!.Value.PositionKilometers.X);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);

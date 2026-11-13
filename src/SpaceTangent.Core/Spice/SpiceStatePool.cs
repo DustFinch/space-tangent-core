@@ -20,20 +20,41 @@ internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
         return ordered.OrderBy(entry => entry.Key).Select(entry => (entry.Key, entry.Value)).ToArray();
     });
 
-    internal (JulianInstant Start, JulianInstant End)? FirstTargetInterval(int target)
+    internal IReadOnlyList<(JulianInstant Start, JulianInstant End)> SscTargetIntervals(int target)
     {
-        (JulianInstant Start, JulianInstant End)? first = null;
-        foreach (var range in kernels.SelectMany(kernel => kernel.TargetCoverage(target)).OrderBy(range => range.Start))
+        const int capacity = 10;
+        var intervals = new List<(JulianInstant Start, JulianInstant End)>(capacity + 1);
+        if (target == 0)
+            return intervals;
+
+        foreach (var kernel in kernels.Distinct())
+        foreach (var (start, end) in kernel.TargetCoverage(target))
         {
-            if (first is not { } span)
-                first = range;
-            else if (range.Start.CompareTo(span.End) > 0)
-                break;
-            else if (range.End.CompareTo(span.End) > 0)
-                first = (span.Start, range.End);
+            var begin = start;
+            var finish = end;
+            int first = intervals.FindIndex(range => range.End.CompareTo(begin) >= 0);
+            if (first < 0)
+                first = intervals.Count;
+            int next = first;
+            while (next < intervals.Count && intervals[next].Start.CompareTo(finish) <= 0)
+            {
+                var range = intervals[next++];
+                if (range.Start.CompareTo(begin) < 0)
+                    begin = range.Start;
+                if (range.End.CompareTo(finish) > 0)
+                    finish = range.End;
+            }
+            intervals.RemoveRange(first, next - first);
+            intervals.Insert(first, (begin, finish));
+            // The SSC initializer checks capacity after each segment, including before later merges.
+            if (intervals.Count > capacity)
+                throw new InvalidDataException("SPICE coverage exceeds ten intervals.");
         }
-        return first;
+        return intervals;
     }
+
+    internal JulianInstant? FirstTargetEpoch(int target) => kernels.SelectMany(kernel => kernel.TargetCoverage(target))
+        .Select(range => (JulianInstant?)range.Start).Min();
 
     internal bool TryNearestState(int target, int center, JulianInstant epoch, out CartesianState state, out Exception? error)
     {
@@ -85,21 +106,6 @@ internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
                 return false;
             }
         }
-    }
-
-    internal bool CoversTarget(int target, JulianInstant beginning, JulianInstant ending)
-    {
-        var coveredThrough = beginning;
-        foreach (var range in kernels.SelectMany(kernel => kernel.TargetCoverage(target)).OrderBy(range => range.Start))
-        {
-            if (range.Start.CompareTo(coveredThrough) > 0)
-                break;
-            if (range.End.CompareTo(ending) >= 0)
-                return true;
-            if (range.End.CompareTo(coveredThrough) > 0)
-                coveredThrough = range.End;
-        }
-        return false;
     }
 
     internal bool TryState(int target, int center, JulianInstant epoch, out CartesianState state)
