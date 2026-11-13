@@ -12,6 +12,8 @@ public sealed record SscBodyOrientation(SscBodyAxis Primary, SscBodyAxis Seconda
 
 public sealed record SscRings(double InnerKilometers, double OuterKilometers, string TexturePath);
 
+public sealed record SscExtrasolarConic(Func<JulianInstant, CartesianState?> Sample, IReadOnlyList<Vector3d> Points);
+
 public sealed record SscBodyDefinition(string Names, string Parent, string Center, string Class,
     double RadiusKilometers, Vector3d Color, string? Mesh, Vector3d MeshCenter, Basis3d MeshRotation,
     SscBodyOrientation? Orientation, Func<JulianInstant, CartesianState?> Sample)
@@ -21,7 +23,7 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public string? SurfaceMap { get; init; }
     public SscRings? Rings { get; init; }
     public string? MeshRoot { get; init; }
-    public Func<bool, Func<JulianInstant, CartesianState?>>? BindExtrasolarOrbit { get; init; }
+    public Func<bool, SscExtrasolarConic>? BindExtrasolarOrbit { get; init; }
     public Func<ObjectId, Func<string, ObjectId>, SampledMission>? BindTimeline { get; init; }
 
     public string Name => Names.Split(':')[0];
@@ -193,7 +195,7 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
         double? orbitPeriodSeconds = null;
-        Func<bool, Func<JulianInstant, CartesianState?>>? extrasolarOrbit = null;
+        Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, resolve, cancellation) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit") && !fields.Fields.ContainsKey("SpiceOrbit");
@@ -224,14 +226,22 @@ public static partial class SscBodyCatalogue
                         orbitsStar ? 31_557_600 : 86_400);
                     var externalOrbit = SscConicOrbits.ReadOrbit(item, orbit, units).Orbit;
                     var axes = reference.Axes == SscConicAxes.ParentDefault ? Ecliptic : orbitFrame;
-                    return epoch =>
+                    double period = Number(((SscValue.Map)orbit).Get("Period")) * units.SecondsPerPeriodUnit;
+                    const int segments = 120;
+                    var points = new Vector3d[segments + 1];
+                    for (int index = 0; index < segments; index++)
+                        points[index] = axes.Transform(externalOrbit.EvaluateElapsedSeconds(period * index / segments).PositionKilometers);
+                    points[segments] = points[0];
+                    return new(SampleExternal, Array.AsReadOnly(points));
+
+                    CartesianState? SampleExternal(JulianInstant epoch)
                     {
                         if (beginning is { } start && epoch.CompareTo(start) < 0 ||
                             ending is { } end && epoch.CompareTo(end) > 0)
                             return null;
                         var state = externalOrbit.Evaluate(epoch);
                         return new(axes.Transform(state.PositionKilometers), axes.Transform(state.VelocityKilometersPerSecond));
-                    };
+                    }
                 };
             }
         }
