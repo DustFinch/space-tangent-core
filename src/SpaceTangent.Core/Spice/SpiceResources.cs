@@ -21,11 +21,14 @@ internal sealed class SpiceResources
         : this(root, names.Select(name => (directory, name))) { }
 
     internal SpiceResources(string root, IEnumerable<(string Directory, string Name)> sources)
+        : this(sources.Select(source => (root, source.Directory, source.Name))) { }
+
+    internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
     {
         var active = new HashSet<string>(FileNames);
         var ordered = new List<(string Path, KernelKind Kind)>();
         int visits = 0;
-        foreach (var (directory, name) in sources)
+        foreach (var (root, directory, name) in sources)
             Expand(root, directory, name, active, ordered, ref visits, 0);
         _text = new(() =>
         {

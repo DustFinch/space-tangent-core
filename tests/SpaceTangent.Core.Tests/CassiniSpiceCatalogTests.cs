@@ -102,6 +102,76 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [CassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void OrdinaryBodyCatalogLoadsOriginalCassiniAcrossPackedAndLooseOwners()
+    {
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        var root = Directory.CreateTempSubdirectory("space-tangent-ssc-");
+        try
+        {
+            var packed = root.CreateSubdirectory("packed");
+            var loose = root.CreateSubdirectory("loose");
+            var kernels = root.CreateSubdirectory("kernels");
+            const string Spk = "040615AP_SK_04167_04186.bsp";
+            const string Ck = "04182_04183pa_soi_itl.bc";
+            const string Frame = "cas_v43.tf";
+            const string Clock = "cas00172.tsc";
+            const string Mesh = "cassini.3ds";
+            foreach (string file in new[] { Spk, Mesh })
+                File.Copy(Path.Combine(source, file), Path.Combine(packed.FullName, file));
+            foreach (string file in new[] { Ck, Frame, Clock })
+                File.Copy(Path.Combine(source, file), Path.Combine(kernels.FullName, file));
+
+            // Keep the original orbit declaration except for the split kernel list.
+            string originalPath = Path.Combine(source, "cassini.ssc");
+            string text = File.ReadAllText(originalPath)
+                .Replace($"\"{Spk}\" \"{Frame}\" \"{Clock}\" \"{Ck}\"", $"\"{Spk}\"", StringComparison.Ordinal)
+                .Replace("Radius 0.006", "Radius 0.006 OrbitFrame { EclipticJ2000 {} }", StringComparison.Ordinal);
+            File.WriteAllText(Path.Combine(packed.FullName, "pack.json"), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                formatVersion = 19,
+                sscCatalogs = new[] { new
+                {
+                    name = "cassini.ssc", text,
+                    resources = new[] { new { kind = "data", source = Spk, file = Spk }, new { kind = "model", source = Mesh, file = Mesh } }
+                } }
+            }));
+            File.WriteAllText(Path.Combine(loose.FullName, "support.ssc"),
+                """Modify "Cassini-SSC" "Sol/Saturn" { Radius 0.009 }""");
+            File.WriteAllText(Path.Combine(kernels.FullName, "pack.json"), """
+                {"formatVersion":19,"spiceLoads":[{"policy":"furnish",
+                    "files":["cas_v43.tf","cas00172.tsc","04182_04183pa_soi_itl.bc"]}]}
+                """);
+
+            Assert.Throws<InvalidDataException>(() => SscBodyCatalogue.Load(packed.FullName));
+            var loaded = SscBodyCatalogue.LoadSources([packed.FullName, loose.FullName, kernels.FullName], _ => { });
+            var cassini = Assert.Single(loaded, item => item.Name == "Cassini-SSC");
+            Assert.Equal(0.009, cassini.RadiusKilometers);
+            Assert.Equal(Path.Combine(packed.FullName, Mesh), cassini.Mesh);
+            Assert.Equal(packed.FullName, cassini.MeshRoot);
+            Assert.Equal("Sol/Saturn", cassini.Center);
+            var reference = SscSpiceCatalog.Load(originalPath, source).Single();
+            foreach (double second in new[] { 141911269.46157101, 141917558.4203589, 141918830.41202343 })
+            {
+                var epoch = JulianInstant.FromTdbSeconds(second);
+                Assert.True(reference.TrySample(epoch, out var expected));
+                var state = Assert.IsType<CartesianState>(cassini.Sample(epoch));
+                Assert.InRange((state.PositionKilometers - expected.PositionKilometers).Length, 0, 0.002);
+                Assert.InRange((state.VelocityKilometersPerSecond - expected.VelocityKilometersPerSecond).Length, 0, 1e-7);
+                Assert.True(reference.TryAttitude(epoch, out var attitude));
+                Assert.Equal(attitude, cassini.SampleRotation!(epoch)!.Value.ToWorld);
+            }
+            Assert.Null(cassini.Sample(JulianInstant.FromTdbSeconds(140556964.18453318).AddNanoseconds(-1)));
+            File.Delete(Path.Combine(kernels.FullName, Ck));
+            Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.LoadSources([packed.FullName, loose.FullName, kernels.FullName], _ => { }));
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [CassiniJsonFact]
     public void OriginalJsonAndItsMetakernelProduceTheSameCassiniTrajectoryAndAttitude()
     {

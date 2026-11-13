@@ -14,10 +14,11 @@ public static partial class SscBodyCatalogue
     {
         var documents = ReadPackedDocuments(root, file, cancellation);
         var definitions = SscDefinitions.Load(documents.Documents, cancellation);
-        return ReadBodyDefinitions(definitions, _ => root, scripts, warning, documents.Resolve, cancellation);
+        return ReadBodyDefinitions(definitions, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels);
     }
 
-    private sealed record SscSource(IReadOnlyList<SscDocument> Documents, SscResource Resolve);
+    private sealed record SscSource(IReadOnlyList<SscDocument> Documents, SscResource Resolve,
+        IReadOnlyList<(string Root, string Directory, string Name)> Kernels);
 
     private static SscSource ReadPackedDocuments(string root, string file, CancellationToken cancellation)
     {
@@ -30,14 +31,32 @@ public static partial class SscBodyCatalogue
         int format = pack.GetProperty("formatVersion").GetInt32();
         if (format is < 1 or > 19)
             throw new NotSupportedException($"Packed SSC format version {format} is outside 1–19.");
-        if (!pack.TryGetProperty("sscCatalogs", out var catalogues) || catalogues.GetArrayLength() == 0)
-            throw new NotSupportedException("This pack has no embedded SSC catalogues.");
-        if (catalogues.GetArrayLength() > 64)
+        JsonElement[] catalogues = pack.TryGetProperty("sscCatalogs", out var cataloguesNode)
+            ? cataloguesNode.EnumerateArray().ToArray() : [];
+        if (catalogues.Length > 64)
             throw new InvalidDataException("A body pack may contain at most 64 SSC documents.");
 
         var documents = new List<SscDocument>();
         var assets = new Dictionary<string, Dictionary<(string Kind, string Source), string>>(StringComparer.Ordinal);
-        foreach (var catalogue in catalogues.EnumerateArray())
+        var kernels = new List<(string Root, string Directory, string Name)>();
+        if (pack.TryGetProperty("spiceLoads", out var loads))
+        {
+            foreach (var load in loads.EnumerateArray())
+            {
+                cancellation.ThrowIfCancellationRequested();
+                // Replay preview loads through the original embedded SSC fields that own them.
+                if (Text(load, "policy") != "furnish")
+                    continue;
+                foreach (var name in load.GetProperty("files").EnumerateArray())
+                {
+                    string kernelFile = SscSampledCatalog.FindAsset(AddonStage.Kernel, root, root, name.GetString()!, "data");
+                    kernels.Add((root, Path.GetDirectoryName(kernelFile)!, Path.GetFileName(kernelFile)));
+                }
+            }
+        }
+        if (catalogues.Length == 0 && kernels.Count == 0)
+            throw new NotSupportedException("This pack has no embedded SSC catalogues or furnished SPICE kernels.");
+        foreach (var catalogue in catalogues)
         {
             cancellation.ThrowIfCancellationRequested();
             string name = Text(catalogue, "name");
@@ -66,7 +85,7 @@ public static partial class SscBodyCatalogue
             assets.Add(context, resources);
         }
 
-        return new(documents.AsReadOnly(), Resolve);
+        return new(documents.AsReadOnly(), Resolve, kernels.AsReadOnly());
 
         string Resolve(SscDefinition definition, string field, AddonStage stage, string name, params string[] ignored)
         {
@@ -74,6 +93,7 @@ public static partial class SscBodyCatalogue
             {
                 "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),
                 "Mesh" => ("model", "models"),
+                "SpiceOrbit" or "SpiceRotation" => ("data", "data"),
                 "SampledOrbit" or "SampledTrajectory" or "SampledOrientation" => ("trajectory", "trajectories"),
                 _ => throw new NotSupportedException($"Packed SSC resource kind for {field} is unavailable.")
             };

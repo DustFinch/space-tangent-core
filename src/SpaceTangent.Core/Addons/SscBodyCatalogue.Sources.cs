@@ -13,6 +13,7 @@ public static partial class SscBodyCatalogue
         if (roots.Length == 1)
             return LoadWithMpc(roots[0], warning, cancellation, scripts);
         var documents = new List<SscDocument>();
+        var kernels = new List<(string Root, string Directory, string Name)>();
         var owners = new Dictionary<string, (string Root, SscResource Resolve)>(StringComparer.OrdinalIgnoreCase);
         foreach (string root in roots)
         {
@@ -23,6 +24,7 @@ public static partial class SscBodyCatalogue
             var source = AddonDependencies.FileExists(manifest)
                 ? AddonDiagnostics.Read(AddonStage.Catalog, manifest, () => ReadPackedDocuments(root, manifest, cancellation))
                 : ReadLooseDocuments(root);
+            kernels.AddRange(source.Kernels);
             foreach (var document in source.Documents)
             {
                 documents.Add(document);
@@ -32,7 +34,7 @@ public static partial class SscBodyCatalogue
         var definitions = SscDefinitions.Load(documents, cancellation);
         var bodies = ReadBodyDefinitions(definitions, directory => owners[directory].Root, scripts, warning,
             (body, field, stage, name, fallbacks) => owners[body.DirectoryFor(field)].Resolve(body, field, stage, name, fallbacks),
-            cancellation).ToList();
+            cancellation, roots, kernels).ToList();
         foreach (string root in roots)
             AppendMpc(root, bodies, warning, cancellation);
         return bodies.AsReadOnly();

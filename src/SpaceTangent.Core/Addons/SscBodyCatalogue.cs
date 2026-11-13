@@ -40,7 +40,7 @@ public static partial class SscBodyCatalogue
             return AddonDiagnostics.Read(AddonStage.Catalog, pack, () => ReadPackedSsc(root, pack, scripts, warning, cancellation));
         var source = ReadLooseDocuments(root);
         return ReadBodyDefinitions(SscDefinitions.Load(source.Documents, cancellation), _ => root,
-            scripts, warning, source.Resolve, cancellation);
+            scripts, warning, source.Resolve, cancellation, [root], source.Kernels);
     }
 
     private static SscSource ReadLooseDocuments(string root)
@@ -54,14 +54,16 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("A body catalogue source contains more than 64 SSC files.");
         return new(files.Select(file => new SscDocument(file, root)).ToArray(),
             (body, field, stage, asset, fallbacks) => SscSampledCatalog.FindAsset(stage, root,
-                body.DirectoryFor(field), asset, fallbacks));
+                body.DirectoryFor(field), asset, fallbacks), []);
     }
 
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
-        Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation)
+        Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
+        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> kernels)
     {
         if (definitions.Count > 512)
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
+        var spice = ReadSpiceResources(definitions, root, resolve, cancellation, roots, kernels);
         var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
         var result = new List<SscBodyDefinition>();
         var visited = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -80,7 +82,7 @@ public static partial class SscBodyCatalogue
                 throw new InvalidDataException($"SSC parent cycle at {path}.");
             if (!byPath.TryGetValue(item.Parent, out var parent) || Read(parent))
             {
-                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning, resolve));
+                var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile, () => ReadBody(item, root, scripts, warning, resolve, spice));
                 installed = body is not null;
                 if (body is not null)
                     result.Add(body);
@@ -150,7 +152,7 @@ public static partial class SscBodyCatalogue
         SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
 
-    private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve)
+    private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, SpiceResources spice)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -169,10 +171,16 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;
         double? orbitPeriodSeconds = null;
-        bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
+        bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit") && !fields.Fields.ContainsKey("SpiceOrbit");
         SscScriptOrbit? scripted = usesScriptOrbit
             ? TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) : null;
-        if (scripted is not null)
+        if (fields.Fields.TryGetValue("SpiceOrbit", out var spiceOrbit))
+        {
+            if (spiceOrbit is not SscValue.Map parameters)
+                throw new InvalidDataException("SSC SpiceOrbit must be an object.");
+            raw = ReadSpiceOrbit(parameters, spice);
+        }
+        else if (scripted is not null)
             raw = ScriptOrbit(scripted);
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {
@@ -264,7 +272,9 @@ public static partial class SscBodyCatalogue
 
         Func<JulianInstant, FrameKinematics?>? spin = null;
         bool usesScriptRotation = fields.Fields.ContainsKey("ScriptedRotation");
-        if (usesScriptRotation &&
+        if (fields.Fields.ContainsKey("SpiceRotation"))
+            spin = ReadSpiceRotation(fields.Object("SpiceRotation"), spice, spinFrame);
+        else if (usesScriptRotation &&
             TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
             spin = ScriptRotation(scriptedRotation, spinFrame);
         else if (fields.Fields.ContainsKey("SampledOrientation"))
@@ -308,7 +318,7 @@ public static partial class SscBodyCatalogue
         }
         else if (usesScriptRotation)
             return null;
-        else if (fields.Fields.Keys.Any(key => key is "PrecessingRotation" or "CustomRotation" or "SpiceRotation"))
+        else if (fields.Fields.Keys.Any(key => key is "PrecessingRotation" or "CustomRotation"))
             throw new NotSupportedException("This body catalogue needs a different rotation model.");
         if (spin is not null && orientation is not null)
             throw new NotSupportedException("This SSC spin model currently needs an inertial body frame.");
