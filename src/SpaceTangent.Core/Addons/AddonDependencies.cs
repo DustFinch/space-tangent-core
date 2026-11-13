@@ -8,7 +8,7 @@ namespace SpaceTangent.Core.Addons;
 /// <summary>The filesystem observations used by one synchronously decoded add-on.</summary>
 public sealed class AddonDependencies
 {
-    private enum Observation { Contents, File, Directory, Attributes, Listing }
+    private enum Observation { Contents, File, Directory, Attributes, Listing, DirectoryListing }
     private readonly record struct Input(Observation Kind, string Path, string? Pattern = null);
     private sealed record Recorder(Dictionary<Input, string?> Inputs, CancellationToken Cancellation);
     [ThreadStatic] private static Recorder? _recording;
@@ -48,6 +48,7 @@ public sealed class AddonDependencies
                     Observation.Directory => Directory.Exists(input.Path) ? "1" : "0",
                     Observation.Attributes => Attributes(File.GetAttributes(input.Path)),
                     Observation.Listing => JoinFiles(Directory.GetFiles(input.Path, input.Pattern!)),
+                    Observation.DirectoryListing => JoinFiles(Directory.GetDirectories(input.Path)),
                     Observation.Contents => FileHash(input.Path, expected, cancellation),
                     _ => throw new InvalidOperationException("Unknown add-on filesystem observation.")
                 };
@@ -89,6 +90,13 @@ public sealed class AddonDependencies
         string listing = JoinFiles(files);
         Note(Observation.Listing, path, listing, pattern);
         return files;
+    }
+
+    public static string[] ListDirectories(string path)
+    {
+        string[] directories = Directory.GetDirectories(path);
+        Note(Observation.DirectoryListing, path, JoinFiles(directories));
+        return directories;
     }
 
     /// <summary>Records the content of the same file handle used by the parser.</summary>

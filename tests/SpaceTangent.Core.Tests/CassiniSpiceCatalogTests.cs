@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Spice;
@@ -208,16 +209,19 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
-    [PackedCassiniFact]
+    [PackedCassiniTheory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Category", "ExternalData")]
-    public void PackedCassiniKeepsTheOriginalTrajectoryAndBothCameraFields()
+    public void PackedCassiniKeepsTheOriginalTrajectoryAndBothCameraFields(bool split)
     {
-        string root = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_PACKED_ROOT")!;
+        string root = Environment.GetEnvironmentVariable(split ? "SPACETANGENT_CASSINI_SPLIT_ROOT" : "SPACETANGENT_CASSINI_PACKED_ROOT")!;
+        string[] manifests = split ? ["00-orbits/pack.json", "99-frames/pack.json"] : ["pack.json"];
         string source = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_JSON_ROOT")!;
         var baseline = SpiceJsonCatalog.Load(Path.Combine(source, "cassini.json"), source);
         var saturn = new ObjectId("sol/saturn");
         var diagnostics = new List<string>();
-        var content = SampledMissionCatalog.Load("pack.json", root,
+        var content = SampledMissionCatalog.Load(manifests, root,
             name => name is "Sol/Saturn" or "Saturn" ? saturn : null, diagnostics.Add);
         Assert.True(content.Count == 3, string.Join("\n", diagnostics));
         var cassini = Assert.Single(content, mission => mission.Name == "Cassini SOI");
@@ -227,6 +231,30 @@ public sealed class CassiniSpiceCatalogTests
         foreach (var mission in content)
             builder.AddSampledMission(mission);
         var world = builder.Build();
+        if (split)
+        {
+            // CSPICE reports the J2000-to-instrument matrix row-major. Each row is a body axis in J2000.
+            string oracle = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SPLIT_ORACLE")!;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(oracle));
+            foreach (var row in document.RootElement.GetProperty("rows").EnumerateArray())
+            {
+                var epoch = JulianInstant.FromTdbSeconds(row.GetProperty("seconds").GetDouble());
+                var snapshot = world.Evaluate(epoch);
+                double[] state = row.GetProperty("state").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+                double[] matrix = row.GetProperty("matrix").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+                Assert.True(snapshot.TryState(cassini.Id, out var actual));
+                Assert.InRange((actual.PositionKilometers - new Vector3d(state[0], state[1], state[2])).Length, 0, 1e-6);
+                Assert.InRange((actual.VelocityKilometersPerSecond - new Vector3d(state[3], state[4], state[5])).Length, 0, 1e-9);
+                Assert.True(snapshot.TryOrientation(cassini.Id, out var orientation));
+                Assert.InRange((orientation.ToWorld.X - new Vector3d(matrix[0], matrix[1], matrix[2])).Length, 0, 3e-8);
+                Assert.InRange((orientation.ToWorld.Y - new Vector3d(matrix[3], matrix[4], matrix[5])).Length, 0, 3e-8);
+                Assert.InRange((orientation.ToWorld.Z - new Vector3d(matrix[6], matrix[7], matrix[8])).Length, 0, 3e-8);
+            }
+            Assert.Throws<InvalidDataException>(() => SampledMissionCatalog.Load(manifests.Take(1), root,
+                name => name is "Sol/Saturn" or "Saturn" ? saturn : null));
+            return;
+        }
+
         foreach (double seconds in new[] { 141911269.46157101, 141917558.4203589 })
         {
             var time = JulianInstant.FromTdbSeconds(seconds);
@@ -250,11 +278,11 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
-    private sealed class PackedCassiniFactAttribute : FactAttribute
+    private sealed class PackedCassiniTheoryAttribute : TheoryAttribute
     {
-        public PackedCassiniFactAttribute()
+        public PackedCassiniTheoryAttribute()
         {
-            if (new[] { "SPACETANGENT_CASSINI_PACKED_ROOT", "SPACETANGENT_CASSINI_JSON_ROOT" }
+            if (new[] { "SPACETANGENT_CASSINI_PACKED_ROOT", "SPACETANGENT_CASSINI_SPLIT_ROOT", "SPACETANGENT_CASSINI_SPLIT_ORACLE", "SPACETANGENT_CASSINI_JSON_ROOT" }
                 .Any(variable => string.IsNullOrEmpty(Environment.GetEnvironmentVariable(variable))))
                 Skip = "Set the original Cassini JSON and archived pack roots.";
         }
