@@ -65,7 +65,7 @@ public static partial class SscBodyCatalogue
     {
         string[] keys = field == "SpiceOrbit"
             ? ["ScriptedOrbit", "EllipticalOrbit", "FixedPosition", "SampledOrbit", "SampledTrajectory"]
-            : ["ScriptedRotation", "SampledOrientation", "CustomRotation", "UniformRotation", "FixedRotation"];
+            : ["ScriptedRotation", "SampledOrientation", "CustomRotation", "PrecessingRotation", "UniformRotation", "FixedRotation"];
         return keys.Any(properties.Fields.ContainsKey);
     }
 

@@ -51,18 +51,20 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.ContainsKey("OrbitFrame"))
                 trajectory = ReadTimelineFrame(phase.Object("OrbitFrame"), center, out center);
 
-            var state = ReadTimelineState(phase, center);
+            var state = ReadTimelineState(phase, center, out double? orbitPeriodSeconds);
             MissionFrameFactory bodyFrame = _ => new MissionFrame.Inertial(TimelineEcliptic);
             if (phase.Fields.ContainsKey("BodyFrame"))
                 bodyFrame = ReadTimelineFrame(phase.Object("BodyFrame"), item.Parent, out _);
 
-            var spin = phase.Fields.ContainsKey("UniformRotation")
-                ? ReadUniformSpin(phase.Object("UniformRotation"), Basis3d.Identity, null)
-                : phase.Fields.ContainsKey("FixedRotation")
-                    ? ReadUniformSpin(phase.Object("FixedRotation"), Basis3d.Identity, null, stationary: true)
-                    : null;
+            Func<JulianInstant, FrameKinematics?>? spin = null;
+            if (phase.Fields.ContainsKey("PrecessingRotation"))
+                spin = ReadUniformSpin(phase.Object("PrecessingRotation"), Basis3d.Identity, orbitPeriodSeconds, precessing: true);
+            else if (phase.Fields.ContainsKey("UniformRotation"))
+                spin = ReadUniformSpin(phase.Object("UniformRotation"), Basis3d.Identity, orbitPeriodSeconds);
+            else if (phase.Fields.ContainsKey("FixedRotation"))
+                spin = ReadUniformSpin(phase.Object("FixedRotation"), Basis3d.Identity, null, stationary: true);
             if (phase.Fields.Keys.Any(key => key is "CustomRotation" or "SpiceRotation" or "ScriptedRotation"
-                or "SampledOrientation" or "PrecessingRotation" or "FixedAttitude"))
+                or "SampledOrientation" or "FixedAttitude"))
                 throw new NotSupportedException("This SSC Timeline rotation model is unavailable.");
 
             result.Add(find =>
@@ -78,8 +80,9 @@ public static partial class SscBodyCatalogue
         }
         return result.AsReadOnly();
 
-        Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center)
+        Func<JulianInstant, CartesianState?> ReadTimelineState(SscValue.Map phase, string center, out double? orbitPeriodSeconds)
         {
+            orbitPeriodSeconds = null;
             if (phase.Fields.Keys.Any(key => key is "CustomOrbit" or "SpiceOrbit" or "ScriptedOrbit" or "LongLat"))
                 throw new NotSupportedException("This SSC Timeline orbit model is unavailable.");
             if (phase.Fields.TryGetValue("SampledTrajectory", out var data))
@@ -112,6 +115,7 @@ public static partial class SscBodyCatalogue
                 bool heliocentric = center.Equals("Sol", StringComparison.OrdinalIgnoreCase);
                 var context = new SscOrbitContext(Icrs, heliocentric ? AuKilometers : 1, heliocentric ? 31_557_600 : 86_400);
                 var conic = SscConicOrbits.ReadOrbit(item, orbit, context).Orbit;
+                orbitPeriodSeconds = Number(((SscValue.Map)orbit).Get("Period")) * context.SecondsPerPeriodUnit;
                 return epoch => conic.Evaluate(epoch);
             }
             if (phase.Fields.TryGetValue("FixedPosition", out var fixedPosition))
@@ -141,6 +145,9 @@ public static partial class SscBodyCatalogue
                 return _ => new MissionFrame.Inertial(Basis3d.Identity);
             case "BodyFixed":
                 return find => new MissionFrame.BodyFixed(find(reference));
+            case "TwoVector" when HasConstantAxes(parameters):
+                var basis = SscConstantOrbitFrame.Read(parameters);
+                return _ => new MissionFrame.Inertial(basis);
             case "TwoVector":
                 var primary = ReadAxis(parameters.Object("Primary"));
                 var secondary = ReadAxis(parameters.Object("Secondary"));

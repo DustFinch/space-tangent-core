@@ -312,7 +312,10 @@ public static partial class SscBodyCatalogue
             if (frame.Fields.ContainsKey("TwoVector"))
             {
                 var vectors = frame.Object("TwoVector");
-                orientation = new(ReadAxis(vectors.Object("Primary")), ReadAxis(vectors.Object("Secondary")));
+                if (HasConstantAxes(vectors))
+                    spinFrame = SscConstantOrbitFrame.Read(vectors);
+                else
+                    orientation = new(ReadAxis(vectors.Object("Primary")), ReadAxis(vectors.Object("Secondary")));
             }
             else if (frame.Fields.ContainsKey("EquatorJ2000"))
                 spinFrame = Basis3d.Identity;
@@ -357,6 +360,8 @@ public static partial class SscBodyCatalogue
                 spin = ReadUniformSpin(new SscValue.Map(new Dictionary<string, SscValue>()), spinFrame, orbitPeriodSeconds);
             }
         }
+        else if (fields.Fields.ContainsKey("PrecessingRotation"))
+            spin = ReadUniformSpin(fields.Object("PrecessingRotation"), spinFrame, orbitPeriodSeconds, precessing: true);
         else if (fields.Fields.ContainsKey("UniformRotation"))
             spin = ReadUniformSpin(fields.Object("UniformRotation"), spinFrame, orbitPeriodSeconds);
         else if (fields.Fields.TryGetValue("FixedRotation", out var fixedRotation))
@@ -368,7 +373,7 @@ public static partial class SscBodyCatalogue
         }
         else if (usesScriptRotation)
             return null;
-        else if (fields.Fields.Keys.Any(key => key is "PrecessingRotation" or "CustomRotation"))
+        else if (fields.Fields.ContainsKey("CustomRotation"))
             throw new NotSupportedException("This body catalogue needs a different rotation model.");
         if (spin is not null && orientation is not null)
             throw new NotSupportedException("This SSC spin model currently needs an inertial body frame.");
@@ -492,23 +497,32 @@ public static partial class SscBodyCatalogue
     }
 
     private static Func<JulianInstant, FrameKinematics?> ReadUniformSpin(SscValue.Map fields, Basis3d frame,
-        double? orbitPeriodSeconds, bool stationary = false)
+        double? orbitPeriodSeconds, bool stationary = false, bool precessing = false)
     {
-        double period = stationary ? 0 : fields.Fields.TryGetValue("Period", out var hours) ? Number(hours) * 3600 : orbitPeriodSeconds ?? 0;
-        if (!double.IsFinite(period))
-            throw new InvalidDataException("SSC spin period must be finite.");
+        double period = stationary ? 0 : ReadRotationPeriod(fields, "Period", 3_600) ?? orbitPeriodSeconds ?? 0;
+        double precessionPeriod = precessing ? ReadRotationPeriod(fields, "PrecessionPeriod", 31_557_600) ?? 0 : 0;
         var epoch = JulianInstant.FromJulianDate(Get("Epoch", JulianInstant.J2000Day), TimeScale.Tdb);
         Vector3d pole = new(0, 0, 1);
-        Basis3d mean = SampledMissionCatalog.Multiply(frame,
-            SampledMissionCatalog.Multiply(Rotation(pole, Angle("AscendingNode")), Rotation(new(1, 0, 0), Angle("Inclination"))));
-        double rate = period == 0 ? 0 : Math.Tau / period;
+        double node = Angle("AscendingNode");
+        var inclination = Rotation(new(1, 0, 0), Angle("Inclination"));
+        var meanAtEpoch = MeanEquator(node);
+        double spinRate = period == 0 ? 0 : Math.Tau / period;
+        double nodeRate = period == 0 || precessionPeriod == 0 ? 0 : -Math.Tau / precessionPeriod;
+        if (!double.IsFinite(spinRate) || !double.IsFinite(nodeRate))
+            throw new InvalidDataException("SSC rotation rates must be finite.");
         double meridian = 180 + Angle("MeridianAngle");
         return time =>
         {
             double seconds = (double)time.DifferenceNanoseconds(epoch) / JulianInstant.NanosecondsPerSecond;
-            double angle = meridian + (period == 0 ? 0 : 360 * Math.IEEERemainder(seconds, period) / period);
-            return new FrameKinematics(SampledMissionCatalog.Multiply(mean, Rotation(pole, angle)), mean.Z * rate);
+            double angle = meridian + (period == 0 ? 0 : 360 * (Math.IEEERemainder(seconds, period) / period));
+            var mean = nodeRate == 0 ? meanAtEpoch :
+                MeanEquator(node - 360 * (Math.IEEERemainder(seconds, precessionPeriod) / precessionPeriod));
+            return new FrameKinematics(SampledMissionCatalog.Multiply(mean, Rotation(pole, angle)),
+                mean.Z * spinRate + frame.Z * nodeRate);
         };
+
+        Basis3d MeanEquator(double ascendingNode) => SampledMissionCatalog.Multiply(frame,
+            SampledMissionCatalog.Multiply(Rotation(pole, ascendingNode), inclination));
 
         double Get(string key, double fallback) => fields.Fields.TryGetValue(key, out var value) ? Number(value) : fallback;
         double Angle(string key)
@@ -517,6 +531,35 @@ public static partial class SscBodyCatalogue
             return period == 0 ? degrees : (float)(degrees / 180 * Math.PI) * (180 / Math.PI);
         }
     }
+
+    private static double? ReadRotationPeriod(SscValue.Map fields, string name, double defaultScale)
+    {
+        double? seconds = null;
+        foreach (var (key, value) in fields.Fields)
+        {
+            if (key != name && !key.StartsWith(name + "<", StringComparison.Ordinal))
+                continue;
+            if (seconds is not null)
+                throw new InvalidDataException($"Duplicate SSC rotation period {name}.");
+            double scale = key == name ? defaultScale : key[name.Length..] switch
+            {
+                "<s>" => 1,
+                "<min>" => 60,
+                "<h>" => 3_600,
+                "<d>" => 86_400,
+                "<y>" => 31_557_600,
+                _ => throw new InvalidDataException($"Unknown SSC time unit in {key}.")
+            };
+            seconds = Number(value) * scale;
+            if (!double.IsFinite(seconds.Value))
+                throw new InvalidDataException($"SSC rotation period {name} must be finite.");
+        }
+        return seconds;
+    }
+
+    private static bool HasConstantAxes(SscValue.Map vectors) =>
+        vectors.Object("Primary").Fields.ContainsKey("ConstantVector") &&
+        vectors.Object("Secondary").Fields.ContainsKey("ConstantVector");
 
     private static SscBodyAxis ReadAxis(SscValue.Map frame)
     {

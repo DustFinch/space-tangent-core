@@ -131,6 +131,8 @@ internal sealed class SscReader(string input, string path)
         while (SkipSpace() && input[_offset] != '}')
         {
             string key = ReadText();
+            if (SkipSpace() && input[_offset] == '<')
+                key += ReadText();
             if (!fields.TryAdd(key, ReadValue(depth + 1)))
                 throw Error($"Duplicate property {key}.");
         }
