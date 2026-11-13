@@ -216,7 +216,7 @@ public static partial class SscBodyCatalogue
         if (timeline is not null)
             raw = _ => null; // A timeline needs its bound graph to select a center and frame.
         else if (TrySpiceModel(fields, spice, "SpiceOrbit",
-            (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(fields, "SpiceOrbit")), Warn) is { } spiceSample)
+            (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(fields, "SpiceOrbit"), Warn), Warn) is { } spiceSample)
             raw = spiceSample;
         else if (usesScriptOrbit &&
             TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) is { } scripted)

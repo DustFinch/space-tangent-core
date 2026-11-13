@@ -35,9 +35,9 @@ internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
         return first;
     }
 
-    internal bool TryNearestState(int target, int center, JulianInstant epoch, out CartesianState state)
+    internal bool TryNearestState(int target, int center, JulianInstant epoch, out CartesianState state, out Exception? error)
     {
-        if (TryState(target, center, epoch, out state))
+        if (TrySample(epoch, out state, out error))
             return true;
 
         var boundaries = _boundaries.Value;
@@ -63,10 +63,28 @@ internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
                     leftDistance == rightDistance && boundaries[left].Order < boundaries[right].Order;
             }
             var boundary = useLeft ? boundaries[left--].Epoch : boundaries[right++].Epoch;
-            if (boundary != epoch && TryState(target, center, boundary, out state))
+            if (boundary == epoch)
+                continue;
+            if (TrySample(boundary, out state, out var boundaryError))
                 return true;
+            error ??= boundaryError;
         }
         return false;
+
+        bool TrySample(JulianInstant time, out CartesianState sample, out Exception? failure)
+        {
+            failure = null;
+            try
+            {
+                return TryState(target, center, time, out sample);
+            }
+            catch (Exception caught) when (caught is InvalidDataException or NotSupportedException)
+            {
+                failure = caught;
+                sample = default;
+                return false;
+            }
+        }
     }
 
     internal bool CoversTarget(int target, JulianInstant beginning, JulianInstant ending)

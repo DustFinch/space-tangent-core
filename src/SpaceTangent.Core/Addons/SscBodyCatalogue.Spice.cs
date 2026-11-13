@@ -94,7 +94,7 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, bool preflight)
+    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, bool preflight, Action<string> warn)
     {
         int target = NaifIds.Resolve(orbit.Text("Target"), resources, allowNumericPrefix: true);
         int origin = NaifIds.Resolve(orbit.Text("Origin"), resources, allowNumericPrefix: true);
@@ -123,6 +123,7 @@ public static partial class SscBodyCatalogue
         }
 
         var j2000ToEcliptic = SpiceReferenceFrames.InertialBasis(SpiceReferenceFrames.Id("ECLIPJ2000"))!.Value.Transpose();
+        int reportedFailure = 0;
         return Sample;
 
         CartesianState? Sample(JulianInstant epoch)
@@ -131,7 +132,10 @@ public static partial class SscBodyCatalogue
                 epoch = first;
             else if (coverage.Ending is { } last && epoch.CompareTo(last) > 0)
                 epoch = last;
-            if (!states.TryNearestState(target, origin, epoch, out var state))
+            bool found = states.TryNearestState(target, origin, epoch, out var state, out var error);
+            if (error is not null && Interlocked.Exchange(ref reportedFailure, 1) == 0)
+                warn($"SpiceOrbit state failed for {target} relative to {origin}. {error.Message}");
+            if (!found)
                 return null;
             return new(j2000ToEcliptic.Transform(state.PositionKilometers), j2000ToEcliptic.Transform(state.VelocityKilometersPerSecond));
         }

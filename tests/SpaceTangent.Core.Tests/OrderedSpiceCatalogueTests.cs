@@ -659,6 +659,64 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void BadSpkSampleFallsBackToAConnectedBoundaryWithoutStoppingTimeline()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            byte[] kernel = File.ReadAllBytes(Path.Combine(corpus, "gaps.bsp"));
+            // Change only a payload value in the second segment. Its descriptor, epochs and directory remain valid.
+            const int secondSegmentXOffset = (401 - 1) * sizeof(double);
+            System.Buffers.Binary.BinaryPrimitives.WriteDoubleLittleEndian(kernel.AsSpan(secondSegmentXOffset), double.NaN);
+            string kernelFile = Path.Combine(source, "damaged-record.bsp");
+            File.WriteAllBytes(kernelFile, kernel);
+            var spk = new SpaceTangent.Core.Spice.SpkKernel(kernelFile);
+            var badEpoch = JulianInstant.FromTdbSeconds(25);
+            Assert.Throws<InvalidDataException>(() => spk.TryState(1999999, 0, badEpoch, out _));
+            File.WriteAllText(Path.Combine(source, "damaged.ssc"), """
+                "Damaged" "Sol" {
+                    Timeline [
+                        { OrbitFrame { EquatorJ2000 {} }
+                          SpiceOrbit { Kernel "damaged-record.bsp" Target "1999999" Origin "0" BoundingRadius 500
+                              Beginning 2451545.0002314814 Ending 2451545.000347222 } }
+                    ]
+                }
+                "Healthy" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "damaged-record.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string root in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                var id = new ObjectId("damaged");
+                var center = new ObjectId("sol");
+                var graph = new WorldGraphBuilder();
+                graph.AddTrajectory(center, _ => new CartesianState(default, default));
+                graph.AddSampledMission(bodies[0].BindTimeline!(id, _ => center));
+                var world = graph.Build();
+                Assert.Empty(warnings);
+                Assert.True(world.Evaluate(badEpoch).TryState(id, out var held));
+                Assert.InRange(held.PositionKilometers.X, 109.9999999, 110.0000001);
+                Assert.InRange(held.VelocityKilometersPerSecond.X, .999999999, 1.000000001);
+                Assert.True(world.Evaluate(badEpoch.AddSeconds(1)).TryState(id, out _));
+                Assert.Contains("Timeline phase 1: SpiceOrbit state failed", Assert.Single(warnings));
+                Assert.InRange(bodies[1].Sample(JulianInstant.FromTdbSeconds(5))!.Value.PositionKilometers.X, 104.9999999, 105.0000001);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);

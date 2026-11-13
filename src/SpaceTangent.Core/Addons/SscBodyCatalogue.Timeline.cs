@@ -31,6 +31,7 @@ public static partial class SscBodyCatalogue
         for (int index = 0; index < phases.Items.Length; index++)
         {
             cancellation.ThrowIfCancellationRequested();
+            int phaseNumber = index + 1;
             if (phases.Items[index] is not SscValue.Map phase)
                 throw new InvalidDataException("SSC Timeline phases must be objects.");
             var start = previousEnd;
@@ -54,7 +55,7 @@ public static partial class SscBodyCatalogue
                 trajectory = ReadTimelineFrame(phase.Object("OrbitFrame"), center, out center);
 
             var state = TrySpiceModel(phase, spice, "SpiceOrbit",
-                (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true)), WarnPhase, timeline: true);
+                (block, pool) => ReadSpiceOrbit(block, pool, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
             state ??= ReadTimelineState(phase, center, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
@@ -88,7 +89,7 @@ public static partial class SscBodyCatalogue
                 };
             });
 
-            void WarnPhase(string message) => warn($"Timeline phase {index + 1}: {message}");
+            void WarnPhase(string message) => warn($"Timeline phase {phaseNumber}: {message}");
         }
         return result.AsReadOnly();
 
