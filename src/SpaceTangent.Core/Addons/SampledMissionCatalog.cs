@@ -262,7 +262,7 @@ public static partial class SampledMissionCatalog
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (timedParents.Contains(Text(body, "path")) ||
                             (IsTimedComponent(body) && timedParents.Contains(Text(body, "parent"))) ||
-                            body.TryGetProperty("sensor", out _) ||
+                            body.TryGetProperty("sensor", out _) || body.TryGetProperty("observation", out _) ||
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
                             HasPackedSpice(body) || HasCompoundTrajectory(body))

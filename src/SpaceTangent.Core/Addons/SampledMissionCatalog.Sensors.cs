@@ -29,7 +29,8 @@ public static partial class SampledMissionCatalog
         }
         return new(target, range, color, opacity, basis.Z, Array.AsReadOnly(directions), rectangle ? 4 : 8)
         {
-            FootprintOpacity = packed ? ReadFootprintOpacity(value) : 0
+            FootprintOpacity = packed ? ReadFootprintOpacity(value) : 0,
+            FootprintCorners = rectangle ? 4 : 0
         };
 
         double HalfExtent(string field)

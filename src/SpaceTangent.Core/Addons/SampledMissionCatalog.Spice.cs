@@ -65,7 +65,8 @@ public static partial class SampledMissionCatalog
         var sensor = new MissionSensor(target, range, color, opacity, field.Boresight,
             SensorEdgeRays(field.Corners), field.Corners.Length)
         {
-            FootprintOpacity = ReadFootprintOpacity(geometry)
+            FootprintOpacity = ReadFootprintOpacity(geometry),
+            FootprintCorners = field.Corners.Length
         };
         ObjectId center = resolve(parent);
         return new(resolve(name), name, null, .001,

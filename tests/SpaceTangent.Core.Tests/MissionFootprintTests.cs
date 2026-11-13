@@ -9,6 +9,66 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class MissionFootprintTests
 {
+    [ArchivedFootprintFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedSchedulesKeepRatesTargetsAndNativeFootprints()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_OBSERVATIONS")!;
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_PROBE_MISSIONS_ROOT")!;
+        var earth = SolarSystemSample.EarthId;
+        var satellites = PackedSatelliteCatalog.Load(root);
+        ObjectId? Resolve(string name) => name == "Earth" ? earth :
+            satellites.FirstOrDefault(satellite => satellite.Name == name)?.Id;
+        var loose = SampledMissionCatalog.Load("observation-verification.json", source, Resolve);
+        var packed = SampledMissionCatalog.Load("pack.json", root, Resolve);
+        var builder = new WorldGraphBuilder();
+        builder.AddTrajectory(earth, _ => default(CartesianState));
+        builder.AddMeanEarthRotation();
+        foreach (var satellite in satellites)
+            builder.AddScienceSatellite(satellite);
+        foreach (var mission in packed)
+            builder.AddSampledMission(mission);
+        var world = builder.Build();
+        foreach (var original in loose.Where(mission => mission.Observation is not null))
+        {
+            var actual = Assert.Single(packed, mission => mission.Id == original.Id);
+            var expected = original.Observation!;
+            var style = Assert.IsType<MissionObservation>(actual.Observation);
+            Assert.Equal(expected with { Groups = style.Groups }, style);
+            Assert.Equal(expected.Groups.Count, style.Groups.Count);
+            for (int group = 0; group < style.Groups.Count; group++)
+            {
+                Assert.Equal(expected.Groups[group].RateSeconds, style.Groups[group].RateSeconds);
+                Assert.InRange((double)Int128.Abs(expected.Groups[group].Start.DifferenceNanoseconds(style.Groups[group].Start)), 0, 22000);
+                Assert.InRange((double)Int128.Abs(expected.Groups[group].End.DifferenceNanoseconds(style.Groups[group].End)), 0, 22000);
+            }
+            var sensor = Assert.Single(packed, mission => mission.Id == style.Sensor);
+            var axes = new Vector3d(6378.137, 6378.137, 6356.752);
+            var footprints = MissionFootprints.Calculate(style, sensor, axes, world);
+            if (original.Name == "Jason Footprints")
+            {
+                Assert.Equal(7, footprints.Count);
+                Assert.All(footprints, item => Assert.Equal(32, item.Points.Count));
+                Assert.Equal(3, footprints.Count(item => !item.Swath));
+                var coarse = MissionFootprints.Calculate(style with { SideDivisions = 3 }, sensor, axes, world);
+                Assert.All(coarse, item => Assert.Equal(12, item.Points.Count));
+                Assert.Equal(footprints.Count, coarse.Count);
+            }
+            else
+                Assert.Empty(footprints);
+        }
+    }
+
+    private sealed class ArchivedFootprintFactAttribute : FactAttribute
+    {
+        public ArchivedFootprintFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_OBSERVATIONS")) ||
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_PROBE_MISSIONS_ROOT")))
+                Skip = "Set the archived science pack and its original observation catalogue.";
+        }
+    }
+
     [Fact]
     public void SamplesDiscreteFootprintsAndSwathsOnlyWhenTheWholeFieldLands()
     {

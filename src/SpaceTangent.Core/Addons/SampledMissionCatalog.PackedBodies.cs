@@ -75,7 +75,9 @@ public static partial class SampledMissionCatalog
         return new(id, name, shape?.MeshPath, radius, arcs.AsReadOnly())
         {
             Geometry = geometry.OrderBy(span => span.Start).ToArray(),
-            GeometryBounds = bounds
+            GeometryBounds = bounds,
+            Observation = body.TryGetProperty("observation", out var observation)
+                ? ReadObservation(observation, resolve(parent), resolve, packed: true) : null
         };
 
         void AddGeometry(JsonElement item, MissionShape? visibleShape)

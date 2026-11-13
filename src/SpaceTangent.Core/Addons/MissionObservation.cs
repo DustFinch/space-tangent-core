@@ -5,7 +5,10 @@ using SpaceTangent.Core.World;
 namespace SpaceTangent.Core.Addons;
 
 public sealed record MissionObservation(ObjectId Target, ObjectId Sensor, IReadOnlyList<MissionObservationGroup> Groups,
-    int AlongTrackDivisions, Vector3d Color, double Opacity, bool ByResolution);
+    int AlongTrackDivisions, Vector3d Color, double Opacity, bool ByResolution)
+{
+    public int SideDivisions { get; init; } = 8;
+}
 
 public readonly record struct MissionObservationGroup(JulianInstant Start, JulianInstant End, double RateSeconds);
 
@@ -28,6 +31,7 @@ public static class MissionFootprints
         if (sensorTrack.Geometry is not { Count: > 0 } spans)
             return [];
         var output = new List<MissionFootprint>();
+        var boundaries = new Dictionary<MissionSensor, IReadOnlyList<Vector3d>>(ReferenceEqualityComparer.Instance);
         for (int group = 0; group < observation.Groups.Count; group++)
         {
             var item = observation.Groups[group];
@@ -49,10 +53,12 @@ public static class MissionFootprints
                     continue;
                 Basis3d toFixed = targetFrame.ToWorld.Transpose();
                 Vector3d origin = toFixed.Transform((craft - target).PositionKilometers);
-                var points = new Vector3d[active.Boundary.Count];
+                if (!boundaries.TryGetValue(active, out var boundary))
+                    boundaries.Add(active, boundary = ObservationBoundary(active, observation.SideDivisions));
+                var points = new Vector3d[boundary.Count];
                 int hits = 0;
                 double totalRange = 0;
-                foreach (Vector3d local in active.Boundary)
+                foreach (Vector3d local in boundary)
                 {
                     Vector3d ray = toFixed.Transform(sensorFrame.ToWorld.Transform(local));
                     if (!MissionSensorProjection.TryCrossing(origin, ray, axes, out double range) ||
@@ -66,6 +72,28 @@ public static class MissionFootprints
             }
         }
         return Array.AsReadOnly(output.OrderBy(point => point.Epoch).ToArray());
+    }
+
+    private static IReadOnlyList<Vector3d> ObservationBoundary(MissionSensor sensor, int divisions)
+    {
+        int corners = sensor.FootprintCorners;
+        if (corners is < 3 or >= 16)
+            return sensor.Boundary;
+        divisions = Math.Clamp(divisions, 1, 16);
+        var rays = new Vector3d[corners * divisions];
+        int stride = sensor.Boundary.Count / corners;
+        for (int corner = 0; corner < corners; corner++)
+        {
+            Vector3d start = sensor.Boundary[corner * stride];
+            Vector3d end = sensor.Boundary[(corner + 1) % corners * stride];
+            for (int step = 0; step < divisions; step++)
+            {
+                double t = (double)step / divisions;
+                Vector3d ray = start * (1 - t) + end * t;
+                rays[corner * divisions + step] = ray / ray.Length;
+            }
+        }
+        return rays;
     }
 
     private static (int Count, double Step) Sampling(MissionObservationGroup item, int alongTrackDivisions)

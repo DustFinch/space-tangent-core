@@ -135,6 +135,6 @@ public static partial class SampledMissionCatalog
         var rays = SensorEdgeRays(field.Corners);
         return new(null, .001, Basis3d.Identity, default,
             new(resolve(Text(sensor, "target")), PackedPositive(sensor, "rangeKm"), color, opacity,
-                field.Boresight, rays, field.Corners.Length) { FootprintOpacity = ReadFootprintOpacity(sensor) });
+                field.Boresight, rays, field.Corners.Length) { FootprintOpacity = ReadFootprintOpacity(sensor), FootprintCorners = field.Corners.Length });
     }
 }

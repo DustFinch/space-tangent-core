@@ -7,6 +7,7 @@ public sealed record MissionSensor(ObjectId Target, double RangeKilometers, Vect
     Vector3d Boresight, IReadOnlyList<Vector3d> Boundary, int GridSpokes)
 {
     public double FootprintOpacity { get; init; }
+    internal int FootprintCorners { get; init; }
 }
 
 public readonly record struct MissionSensorRay(Vector3d FrustumEnd, Vector3d? SurfacePoint);
