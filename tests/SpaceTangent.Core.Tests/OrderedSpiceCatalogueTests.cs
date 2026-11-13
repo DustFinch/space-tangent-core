@@ -1275,6 +1275,70 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void SscNoninertialOrbitUsesLateCkAndMatchesNativeStateAndVelocity()
+    {
+        string corpus = Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!;
+        string init = Path.Combine(corpus, "spice-init");
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_SPK_ARCHIVE")!;
+        using var reference = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(init, "reference.json")));
+        var rows = reference.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+        var original = Results("noninertial-source-clamp");
+        var changed = Results("late-ck-invalidates-initialization-frame-cache");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in new[] { "state.tf", "native-state-spk.bsp", "native-state-rate.bc", "native-state-chain.bc" })
+                File.Copy(Path.Combine(corpus, "spice-state", file), Path.Combine(source, file));
+            foreach (string file in new[] { "oracle.tsc", "native-ck2.bc" })
+                File.Copy(Path.Combine(corpus, "spice-ck", file), Path.Combine(source, file));
+            foreach (string file in new[] { "pck00011.tpc", "naif0012.tls" })
+                File.Copy(Path.Combine(archive, file), Path.Combine(source, file));
+            File.Copy(Path.Combine(init, "late-rate.bc"), Path.Combine(source, "late-rate.bc"));
+            File.WriteAllText(Path.Combine(source, "01-orbit.ssc"), """
+                "Rotating frame orbit" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit {
+                        Kernel [ "state.tf" "oracle.tsc" "native-state-spk.bsp" "native-state-rate.bc"
+                            "native-state-chain.bc" "native-ck2.bc" "pck00011.tpc" "naif0012.tls" ]
+                        Target "1900010" Origin "1900004" BoundingRadius 500
+                    }
+                    FixedPosition [ 3 0 0 ]
+                }
+                """);
+            Check(source + "-original", original.EnumerateArray().Skip(1));
+            File.WriteAllText(Path.Combine(source, "02-override.ssc"), """
+                "Frame update" "Sol" {
+                    FixedPosition [ 4 0 0 ]
+                    SpiceRotation { Kernel "late-rate.bc" Frame "J2000" BaseFrame "J2000" }
+                }
+                """);
+            Check(source + "-late", new[] { changed[3] });
+
+            void Check(string packed, IEnumerable<System.Text.Json.JsonElement> samples)
+            {
+                SscBodyCatalogue.BuildPack(source, packed, _ => { });
+                foreach (string root in new[] { source, packed })
+                {
+                    var warnings = new List<string>();
+                    var body = SscBodyCatalogue.Load(root, warning: warnings.Add)[0];
+                    Assert.Empty(warnings);
+                    foreach (var sample in samples)
+                        CheckState(body, sample);
+                }
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        System.Text.Json.JsonElement Results(string name) =>
+            rows.Single(row => row.GetProperty("case").GetString() == name).GetProperty("results");
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
