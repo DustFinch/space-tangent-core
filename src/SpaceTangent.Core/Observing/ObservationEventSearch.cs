@@ -16,7 +16,7 @@ public readonly record struct LunarEclipseEvent(ObservationInterval Penumbral, O
 public readonly record struct SatellitePass(ObservationInterval AboveHorizon, double PeakAltitudeDegrees, double? PeakAzimuthDegrees);
 public readonly record struct Conjunction(JulianInstant Peak, double SeparationDegrees);
 
-public static class ObservationEventSearch
+public static partial class ObservationEventSearch
 {
     private const double Degrees = 180 / Math.PI;
     private const double MoonRadius = EarthSurfaceLighting.MoonRadiusKilometers;
