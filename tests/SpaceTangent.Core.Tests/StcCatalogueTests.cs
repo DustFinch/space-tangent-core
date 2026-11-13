@@ -47,9 +47,38 @@ public sealed class StcCatalogueTests(ITestOutputHelper output)
         Assert.InRange(Math.Abs((a.StateAt(date) - b.StateAt(date)).PositionKilometers.Length - 4563718784.429464), 0, .05);
     }
 
+    [SupplementaryStcFact]
+    [Trait("Category", "ExternalData")]
+    public void SupplementaryAstrometryPositionsMissingOriginalModifications()
+    {
+        var supplemental = StellarCatalogue.Load(Input("SPACETANGENT_SPATIAL_STARS")!);
+        var archive = StellarCatalogue.LoadArchive(Input("SPACETANGENT_STELLAR_ARCHIVE")!, supplemental);
+        var before = archive.WithStc(Input("SPACETANGENT_STC_ROOT")!);
+        var after = archive.WithStc(Input("SPACETANGENT_STC_ROOT")!, supplemental, default);
+        var id = new ObjectId("hip/3401");
+        Assert.Null(before.Catalogue.Find(id));
+        var recovered = Assert.IsType<StellarEntry>(after.Catalogue.Find(id));
+        Assert.Equal(supplemental.Find(id)!.PositionParsecs, recovered.PositionParsecs);
+        Assert.NotEqual(supplemental.Find(id)!.RadiusKilometers, recovered.RadiusKilometers);
+        Assert.Equal(before.Catalogue.Find(new("hip/70890"))!.PositionParsecs,
+            after.Catalogue.Find(new("hip/70890"))!.PositionParsecs);
+        output.WriteLine($"Applied {after.AppliedRecords} effective records, diagnostics {after.DiagnosticCount}.");
+        Assert.Equal(26, after.AppliedRecords - before.AppliedRecords);
+        Assert.Equal(20, after.DiagnosticCount);
+    }
+
+    private sealed class SupplementaryStcFactAttribute : RealStcFactAttribute
+    {
+        public SupplementaryStcFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Input("SPACETANGENT_SPATIAL_STARS")))
+                Skip = "Set SPACETANGENT_SPATIAL_STARS to the supplementary astrometry catalogue.";
+        }
+    }
+
     private static string? Input(string name) => Environment.GetEnvironmentVariable(name);
 
-    private sealed class RealStcFactAttribute : FactAttribute
+    private class RealStcFactAttribute : FactAttribute
     {
         public RealStcFactAttribute()
         {

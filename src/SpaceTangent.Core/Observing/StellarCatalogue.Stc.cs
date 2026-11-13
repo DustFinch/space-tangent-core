@@ -18,7 +18,10 @@ public sealed partial class StellarCatalogue
     private sealed record StcDraft(string Kind, string[] Aliases, SscValue.Map Fields, string File);
 
     /// <summary>Applies local STC records, resolving binary systems after all catalogue files have been read.</summary>
-    public StellarImport WithStc(string root, CancellationToken cancellation = default)
+    public StellarImport WithStc(string root, CancellationToken cancellation = default) => WithStc(root, null, cancellation);
+
+    /// <summary>Uses supplementary astrometry only to position records missing from the primary catalogue.</summary>
+    public StellarImport WithStc(string root, StellarCatalogue? supplementary, CancellationToken cancellation)
     {
         root = Path.GetFullPath(root);
         if (!AddonDependencies.DirectoryExists(root))
@@ -63,7 +66,7 @@ public sealed partial class StellarCatalogue
                     if (drafts.Count == 100_000 && !drafts.ContainsKey(id))
                         throw new InvalidDataException("The enabled STC files exceed 100,000 records.");
                     drafts.TryGetValue(id, out var previous);
-                    var original = Find(id);
+                    var original = Find(id) ?? supplementary?.Find(id);
                     string[] names = incoming.Concat(previous?.Aliases ?? []).Concat(original?.Aliases ?? [])
                         .Concat(original is null ? [] : [original.Name])
                         .Append(number is { } designation ? CatalogDesignation(designation) : incoming[0])
@@ -154,7 +157,7 @@ public sealed partial class StellarCatalogue
                 return ready;
             if (failed.Contains(id))
                 return null;
-            StellarEntry? previous = Find(id);
+            StellarEntry? previous = Find(id) ?? (drafts.ContainsKey(id) ? supplementary?.Find(id) : null);
             if (depth > 8 || !visiting.Add(id))
                 return null;
             try
