@@ -25,6 +25,8 @@ public sealed class SscTimelineTests
         var lander = Assert.Single(bodies, body => body.Name == "Galileo Probe");
         Assert.Equal("galileo.cmod", Path.GetFileName(galileo.Mesh));
         Assert.Equal("galileo-probe.3ds", Path.GetFileName(lander.Mesh));
+        Assert.Equal("galileo_tex_02.jpg", Path.GetFileName(
+            SscBodyCatalogue.ResolveTexture(root, galileo.Mesh!, "galileo_tex_02.*")));
         var craft = galileo.BindTimeline!(orbiter, Resolve);
         var payload = lander.BindTimeline!(probe, Resolve);
         builder.AddSampledMission(craft);

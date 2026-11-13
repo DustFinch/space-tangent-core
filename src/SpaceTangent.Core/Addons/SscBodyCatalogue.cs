@@ -149,9 +149,25 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    public static string ResolveTexture(string root, string mesh, string relative) =>
-        SscSampledCatalog.FindAsset(AddonStage.Texture, root, Path.GetDirectoryName(mesh)!, relative,
+    public static string ResolveTexture(string root, string mesh, string relative)
+    {
+        string directory = Path.GetDirectoryName(mesh)!;
+        if (relative.EndsWith(".*", StringComparison.Ordinal))
+        {
+            foreach (string name in TextureNames(relative))
+            {
+                try { return Find(name); }
+                catch (FileNotFoundException) { }
+            }
+        }
+        return Find(relative);
+
+        string Find(string name) => SscSampledCatalog.FindAsset(AddonStage.Texture, root, directory, name,
             Path.Combine("textures", "medres"), Path.Combine("textures", "lores"), "textures");
+    }
+
+    private static string[] TextureNames(string name) => name.EndsWith(".*", StringComparison.Ordinal)
+        ? [name[..^1] + "png", name[..^1] + "jpg", name[..^1] + "dds"] : [name];
 
     private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts,
         Action<string>? warning, SscResource resolve, SpiceResources spice, CancellationToken cancellation)
@@ -333,10 +349,7 @@ public static partial class SscBodyCatalogue
         string? surfaceMap = null;
         if (Text("Texture") is { } texture)
         {
-            string[] candidates = texture.EndsWith(".*", StringComparison.Ordinal)
-                ? new[] { ".png", ".jpg", ".dds" }.Select(extension => texture[..^2] + extension).ToArray()
-                : [texture];
-            foreach (string candidate in candidates)
+            foreach (string candidate in TextureNames(texture))
             {
                 try
                 {
