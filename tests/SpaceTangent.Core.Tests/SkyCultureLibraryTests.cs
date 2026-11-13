@@ -17,6 +17,10 @@ public sealed class SkyCultureLibraryTests
         var western = library.Find("western")!;
         Assert.Equal(88, western.Figures.Count);
         Assert.Equal(85, western.Figures.Count(figure => figure.Artwork is not null));
+        Assert.Equal(5, library.Find("aztec")!.Figures.Count(figure => figure.Artwork is not null));
+        Assert.Equal(27, library.Find("boorong")!.Figures.Count(figure => figure.Artwork is not null));
+        Assert.Equal(11, library.Find("inuit")!.Figures.Count(figure => figure.Artwork is not null));
+        Assert.Equal(128, library.Cultures.Sum(culture => culture.Figures.Count(figure => figure.Artwork is not null)));
         var orion = western.Figures.Single(figure => figure.Id == "CON western Ori");
         Assert.Equal("Orion", orion.DisplayName(SkyCultureNames.International));
         var art = Assert.IsType<SkyCultureArtwork>(orion.Artwork);
