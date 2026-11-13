@@ -24,10 +24,11 @@ public static partial class SscBodyCatalogue
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
         var missing = new Dictionary<(string Body, string Field), FileNotFoundException>();
-        var pool = new SpiceResources(furnished.Concat(Sources()).OrderBy(item => order[item.Root].First()));
+        var supplied = furnished.Select(item => new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]));
+        var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Root].First()));
         return new(pool, missing);
 
-        IEnumerable<(string Root, string Directory, string Name)> Sources()
+        IEnumerable<SpiceResources.KernelGroup> Sources()
         {
             foreach (var item in definitions)
             foreach (string field in new[] { "SpiceOrbit", "SpiceRotation" })
@@ -37,19 +38,22 @@ public static partial class SscBodyCatalogue
                     !parameters.Fields.TryGetValue("Kernel", out var kernel))
                     continue;
                 string owner = root(item.DirectoryFor(field));
+                var key = (item.Parent + "/" + item.Name, field);
+                bool optional = HasSpiceAlternative(item.Properties, field);
                 string[] files;
                 try
                 {
                     files = (kernel is SscValue.List list ? list.Items : [kernel])
                         .Select(name => resolve(item, field, AddonStage.Kernel, name.AsText(), "data")).ToArray();
                 }
-                catch (FileNotFoundException error) when (HasSpiceAlternative(item.Properties, field))
+                catch (FileNotFoundException error) when (optional)
                 {
-                    missing.Add((item.Parent + "/" + item.Name, field), error);
+                    missing.Add(key, error);
                     continue;
                 }
-                foreach (string file in files)
-                    yield return (owner, Path.GetDirectoryName(file)!, Path.GetFileName(file));
+                yield return new SpiceResources.KernelGroup(owner,
+                    files.Select(file => (Path.GetDirectoryName(file)!, Path.GetFileName(file))).ToArray(),
+                    optional ? error => missing.Add(key, error) : null);
             }
         }
     }

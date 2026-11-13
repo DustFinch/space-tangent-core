@@ -23,13 +23,32 @@ internal sealed class SpiceResources
     internal SpiceResources(string root, IEnumerable<(string Directory, string Name)> sources)
         : this(sources.Select(source => (root, source.Directory, source.Name))) { }
 
+    internal sealed record KernelGroup(string Root, IReadOnlyList<(string Directory, string Name)> Files,
+        Action<FileNotFoundException>? Missing = null);
+
     internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
+        : this(sources.Select(source => new KernelGroup(source.Root, [(source.Directory, source.Name)]))) { }
+
+    internal SpiceResources(IEnumerable<KernelGroup> groups)
     {
         var active = new HashSet<string>(FileNames);
         var ordered = new List<(string Path, KernelKind Kind)>();
         int visits = 0;
-        foreach (var (root, directory, name) in sources)
-            Expand(root, directory, name, active, ordered, ref visits, 0);
+        foreach (var group in groups)
+        {
+            int first = ordered.Count;
+            try
+            {
+                foreach (var (directory, name) in group.Files)
+                    Expand(group.Root, directory, name, active, ordered, ref visits, 0);
+            }
+            catch (FileNotFoundException error) when (group.Missing is not null)
+            {
+                ordered.RemoveRange(first, ordered.Count - first);
+                active.Clear();
+                group.Missing(error);
+            }
+        }
         _text = new(() =>
         {
             var pool = new SpiceTextKernel();

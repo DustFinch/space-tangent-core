@@ -209,6 +209,54 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [CassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void MissingChildOfOptionalMetakernelKeepsCassiniPointing()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_SSC_ROOT")!;
+        var workspace = Directory.CreateTempSubdirectory("st-cassini-optional-kernel-");
+        try
+        {
+            string root = workspace.FullName;
+            foreach (string input in Directory.EnumerateFiles(original))
+                File.Copy(input, Path.Combine(root, Path.GetFileName(input)));
+            var reference = Assert.Single(SscBodyCatalogue.Load(root));
+            File.WriteAllText(Path.Combine(root, "optional.tm"), """
+                KPL/MK
+                \begindata
+                KERNELS_TO_LOAD = ( 'cas_v43.tf' 'missing.tpc' )
+                \begintext
+                """);
+            string alternate = Path.Combine(root, "z-alternative.ssc");
+            const string catalogue = """
+                "Backup test" "Sol/Saturn" {
+                    Radius 1
+                    SpiceOrbit { Kernel "optional.tm" Target "CASSINI" Origin "6" BoundingRadius 10000 }
+                    FixedPosition [ 8000 0 0 ]
+                }
+                """;
+            File.WriteAllText(alternate, catalogue);
+            var warnings = new List<string>();
+            var loaded = SscBodyCatalogue.Load(root, warning: warnings.Add);
+            Assert.Equal(2, loaded.Count);
+            Assert.Contains("SpiceOrbit initialization failed", Assert.Single(warnings));
+            var epoch = JulianInstant.FromTdbSeconds(141917558.4203589);
+            var preserved = Assert.Single(loaded, body => body.Name == reference.Name);
+            Assert.NotNull(reference.SampleRotation!(epoch));
+            Assert.Equal(reference.SampleRotation(epoch), preserved.SampleRotation!(epoch));
+            Assert.Equal(reference.Sample(epoch), preserved.Sample(epoch));
+            Assert.NotNull(Assert.Single(loaded, body => body.Name == "Backup test").Sample(epoch));
+
+            File.WriteAllText(alternate, catalogue.Replace("FixedPosition [ 8000 0 0 ]", "", StringComparison.Ordinal));
+            var failure = Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.Load(root));
+            Assert.EndsWith("missing.tpc", failure.FileName);
+        }
+        finally
+        {
+            workspace.Delete(recursive: true);
+        }
+    }
+
     [PackedCassiniTheory]
     [InlineData(false)]
     [InlineData(true)]
