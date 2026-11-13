@@ -76,13 +76,13 @@ internal sealed class SpiceResources
         foreach (var group in groups)
         {
             int first = ordered.Count;
-            HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
             try
             {
                 FileNotFoundException? skippedMissing = null;
                 bool hasOtherKernel = false;
                 foreach (var (directory, name) in group.Files)
                 {
+                    first = ordered.Count;
                     string physicalDirectory = directory, physicalName = name;
                     if (group.ResolveExplicit is { } resolve)
                     {
@@ -104,50 +104,37 @@ internal sealed class SpiceResources
                             throw;
                         }
                     }
-                    // Explicit SSC residency uses authored spelling as well as the resolved file.
-                    string? authored = pending is null ? null : name;
+
+                    // Publish each successfully furnished file before trying the next one.
+                    // Children of a single metakernel are validated together.
+                    HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
                     Expand(group.Root, physicalDirectory, physicalName, active, ordered, ref visits, 0,
-                        explicitSscLoads, pending, authored);
+                        explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
+                    if (group.Unavailable is not null)
+                    {
+                        for (int index = first; index < ordered.Count; index++)
+                        {
+                            var (path, kind) = ordered[index];
+                            if (kind == KernelKind.Trajectory)
+                                GetKernel(parsedSpk, path, file => new SpkKernel(file));
+                            else if (kind == KernelKind.Attitude)
+                                GetKernel(parsedCk, path, file => new CkKernel(file));
+                            else if (kind is KernelKind.Text or KernelKind.Meta)
+                                GetKernel(parsedText, path, SpiceTextKernel.Read);
+                        }
+                    }
+                    if (pending is not null)
+                        explicitSscLoads.UnionWith(pending);
                     hasOtherKernel = true;
                 }
-                // A declaration relying exclusively on missing kernels must still fall back or fail.
                 if (!hasOtherKernel && skippedMissing is not null)
                     throw skippedMissing;
+                group.RecordPrefix?.Invoke(ordered.Count);
             }
             catch (Exception error) when (group.Unavailable is not null && IsKernelInputError(error))
             {
                 ordered.RemoveRange(first, ordered.Count - first);
                 active.Clear();
-                group.Unavailable(error);
-                continue;
-            }
-            if (group.Unavailable is null)
-            {
-                if (pending is not null)
-                    explicitSscLoads.UnionWith(pending);
-                group.RecordPrefix?.Invoke(ordered.Count);
-                continue;
-            }
-
-            try
-            {
-                for (int index = first; index < ordered.Count; index++)
-                {
-                    var (path, kind) = ordered[index];
-                    if (kind == KernelKind.Trajectory)
-                        GetKernel(parsedSpk, path, file => new SpkKernel(file));
-                    else if (kind == KernelKind.Attitude)
-                        GetKernel(parsedCk, path, file => new CkKernel(file));
-                    else if (kind is KernelKind.Text or KernelKind.Meta)
-                        GetKernel(parsedText, path, SpiceTextKernel.Read);
-                }
-                if (pending is not null)
-                    explicitSscLoads.UnionWith(pending);
-                group.RecordPrefix?.Invoke(ordered.Count);
-            }
-            catch (Exception error) when (IsKernelInputError(error))
-            {
-                ordered.RemoveRange(first, ordered.Count - first);
                 group.Unavailable(error);
             }
         }

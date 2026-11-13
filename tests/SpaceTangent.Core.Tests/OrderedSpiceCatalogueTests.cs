@@ -881,6 +881,65 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void AFailedSscModelRetainsTheKernelsItFurnishedBeforeTheFailure()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in new[] { "fixed-frame.tf", "linear.bsp", "wide.bsp" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+            File.WriteAllText(Path.Combine(source, "damaged.bsp"), "DAF/SPK");
+            File.WriteAllText(Path.Combine(source, "partial-load.ssc"), """
+                "Rotation fallback" "Sol" {
+                    FixedPosition [ 1 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Kernel [ "fixed-frame.tf" "missing.tpc" ] Frame "PREFIX_FRAME" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 10 }
+                }
+                "Later rotation" "Sol" {
+                    FixedPosition [ 2 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "PREFIX_FRAME" BaseFrame "J2000" }
+                    FixedRotation { MeridianAngle 15 }
+                }
+                "Orbit fallback" "Sol" {
+                    SpiceOrbit { Kernel [ "linear.bsp" "damaged.bsp" "wide.bsp" ] Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Later orbit" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 4 0 0 ]
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(4, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string folder in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(folder, warning: warnings.Add);
+                Assert.Equal(2, warnings.Count);
+                Assert.Contains("Rotation fallback: SpiceRotation initialization failed", warnings[0]);
+                Assert.Contains("Orbit fallback: SpiceOrbit initialization failed", warnings[1]);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                var fallback = bodies[0].SampleRotation!(epoch)!.Value.ToWorld;
+                var rotation = bodies[1].SampleRotation!(epoch)!.Value.ToWorld;
+                Assert.NotEqual(fallback, rotation);
+                Assert.InRange(Math.Abs(rotation.X.X - Math.Cos(25 * Math.PI / 180)), 0, 1e-13);
+                Assert.Equal(3d, bodies[2].Sample(epoch)!.Value.PositionKilometers.X);
+                Assert.InRange(bodies[3].Sample(epoch)!.Value.PositionKilometers.X, 104.9999999, 105.0000001);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
     {
         var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
