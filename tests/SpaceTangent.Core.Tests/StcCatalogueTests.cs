@@ -65,13 +65,24 @@ public sealed class StcCatalogueTests(ITestOutputHelper output)
         output.WriteLine($"Applied {after.AppliedRecords} effective records, diagnostics {after.DiagnosticCount}.");
         Assert.Equal(26, after.AppliedRecords - before.AppliedRecords);
         Assert.Equal(20, after.DiagnosticCount);
+        var originalPlanets = ExoplanetCatalogue.Load(Input("SPACETANGENT_EXOPLANET_CATALOGUE")!);
+        var planets = originalPlanets.WithStellarHosts(after.Catalogue);
+        var keplerA = after.Catalogue.FindByName("Kepler-931 A")!;
+        var keplerB = after.Catalogue.FindByName("Kepler-931 B")!;
+        var planetId = new ObjectId("exo/4294958019/kepler-931-ab");
+        var planet = Assert.IsType<ExoplanetEntry>(planets.Find(planetId));
+        Assert.Equal(keplerA.Id, planets.CanonicalHost(planet.Host));
+        Assert.Contains(planet, planets.BodiesOf(keplerA.Id));
+        Assert.DoesNotContain(planet, planets.BodiesOf(keplerB.Id));
+        Assert.Equal(6462, planets.Bodies.Count);
     }
 
     private sealed class SupplementaryStcFactAttribute : RealStcFactAttribute
     {
         public SupplementaryStcFactAttribute()
         {
-            if (string.IsNullOrWhiteSpace(Input("SPACETANGENT_SPATIAL_STARS")))
+            if (string.IsNullOrWhiteSpace(Input("SPACETANGENT_SPATIAL_STARS")) ||
+                string.IsNullOrWhiteSpace(Input("SPACETANGENT_EXOPLANET_CATALOGUE")))
                 Skip = "Set SPACETANGENT_SPATIAL_STARS to the supplementary astrometry catalogue.";
         }
     }
