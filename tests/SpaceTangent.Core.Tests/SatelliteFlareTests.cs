@@ -19,8 +19,16 @@ public sealed class SatelliteFlareTests
         var start = JulianInstant.FromJulianDate(2457547.0 + 68.184 / 86400, TimeScale.Tdb);
         var end = start.AddSeconds(7 * JulianInstant.SecondsPerDay);
         var site = new EarthSite(55.7558, 37.6173, .15);
-        var flares = satellites.SelectMany(satellite => ObservationEventSearch.FindSatelliteFlares(ephemeris,
-            satellite, site, DeltaTModel.MorrisonStephenson2004, start, end)).ToArray();
+        const DeltaTModel model = DeltaTModel.MorrisonStephenson2004;
+        var predictions = satellites.SelectMany(satellite => ObservationEventSearch.FindSatelliteFlares(ephemeris,
+            satellite, site, model, start, end).Select(flare => (Satellite: satellite, Flare: flare))).ToArray();
+        var flares = predictions.Select(item => item.Flare).ToArray();
+        var brightest = predictions.MinBy(item => item.Flare.Magnitude);
+        var later = brightest.Flare.Peak.AddSeconds(60);
+        var laterState = brightest.Satellite.SampleInWorld(later, model)!.Value;
+        var laterLighting = EarthSurfaceLighting.Sample(ephemeris.Sample(later), site, model);
+        var laterFlare = ObservationEventSearch.EvaluateSatelliteFlare(laterLighting, laterState, later);
+        Assert.True(laterFlare is null || laterFlare.Value.Magnitude > brightest.Flare.Magnitude + 4);
 
         Assert.InRange(flares.Length, 15, 60);
         Assert.Contains(flares, flare => flare.Magnitude < -5);

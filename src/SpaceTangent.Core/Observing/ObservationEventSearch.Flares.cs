@@ -52,62 +52,65 @@ public static partial class ObservationEventSearch
             foreach (var peak in FindPeaks(passDuration, 2, Score, includeEdges: false, -MaximumReflectionAngle, cancellation))
             {
                 var epoch = start.AddSeconds(peak.Seconds);
-                if (Look(epoch) is not { } top)
-                    continue;
-                double fading = top.Angle switch
-                {
-                    < .5 => 6 * top.Angle,
-                    < .7 => 3 + 10 * (top.Angle - .5),
-                    _ => 5 + 5 * (top.Angle - .7)
-                };
-                double reflectedSolidAngle = .8 * 1.88 * .86 * 1e-6 * top.Cosine / (top.Range * top.Range);
-                double magnitude = -26.74 - 2.5 * Math.Log10(reflectedSolidAngle / SunSolidAngle) + fading;
-                if (magnitude <= faintestMagnitude)
-                    result.Add(new(epoch, magnitude, top.Horizontal, top.Angle, top.SunAltitude));
+                if (Look(epoch) is { Magnitude: var magnitude } flare && magnitude <= faintestMagnitude)
+                    result.Add(flare);
             }
 
-            double? Score(double seconds) => Look(start.AddSeconds(seconds)) is { } look ? -look.Angle : null;
+            double? Score(double seconds) => Look(start.AddSeconds(seconds)) is { } look ? -look.ReflectionAngleDegrees : null;
         }
         return result.AsReadOnly();
 
-        (double Angle, double Cosine, double Range, HorizontalCoordinates Horizontal, double SunAltitude)? Look(JulianInstant epoch)
-        {
-            if (!Covers(ephemeris, epoch) || satellite.SampleInWorld(epoch, deltaT) is not { } state)
-                return null;
-            var observer = EarthSurfaceLighting.Sample(ephemeris.Sample(epoch), site, deltaT);
-            var position = state.PositionKilometers;
-            var toObserver = observer.PositionKilometers - position;
-            if (EarthObserving.HorizontalDirection(observer, toObserver * -1) is not { AltitudeDegrees: > 0 } horizontal)
-                return null;
-            var sunDirection = observer.EarthToSun / observer.EarthToSun.Length;
-            double along = Vector3d.Dot(position, sunDirection);
-            if (along < 0 && (position - sunDirection * along).Length < EarthRadius)
-                return null;
+        SatelliteFlare? Look(JulianInstant epoch) =>
+            Covers(ephemeris, epoch) && satellite.SampleInWorld(epoch, deltaT) is { } state
+                ? EvaluateSatelliteFlare(EarthSurfaceLighting.Sample(ephemeris.Sample(epoch), site, deltaT), state, epoch)
+                : null;
+    }
 
-            var up = position / position.Length;
-            var velocity = state.VelocityKilometersPerSecond;
-            var tangent = velocity - up * Vector3d.Dot(velocity, up);
-            var forward = tangent / tangent.Length;
-            var right = Vector3d.Cross(forward, up);
-            var toSun = observer.EarthToSun - position;
-            toSun /= toSun.Length;
-            double range = toObserver.Length;
-            var outgoing = toObserver / range;
-            double best = double.PositiveInfinity, cosine = 0;
-            var (tiltSin, tiltCos) = Math.SinCos(PanelTilt);
-            for (int panel = 0; panel < 3; panel++)
-            {
-                var (sin, cos) = Math.SinCos(panel * Math.Tau / 3);
-                var normal = (forward * cos + right * sin) * tiltCos - up * tiltSin;
-                double incidence = Vector3d.Dot(toSun, normal), projection = Vector3d.Dot(outgoing, normal);
-                if (incidence <= 0 || projection <= 0)
-                    continue;
-                var reflected = normal * (2 * incidence) - toSun;
-                double angle = Degrees * Math.Atan2(Vector3d.Cross(reflected, outgoing).Length, Vector3d.Dot(reflected, outgoing));
-                if (angle < best)
-                    (best, cosine) = (angle, projection);
-            }
-            return (best, cosine, range, horizontal, observer.SolarAltitudeRadians * Degrees);
+    /// <summary>Evaluates a first-generation spacecraft's antenna reflection at the observer's current epoch.</summary>
+    public static SatelliteFlare? EvaluateSatelliteFlare(SurfaceLighting observer, CartesianState state, JulianInstant epoch)
+    {
+        var position = state.PositionKilometers;
+        var toObserver = observer.PositionKilometers - position;
+        if (EarthObserving.HorizontalDirection(observer, toObserver * -1) is not { AltitudeDegrees: > 0 } horizontal)
+            return null;
+        var sunDirection = observer.EarthToSun / observer.EarthToSun.Length;
+        double along = Vector3d.Dot(position, sunDirection);
+        if (along < 0 && (position - sunDirection * along).Length < EarthRadius)
+            return null;
+
+        var up = position / position.Length;
+        var velocity = state.VelocityKilometersPerSecond;
+        var tangent = velocity - up * Vector3d.Dot(velocity, up);
+        var forward = tangent / tangent.Length;
+        var right = Vector3d.Cross(forward, up);
+        var toSun = observer.EarthToSun - position;
+        toSun /= toSun.Length;
+        double range = toObserver.Length;
+        var outgoing = toObserver / range;
+        double best = double.PositiveInfinity, cosine = 0;
+        var (tiltSin, tiltCos) = Math.SinCos(PanelTilt);
+        for (int panel = 0; panel < 3; panel++)
+        {
+            var (sin, cos) = Math.SinCos(panel * Math.Tau / 3);
+            var normal = (forward * cos + right * sin) * tiltCos - up * tiltSin;
+            double incidence = Vector3d.Dot(toSun, normal), projection = Vector3d.Dot(outgoing, normal);
+            if (incidence <= 0 || projection <= 0)
+                continue;
+            var reflected = normal * (2 * incidence) - toSun;
+            double angle = Degrees * Math.Atan2(Vector3d.Cross(reflected, outgoing).Length, Vector3d.Dot(reflected, outgoing));
+            if (angle < best)
+                (best, cosine) = (angle, projection);
         }
+        if (!double.IsFinite(best))
+            return null;
+        double fading = best switch
+        {
+            < .5 => 6 * best,
+            < .7 => 3 + 10 * (best - .5),
+            _ => 5 + 5 * (best - .7)
+        };
+        double reflectedSolidAngle = .8 * 1.88 * .86 * 1e-6 * cosine / (range * range);
+        double magnitude = -26.74 - 2.5 * Math.Log10(reflectedSolidAngle / SunSolidAngle) + fading;
+        return new(epoch, magnitude, horizontal, best, observer.SolarAltitudeRadians * Degrees);
     }
 }
