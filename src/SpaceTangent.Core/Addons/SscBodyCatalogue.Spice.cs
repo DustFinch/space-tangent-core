@@ -103,9 +103,21 @@ public static partial class SscBodyCatalogue
         var states = resources.States;
         if (preflight && target != origin)
         {
-            var first = coverage is { Beginning: { } beginning, Ending: not null } ? beginning :
-                states.FirstEpoch(target) ?? throw new InvalidDataException("No SPK coverage for the requested target.");
-            if (!states.TryState(target, origin, first.AddSeconds(.001), out _))
+            JulianInstant first;
+            if (coverage is ({ } beginning, { } ending))
+            {
+                first = beginning.AddSeconds(.001);
+                var last = ending.AddSeconds(-.001);
+                if (first.CompareTo(last) > 0 || (target != 0 && !states.CoversTarget(target, first, last)))
+                    throw new InvalidDataException("The specified SSC interval is not entirely covered by SPK.");
+            }
+            else
+            {
+                var earliest = states.FirstEpoch(target == 0 ? origin : target)
+                    ?? throw new InvalidDataException("No SPK coverage for the requested target.");
+                first = earliest.AddSeconds(.001);
+            }
+            if (!states.TryState(target, origin, first, out _))
                 throw new InvalidDataException("No connected SPICE state at interval beginning.");
         }
         var j2000ToEcliptic = SpiceReferenceFrames.InertialBasis(SpiceReferenceFrames.Id("ECLIPJ2000"))!.Value.Transpose();

@@ -17,6 +17,21 @@ internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
                 start = coverage.Start;
         return start;
     }
+    internal bool CoversTarget(int target, JulianInstant beginning, JulianInstant ending)
+    {
+        var coveredThrough = beginning;
+        foreach (var range in kernels.SelectMany(kernel => kernel.TargetCoverage(target)).OrderBy(range => range.Start))
+        {
+            if (range.Start.CompareTo(coveredThrough) > 0)
+                break;
+            if (range.End.CompareTo(ending) >= 0)
+                return true;
+            if (range.End.CompareTo(coveredThrough) > 0)
+                coveredThrough = range.End;
+        }
+        return false;
+    }
+
     internal bool TryState(int target, int center, JulianInstant epoch, out CartesianState state)
     {
         if (epoch.Scale != TimeScale.Tdb)

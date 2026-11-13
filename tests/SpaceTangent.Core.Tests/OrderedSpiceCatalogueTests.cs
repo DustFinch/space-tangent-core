@@ -423,6 +423,57 @@ public sealed class OrderedSpiceCatalogueTests
     }
 
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void ExplicitSscIntervalRequiresContinuousTargetCoverage()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            File.Copy(Path.Combine(corpus, "a.bsp"), Path.Combine(source, "a.bsp"));
+            File.WriteAllText(Path.Combine(source, "intervals.ssc"), """
+                "Covered" "Sol" {
+                    SpiceOrbit { Kernel "a.bsp" Target "1999999" Origin "0" BoundingRadius 300
+                        Beginning 2451545 Ending 2451545.0001 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Ends outside coverage" "Sol" {
+                    Timeline [
+                        { SpiceOrbit { Kernel "a.bsp" Target "1999999" Origin "0" BoundingRadius 300
+                              Beginning 2451545 Ending 2451545.0002 }
+                          FixedPosition [ 4 0 0 ] }
+                    ]
+                }
+                """);
+            Check(source);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Check(packed);
+
+            void Check(string root)
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(111d, bodies[0].Sample(epoch)!.Value.PositionKilometers.X);
+                var center = new ObjectId("sol");
+                var id = new ObjectId("interval-fallback");
+                var graph = new WorldGraphBuilder();
+                graph.AddTrajectory(center, _ => new CartesianState(default, default));
+                graph.AddSampledMission(bodies[1].BindTimeline!(id, _ => center));
+                Assert.True(graph.Build().Evaluate(epoch).TryState(id, out var state));
+                Assert.Equal(4d, state.PositionKilometers.X);
+                Assert.Contains("interval is not entirely covered", Assert.Single(warnings));
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()
