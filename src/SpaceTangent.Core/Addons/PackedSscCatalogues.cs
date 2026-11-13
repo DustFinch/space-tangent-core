@@ -14,11 +14,13 @@ public static partial class SscBodyCatalogue
     {
         var documents = ReadPackedDocuments(root, file, cancellation);
         var definitions = SscDefinitions.Load(documents.Documents, cancellation);
-        return ReadBodyDefinitions(definitions, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels);
+        return ReadBodyDefinitions(definitions, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels, documents.KernelOrder);
     }
 
     private sealed record SscSource(IReadOnlyList<SscDocument> Documents, SscResource Resolve,
-        IReadOnlyList<(string Root, string Directory, string Name)> Kernels);
+        IReadOnlyList<PackedKernel> Kernels, IReadOnlyDictionary<string, int>? KernelOrder = null);
+
+    private sealed record PackedKernel(string Root, string Directory, string Name, int Order);
 
     private static SscSource ReadPackedDocuments(string root, string file, CancellationToken cancellation)
     {
@@ -38,24 +40,12 @@ public static partial class SscBodyCatalogue
 
         var documents = new List<SscDocument>();
         var assets = new Dictionary<string, Dictionary<(string Kind, string Source), string>>(StringComparer.Ordinal);
-        var kernels = new List<(string Root, string Directory, string Name)>();
-        if (pack.TryGetProperty("spiceLoads", out var loads))
-        {
-            foreach (var load in loads.EnumerateArray())
-            {
-                cancellation.ThrowIfCancellationRequested();
-                // Replay preview loads through the original embedded SSC fields that own them.
-                if (Text(load, "policy") != "furnish")
-                    continue;
-                foreach (var name in load.GetProperty("files").EnumerateArray())
-                {
-                    string kernelFile = SscSampledCatalog.FindAsset(AddonStage.Kernel, root, root, name.GetString()!, "data");
-                    kernels.Add((root, Path.GetDirectoryName(kernelFile)!, Path.GetFileName(kernelFile)));
-                }
-            }
-        }
-        if (catalogues.Length == 0 && kernels.Count == 0)
-            throw new NotSupportedException("This pack has no embedded SSC catalogues or furnished SPICE kernels.");
+        var kernels = new List<PackedKernel>();
+        var positions = new Dictionary<string, int>(StringComparer.Ordinal);
+        var loads = pack.TryGetProperty("spiceLoads", out var loadArray) ? loadArray.EnumerateArray().ToArray() : [];
+        if (loads.Length > 256)
+            throw new InvalidDataException("A body pack may contain at most 256 SPICE load events.");
+        int next = 0;
         foreach (var catalogue in catalogues)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -63,6 +53,14 @@ public static partial class SscBodyCatalogue
             if (name is "." or ".." || Path.GetFileName(name) != name || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 throw new InvalidDataException("Packed SSC document name must be a filename.");
             string context = Path.Combine(root, ".ssc", documents.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            int first = catalogue.TryGetProperty("firstSpiceLoad", out var firstLoad) ? firstLoad.GetInt32() : loads.Length;
+            int count = catalogue.TryGetProperty("spiceLoadCount", out var loadCount) ? loadCount.GetInt32() : 0;
+            if (first < next || first > loads.Length || count < 0 || count > loads.Length - first)
+                throw new InvalidDataException("Packed SSC SPICE preview ranges overlap or exceed the load list.");
+            FurnishUntil(first);
+            // Even positions insert an SSC catalogue before the corresponding explicit load.
+            positions.Add(context, first * 2);
+            next = first + count; // Preview entries are replayed from the embedded SSC.
             string logicalFile = Path.Combine(context, name);
             string source = Text(catalogue, "text");
             if (Encoding.UTF8.GetByteCount(source) > 1024 * 1024)
@@ -85,7 +83,28 @@ public static partial class SscBodyCatalogue
             assets.Add(context, resources);
         }
 
-        return new(documents.AsReadOnly(), Resolve, kernels.AsReadOnly());
+        FurnishUntil(loads.Length);
+        if (documents.Count == 0 && kernels.Count == 0)
+            throw new NotSupportedException("This pack has no embedded SSC catalogues or furnished SPICE kernels.");
+        return new(documents.AsReadOnly(), Resolve, kernels.AsReadOnly(), positions);
+
+        void FurnishUntil(int end)
+        {
+            for (; next < end; next++)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var load = loads[next];
+                if (Text(load, "policy") != "furnish")
+                    continue;
+                foreach (var name in load.GetProperty("files").EnumerateArray())
+                {
+                    if (kernels.Count >= 256)
+                        throw new InvalidDataException("A body pack declares too many SPICE kernels.");
+                    string kernelFile = SscSampledCatalog.FindAsset(AddonStage.Kernel, root, root, name.GetString()!, "data");
+                    kernels.Add(new(root, Path.GetDirectoryName(kernelFile)!, Path.GetFileName(kernelFile), next * 2 + 1));
+                }
+            }
+        }
 
         string Resolve(SscDefinition definition, string field, AddonStage stage, string name, params string[] ignored)
         {

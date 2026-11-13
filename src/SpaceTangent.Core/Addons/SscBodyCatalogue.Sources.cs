@@ -49,7 +49,8 @@ public static partial class SscBodyCatalogue
             return LoadWithMpc(roots[0], warning, cancellation, scripts);
         }
         var documents = new List<SscDocument>();
-        var kernels = new List<(string Root, string Directory, string Name)>();
+        var kernels = new List<PackedKernel>();
+        var kernelOrder = new Dictionary<string, int>(StringComparer.Ordinal);
         var owners = new Dictionary<string, (string Root, SscResource Resolve)>(StringComparer.OrdinalIgnoreCase);
         foreach (string root in roots)
         {
@@ -61,6 +62,9 @@ public static partial class SscBodyCatalogue
                 ? AddonDiagnostics.Read(AddonStage.Catalog, manifest, () => ReadPackedDocuments(root, manifest, cancellation))
                 : ReadLooseDocuments(root);
             kernels.AddRange(source.Kernels);
+            if (source.KernelOrder is { } positions)
+                foreach (var position in positions)
+                    kernelOrder[position.Key] = position.Value;
             foreach (var document in source.Documents)
             {
                 documents.Add(document);
@@ -70,7 +74,7 @@ public static partial class SscBodyCatalogue
         var definitions = SscDefinitions.Load(documents, cancellation);
         var bodies = ReadBodyDefinitions(definitions, directory => owners[directory].Root, scripts, warning,
             (body, field, stage, name, fallbacks) => owners[body.DirectoryFor(field)].Resolve(body, field, stage, name, fallbacks),
-            cancellation, roots, kernels, out resources, missionLoads).ToList();
+            cancellation, roots, kernels, out resources, missionLoads, kernelOrder).ToList();
         foreach (string root in roots)
             AppendMpc(root, bodies, warning, cancellation);
         return bodies.AsReadOnly();

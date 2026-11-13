@@ -157,6 +157,56 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void MixedPackReplaysSscBetweenFurnishEventsAndIgnoresPreviewCopies()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            foreach (string name in new[] { "a.bsp", "b.bsp" })
+                File.Copy(Path.Combine(corpus, name), Path.Combine(scratch.FullName, name));
+            string manifest = Path.Combine(scratch.FullName, "pack.json");
+            var epoch = JulianInstant.FromTdbSeconds(5);
+            Check(0, 222);
+            Check(1, 111);
+            Assert.Throws<InvalidDataException>(() => Check(2, 0));
+
+            void Check(int first, double expected)
+            {
+                var loads = first == 0
+                    ? new[] { new { policy = "furnish", files = new[] { "missing-preview.bsp" } },
+                        new { policy = "furnish", files = new[] { "b.bsp" } } }
+                    : new[] { new { policy = "furnish", files = new[] { "b.bsp" } },
+                        new { policy = "furnish", files = new[] { "missing-preview.bsp" } } };
+                var catalogue = new
+                {
+                    name = "priority.ssc",
+                    text = """
+                        "Test" "Sol" {
+                            OrbitFrame { EclipticJ2000 {} }
+                            SpiceOrbit { Kernel "a.bsp" Target "1999999" Origin "0" BoundingRadius 300 }
+                        }
+                        """,
+                    firstSpiceLoad = first,
+                    spiceLoadCount = 1,
+                    resources = new[] { new { kind = "data", source = "a.bsp", file = "a.bsp" } }
+                };
+                File.WriteAllText(manifest, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    formatVersion = 19, spiceLoads = loads, sscCatalogs = new[] { catalogue }
+                }));
+                var body = Assert.Single(SscBodyCatalogue.Load(scratch.FullName));
+                Assert.InRange(Math.Abs(body.Sample(epoch)!.Value.PositionKilometers.X - expected), 0, 1e-12);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()

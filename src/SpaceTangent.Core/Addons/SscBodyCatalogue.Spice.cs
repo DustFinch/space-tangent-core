@@ -23,17 +23,17 @@ public static partial class SscBodyCatalogue
 
     private static SscSpiceInput ReadSpiceResources(IReadOnlyList<SscDefinition> definitions,
         Func<string, string> root, SscResource resolve, CancellationToken cancellation,
-        string[] roots, IReadOnlyList<(string Root, string Directory, string Name)> furnished,
-        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads)
+        string[] roots, IReadOnlyList<PackedKernel> furnished,
+        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder)
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
         var unavailable = new Dictionary<(SscValue.Map Properties, string Field), Exception>();
-        var supplied = furnished.Select(item => new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]));
-        var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Root].First())
-            .Concat(missionLoads ?? []));
+        var supplied = furnished.Select(item => (Group: new SpiceResources.KernelGroup(item.Root, [(item.Directory, item.Name)]), item.Order));
+        var pool = new SpiceResources(supplied.Concat(Sources()).OrderBy(item => order[item.Group.Root].First())
+            .ThenBy(item => item.Order).Select(item => item.Group).Concat(missionLoads ?? []));
         return new(pool, unavailable);
 
-        IEnumerable<SpiceResources.KernelGroup> Sources()
+        IEnumerable<(SpiceResources.KernelGroup Group, int Order)> Sources()
         {
             foreach (var item in definitions)
             foreach (var (properties, timeline) in ModelScopes(item.Properties))
@@ -44,7 +44,8 @@ public static partial class SscBodyCatalogue
                     !parameters.Fields.TryGetValue("Kernel", out var kernel))
                     continue;
                 string ownerField = timeline ? "Timeline" : field;
-                string owner = root(item.DirectoryFor(ownerField));
+                string directory = item.DirectoryFor(ownerField);
+                string owner = root(directory);
                 var key = (properties, field);
                 bool optional = HasSpiceAlternative(properties, field, timeline);
                 string[] files;
@@ -58,9 +59,9 @@ public static partial class SscBodyCatalogue
                     unavailable.Add(key, error);
                     continue;
                 }
-                yield return new SpiceResources.KernelGroup(owner,
+                yield return (new SpiceResources.KernelGroup(owner,
                     files.Select(file => (Path.GetDirectoryName(file)!, Path.GetFileName(file))).ToArray(),
-                    optional ? error => unavailable.Add(key, error) : null);
+                    optional ? error => unavailable.Add(key, error) : null), kernelOrder?.GetValueOrDefault(directory) ?? 0);
             }
         }
     }
