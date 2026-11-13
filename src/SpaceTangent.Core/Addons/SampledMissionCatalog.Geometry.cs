@@ -16,11 +16,22 @@ public sealed record MissionShape(string? MeshPath, double RadiusKilometers, Bas
     public MissionAxesStyle? Axes { get; init; }
     public MissionVectorStyle? VectorOverlay { get; init; }
     public MissionSwarmStyle? Swarm { get; init; }
+    public double? MeshScale { get; init; }
 }
 public sealed record MissionGeometrySpan(JulianInstant Start, JulianInstant End, MissionShape Shape);
 public sealed record MissionMeshBound(string Path, double SizeKilometers, Vector3d Offset)
 {
     public double? Scale { get; init; }
+
+    public float ScaleForExtent(float extent) => Scale is { } direct ? (float)direct :
+        extent > 0 && float.IsFinite(extent) ? (float)(SizeKilometers * 2 / extent) :
+        throw new InvalidDataException("A sized mission mesh requires a positive finite extent.");
+
+    public float InstanceRadius(float extent, float originRadius)
+    {
+        float x = (float)Offset.X, y = (float)Offset.Y, z = (float)Offset.Z;
+        return (originRadius + MathF.Sqrt(x * x + y * y + z * z)) * ScaleForExtent(extent);
+    }
 }
 public sealed record MissionGeometryBounds(double RadiusKilometers, IReadOnlyList<MissionMeshBound> Meshes, bool Complete)
 {
@@ -32,9 +43,7 @@ public sealed record MissionGeometryBounds(double RadiusKilometers, IReadOnlyLis
         foreach (var mesh in Meshes)
         {
             var (extent, radius) = meshMetrics(mesh.Path);
-            float scale = (float)(mesh.Scale ?? mesh.SizeKilometers * 2 / extent);
-            float x = (float)mesh.Offset.X, y = (float)mesh.Offset.Y, z = (float)mesh.Offset.Z;
-            bound = MathF.Max(bound, (radius + MathF.Sqrt(x * x + y * y + z * z)) * scale);
+            bound = MathF.Max(bound, mesh.InstanceRadius(extent, radius));
         }
         return float.IsFinite(bound) ? bound : throw new InvalidDataException("Mission geometry has an invalid navigation bound.");
     }
@@ -151,7 +160,7 @@ public static partial class SampledMissionCatalog
         {
             CountTerm();
             if (shape.MeshPath is { } path)
-                _meshes.Add(new(path, shape.RadiusKilometers, shape.MeshOffset));
+                _meshes.Add(new(path, shape.RadiusKilometers, shape.MeshOffset) { Scale = shape.MeshScale });
             else
                 _complete = false;
         }
@@ -250,9 +259,10 @@ public static partial class SampledMissionCatalog
 
     private static MissionShape ReadMesh(JsonElement value, string root, string directory, string name, Action<string>? warning)
     {
-        double radius = Distance(value, "size");
-        if (!(radius > 0))
-            throw new InvalidDataException($"{name}: the mesh size must be finite and positive.");
+        double size = value.TryGetProperty("size", out _) ? Distance(value, "size") : 0;
+        double? scale = size > 0 ? null : value.TryGetProperty("scale", out var givenScale) ? ParticleNumber(givenScale) : 1;
+        if (scale is { } direct && !float.IsFinite((float)direct))
+            throw new InvalidDataException($"{name}: the mesh scale must be finite.");
         string source = Text(value, "source");
         string? path;
         try { path = LocalAddonFiles.ResolveRelative(root, directory, source); }
@@ -263,7 +273,7 @@ public static partial class SampledMissionCatalog
         }
         Basis3d rotation = value.TryGetProperty("meshRotation", out var q) ? Quaternion(q) : Basis3d.Identity;
         Vector3d offset = value.TryGetProperty("meshOffset", out var given) ? Vector(given) : default;
-        return new(path, radius, rotation, offset);
+        return new(path, scale is null ? size : 1, rotation, offset) { MeshScale = scale };
     }
 
     private static MissionFrame Rotation(MissionFrame parent, JsonElement item, SpiceResources resources,

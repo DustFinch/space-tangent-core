@@ -148,6 +148,36 @@ public sealed class MissionGeometryTests
             bounds.Resolve(_ => (4, 3)));
     }
 
+    [PackedGeometryFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalMeshScalePackMatchesSourceMeshOptions()
+    {
+        string archive = Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("SPACETANGENT_TIMED_BOUNDS_PACK")!,
+            "..", "..", "..", "export-stage21"));
+        string source = Path.Combine(archive, "addons-original", "mesh-science");
+        string packed = Path.Combine(archive, "addons-packed", "mesh-science");
+        ObjectId? Resolve(string name) => name switch
+        {
+            "Earth" => SolarSystemSample.EarthId,
+            "SORCE" => new ObjectId("norad/27880"),
+            "Jason-1" => new ObjectId("norad/26997"),
+            _ => null
+        };
+        var originals = SampledMissionCatalog.Load("mesh-verification.json", source, Resolve);
+        var archives = SampledMissionCatalog.Load("pack.json", packed, Resolve);
+        foreach (var (name, expected) in new (string, double?)[] { ("NativeSizeProbe", null),
+                     ("NativeScaleProbe", 8e-7), ("NativeDefaultProbe", 1) })
+        {
+            var raw = Assert.Single(Assert.Single(originals, item => item.Name == name).Geometry!).Shape;
+            var compiled = Assert.Single(Assert.Single(archives, item => item.Name == name).Geometry!).Shape;
+            Assert.Equal(expected, raw.MeshScale);
+            Assert.Equal(expected, compiled.MeshScale);
+            Assert.InRange((raw.MeshOffset - compiled.MeshOffset).Length, 0, 1e-9);
+            Assert.InRange((raw.MeshRotation.X - compiled.MeshRotation.X).Length, 0, 1e-9);
+            Assert.InRange((raw.MeshRotation.Y - compiled.MeshRotation.Y).Length, 0, 1e-9);
+        }
+    }
+
     private sealed class PackedGeometryFactAttribute : FactAttribute
     {
         public PackedGeometryFactAttribute()

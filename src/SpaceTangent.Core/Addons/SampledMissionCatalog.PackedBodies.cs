@@ -309,16 +309,19 @@ public static partial class SampledMissionCatalog
             string? path;
             try { path = PackedAsset(root, "models", file); }
             catch (FileNotFoundException) { path = null; warning?.Invoke($"{name}: mesh {file} is missing; the trajectory is available."); }
-            double size = Text(model, "geometryConvention") switch
+            string convention = Text(model, "geometryConvention");
+            double value = model.GetProperty("geometryValue").GetDouble();
+            double? scale = convention switch
             {
-                PackedMeshSize => PackedPositive(model, "geometryValue"),
-                var kind => throw new NotSupportedException($"Unsupported packed mesh size convention {kind}.")
+                PackedMeshSize when value > 0 && double.IsFinite(value) => null,
+                PackedMeshScale when float.IsFinite((float)value) => value,
+                _ => throw new NotSupportedException($"Unsupported packed mesh size convention or value {convention}.")
             };
             var orientation = Quaternion(model.GetProperty("orientation"));
             var sourceAxes = RotateX(-Math.PI / 2);
             var rotation = Multiply(sourceAxes.Transpose(), orientation.Transpose());
             var offset = model.TryGetProperty("offset", out var position) ? sourceAxes.Transpose().Transform(Vector(position)) : default;
-            return new(path, size, rotation, offset);
+            return new(path, scale is null ? value : radius, rotation, offset) { MeshScale = scale };
         }
         var maps = ReadGlobeMaps(appearance, root, root, name, packed: true, cancellation);
         if (appearance.TryGetProperty("texture", out var texture) || maps is not null)
