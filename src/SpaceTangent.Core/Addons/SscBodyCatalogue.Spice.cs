@@ -101,30 +101,44 @@ public static partial class SscBodyCatalogue
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
         var coverage = SpiceCoverage(orbit);
+        if (target == 0 && origin == 0)
+            return _ => default(CartesianState);
+
         var states = resources.States;
-        if (preflight && target != origin)
+        bool bounded = coverage is { Beginning: not null, Ending: not null };
+        if (bounded)
+            coverage = (Inset(coverage.Beginning!.Value, .001), Inset(coverage.Ending!.Value, -.001));
+        else if (target != 0 && states.FirstTargetInterval(target) is { } interval)
+            coverage = (Inset(interval.Start, .001), Inset(interval.End, -.001));
+        else if (preflight && target != 0)
+            throw new InvalidDataException("No SPK coverage for the requested target.");
+
+        if (preflight)
         {
-            JulianInstant first;
-            if (coverage is ({ } beginning, { } ending))
-            {
-                first = beginning.AddSeconds(.001);
-                var last = ending.AddSeconds(-.001);
-                if (first.CompareTo(last) > 0 || (target != 0 && !states.CoversTarget(target, first, last)))
-                    throw new InvalidDataException("The specified SSC interval is not entirely covered by SPK.");
-            }
-            else
-            {
-                var earliest = states.FirstEpoch(target == 0 ? origin : target)
-                    ?? throw new InvalidDataException("No SPK coverage for the requested target.");
-                first = earliest.AddSeconds(.001);
-            }
-            if (!states.TryState(target, origin, first, out _))
+            var first = coverage.Beginning ?? states.FirstTargetInterval(origin)?.Start;
+            if (bounded && target != 0 && !states.CoversTarget(target, coverage.Beginning!.Value, coverage.Ending!.Value))
+                throw new InvalidDataException("The specified SSC interval is not entirely covered by SPK.");
+            if (first is null || !states.TryState(target, origin, first.Value, out _))
                 throw new InvalidDataException("No connected SPICE state at interval beginning.");
         }
+
         var j2000ToEcliptic = SpiceReferenceFrames.InertialBasis(SpiceReferenceFrames.Id("ECLIPJ2000"))!.Value.Transpose();
-        return epoch => InCoverage(epoch, coverage) && states.TryState(target, origin, epoch, out var state)
-            ? new(j2000ToEcliptic.Transform(state.PositionKilometers), j2000ToEcliptic.Transform(state.VelocityKilometersPerSecond))
-            : null;
+        return Sample;
+
+        CartesianState? Sample(JulianInstant epoch)
+        {
+            if (coverage.Beginning is { } first && epoch.CompareTo(first) < 0)
+                epoch = first;
+            else if (coverage.Ending is { } last && epoch.CompareTo(last) > 0)
+                epoch = last;
+            if (!states.TryNearestState(target, origin, epoch, out var state))
+                return null;
+            return new(j2000ToEcliptic.Transform(state.PositionKilometers), j2000ToEcliptic.Transform(state.VelocityKilometersPerSecond));
+        }
+
+        // The authored SSC interval is in Julian days, with the native model's millisecond inset.
+        static JulianInstant Inset(JulianInstant epoch, double seconds) =>
+            JulianInstant.FromJulianDate(epoch.ToJulianDate() + seconds / JulianInstant.SecondsPerDay, TimeScale.Tdb);
     }
 
     private static Func<JulianInstant, FrameKinematics?> ReadSpiceRotation(SscValue.Map rotation,

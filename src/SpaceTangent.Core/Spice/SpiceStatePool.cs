@@ -8,15 +8,67 @@ internal sealed class SpiceStatePool(SpkKernel[] kernels, SpiceFramePool frames)
 {
     private const int MaximumChainLength = 64;
 
-    internal JulianInstant? FirstEpoch(int target)
+    private readonly Lazy<(JulianInstant Epoch, int Order)[]> _boundaries = new(() =>
     {
-        JulianInstant? start = null;
+        var ordered = new Dictionary<JulianInstant, int>();
         foreach (var kernel in kernels)
-        foreach (var coverage in kernel.TargetCoverage(target))
-            if (start is null || coverage.Start.CompareTo(start.Value) < 0)
-                start = coverage.Start;
-        return start;
+        foreach (var (start, end) in kernel.Coverage)
+        {
+            ordered.TryAdd(start, ordered.Count);
+            ordered.TryAdd(end, ordered.Count);
+        }
+        return ordered.OrderBy(entry => entry.Key).Select(entry => (entry.Key, entry.Value)).ToArray();
+    });
+
+    internal (JulianInstant Start, JulianInstant End)? FirstTargetInterval(int target)
+    {
+        (JulianInstant Start, JulianInstant End)? first = null;
+        foreach (var range in kernels.SelectMany(kernel => kernel.TargetCoverage(target)).OrderBy(range => range.Start))
+        {
+            if (first is not { } span)
+                first = range;
+            else if (range.Start.CompareTo(span.End) > 0)
+                break;
+            else if (range.End.CompareTo(span.End) > 0)
+                first = (span.Start, range.End);
+        }
+        return first;
     }
+
+    internal bool TryNearestState(int target, int center, JulianInstant epoch, out CartesianState state)
+    {
+        if (TryState(target, center, epoch, out state))
+            return true;
+
+        var boundaries = _boundaries.Value;
+        int left = 0, right = boundaries.Length;
+        while (left < right)
+        {
+            int middle = left + (right - left) / 2;
+            if (boundaries[middle].Epoch.CompareTo(epoch) < 0)
+                left = middle + 1;
+            else
+                right = middle;
+        }
+
+        left = right - 1;
+        while (left >= 0 || right < boundaries.Length)
+        {
+            bool useLeft = right == boundaries.Length;
+            if (!useLeft && left >= 0)
+            {
+                var leftDistance = epoch.DifferenceNanoseconds(boundaries[left].Epoch);
+                var rightDistance = boundaries[right].Epoch.DifferenceNanoseconds(epoch);
+                useLeft = leftDistance < rightDistance ||
+                    leftDistance == rightDistance && boundaries[left].Order < boundaries[right].Order;
+            }
+            var boundary = useLeft ? boundaries[left--].Epoch : boundaries[right++].Epoch;
+            if (boundary != epoch && TryState(target, center, boundary, out state))
+                return true;
+        }
+        return false;
+    }
+
     internal bool CoversTarget(int target, JulianInstant beginning, JulianInstant ending)
     {
         var coveredThrough = beginning;

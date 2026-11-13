@@ -98,12 +98,15 @@ public sealed class CassiniSpiceCatalogTests
             Assert.True(fallback.TryState(id, out var fixedPosition));
             Assert.Equal(new Vector3d(1, 2, 3), fixedPosition.PositionKilometers);
             Assert.True(fallback.TryOrientation(id, out _));
+            // The SSC model clamps to the native millisecond inset at the end of the kernel window.
+            var end = JulianInstant.FromJulianDate(
+                JulianInstant.FromTdbSeconds(141955264.18408903).ToJulianDate() - .001 / JulianInstant.SecondsPerDay, TimeScale.Tdb);
             foreach (double seconds in new[] { 141917558.4203589, 141918830.41202343, 141919293.40898937, 141955264.18408903 })
             {
                 var epoch = JulianInstant.FromTdbSeconds(seconds);
                 var snapshot = graph.Evaluate(epoch);
                 Assert.True(snapshot.TryState(id, out var state));
-                Assert.True(ephemeris.TrySample(epoch, out var reference));
+                Assert.True(ephemeris.TrySample(epoch.CompareTo(end) > 0 ? end : epoch, out var reference));
                 Assert.InRange((state.PositionKilometers - reference.PositionKilometers).Length, 0, 1e-5);
                 Assert.InRange((state.VelocityKilometersPerSecond - reference.VelocityKilometersPerSecond).Length, 0, 1e-8);
                 var rotation = expected.SampleRotation!(epoch);
@@ -270,7 +273,12 @@ public sealed class CassiniSpiceCatalogTests
                 Assert.True(reference.TryAttitude(epoch, out var attitude));
                 Assert.Equal(attitude, cassini.SampleRotation!(epoch)!.Value.ToWorld);
             }
-            Assert.Null(cassini.Sample(JulianInstant.FromTdbSeconds(140556964.18453318).AddNanoseconds(-1)));
+            var first = JulianInstant.FromTdbSeconds(140556964.18453318);
+            var inset = JulianInstant.FromJulianDate(first.ToJulianDate() + .001 / JulianInstant.SecondsPerDay, TimeScale.Tdb);
+            Assert.True(reference.TrySample(inset, out var endpoint));
+            var held = Assert.IsType<CartesianState>(cassini.Sample(first.AddSeconds(-60)));
+            Assert.InRange((held.PositionKilometers - endpoint.PositionKilometers).Length, 0, .002);
+            Assert.InRange((held.VelocityKilometersPerSecond - endpoint.VelocityKilometersPerSecond).Length, 0, 1e-7);
             File.Delete(Path.Combine(kernels.FullName, Ck));
             Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.LoadSources([packed.FullName, loose.FullName, kernels.FullName], _ => { }));
         }

@@ -19,6 +19,9 @@ public sealed partial class SpkKernel
         _segments = _file.Segments().Select(Prepare).ToArray();
     }
 
+    internal IEnumerable<(JulianInstant Start, JulianInstant End)> Coverage =>
+        _segments.Select(segment => (segment.Start, segment.End));
+
     internal IEnumerable<(JulianInstant Start, JulianInstant End)> TargetCoverage(int target) =>
         _segments.Where(segment => segment.Descriptor.FirstId == target).Select(segment => (segment.Start, segment.End));
     /// <summary>Returns the union of coverage intervals for the specified primitive target and centre.</summary>

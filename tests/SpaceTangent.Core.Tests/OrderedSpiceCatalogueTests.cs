@@ -568,15 +568,105 @@ public sealed class OrderedSpiceCatalogueTests
             scratch.Delete(recursive: true);
         }
 
-        static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
+    }
+
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void SscNavigationHoldsNativeOrbitEndpointsAndSurvivesADisconnectedOrigin()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        var scratch = Directory.CreateTempSubdirectory();
+        try
         {
-            var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
-            var state = body.Sample(epoch)!.Value;
-            var values = reference.GetProperty("values").EnumerateArray().Select(value => value.GetDouble()).ToArray();
-            Assert.InRange((state.PositionKilometers - new Vector3d(values[0], -values[2], values[1])).Length, 0, 2e-7);
-            Assert.InRange((state.VelocityKilometersPerSecond -
-                new Vector3d(values[3], -values[5], values[4]) / 86400).Length, 0, 2e-11);
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+            var rows = document.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+            string[] cases = ["default-window", "first-coverage-interval", "explicit-second-interval", "explicit-complete-window"];
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string name in new[] { "linear.bsp", "gaps.bsp" })
+                File.Copy(Path.Combine(corpus, name), Path.Combine(source, name));
+            File.WriteAllText(Path.Combine(source, "windows.ssc"), """
+                "Default" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "First" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "gaps.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                "Second" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "gaps.bsp" Target "1999999" Origin "0" BoundingRadius 500
+                        Beginning 2451545.0002314814 Ending 2451545.000347222 }
+                }
+                "Explicit" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500
+                        Beginning 2451545 Ending 2451545.0001157406 }
+                }
+                "Solar system barycenter" "Sol" {
+                    SpiceOrbit { Target "0" Origin "0" BoundingRadius 500 }
+                }
+                "Limited lifetime" "Sol" {
+                    Beginning 2451545 Ending 2451545.0001157406
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                }
+                """);
+            Check(source);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(6, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Check(packed);
+
+            string gap = scratch.CreateSubdirectory("origin-gap").FullName;
+            File.Copy(Path.Combine(corpus, "origin-gap.bsp"), Path.Combine(gap, "origin-gap.bsp"));
+            File.WriteAllText(Path.Combine(gap, "origin-gap.ssc"), """
+                "Origin gap" "Sol" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    SpiceOrbit { Kernel "origin-gap.bsp" Target "1999999" Origin "1999988" BoundingRadius 500 }
+                    FixedPosition [ 3 0 0 ]
+                }
+                """);
+            string packedGap = Path.Combine(scratch.FullName, "origin-gap-packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(gap, packedGap, _ => { }));
+            foreach (string root in new[] { gap, packedGap })
+            {
+                var body = Assert.Single(SscBodyCatalogue.Load(root));
+                Assert.InRange(body.Sample(JulianInstant.FromTdbSeconds(2))!.Value.PositionKilometers.X, 101.9999999, 102.0000001);
+                var held = body.Sample(JulianInstant.FromTdbSeconds(7))!.Value;
+                Assert.InRange(held.PositionKilometers.X, 99.9999999, 100.0000001);
+                Assert.InRange(held.VelocityKilometersPerSecond.X, .999999999, 1.000000001);
+            }
+
+            void Check(string root)
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: warnings.Add);
+                Assert.Empty(warnings);
+                for (int index = 0; index < cases.Length; index++)
+                {
+                    var row = rows.Single(row => row.GetProperty("case").GetString() == cases[index]);
+                    foreach (var reference in row.GetProperty("results").EnumerateArray().Skip(1))
+                        CheckState(bodies[index], reference);
+                }
+                var epoch = JulianInstant.FromTdbSeconds(-5);
+                Assert.Equal(default(CartesianState), bodies[4].Sample(epoch));
+                Assert.Null(bodies[5].Sample(epoch));
+            }
         }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    private static void CheckState(SscBodyDefinition body, System.Text.Json.JsonElement reference)
+    {
+        var epoch = JulianInstant.FromJulianDate(reference.GetProperty("jd").GetDouble(), TimeScale.Tdb);
+        var state = body.Sample(epoch)!.Value;
+        var values = reference.GetProperty("values").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+        Assert.InRange((state.PositionKilometers - new Vector3d(values[0], -values[2], values[1])).Length, 0, 2e-7);
+        Assert.InRange((state.VelocityKilometersPerSecond -
+            new Vector3d(values[3], -values[5], values[4]) / 86400).Length, 0, 2e-11);
     }
 
     private sealed class OrderedSpiceFactAttribute : FactAttribute
