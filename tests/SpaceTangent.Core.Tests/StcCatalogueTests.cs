@@ -109,6 +109,49 @@ public sealed class StcCatalogueTests(ITestOutputHelper output)
         output.WriteLine($"Relocated {files.Stellar} STC and {files.DeepSky} DSC files. Compared {packed.AppliedRecords} effective STC records and {packedDsc.Objects.Count} DSC objects.");
     }
 
+    [BinaryAstrometryFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalBinaryDatabasePositionsAllPreviouslyMissingStcRecords()
+    {
+        var supplemental = StellarCatalogue.Load(Input("SPACETANGENT_SPATIAL_STARS")!);
+        var archive = StellarCatalogue.LoadArchive(Input("SPACETANGENT_STELLAR_ARCHIVE")!, supplemental);
+        string original = Input("SPACETANGENT_STC_ROOT")!;
+        var before = archive.WithStc(original, supplemental, default);
+        Assert.Equal(20, before.DiagnosticCount);
+        using var scratch = new SkyPackFixture();
+        string source = Directory.CreateDirectory(Path.Combine(scratch.Root.FullName, "source")).FullName;
+        foreach (string file in Directory.EnumerateFiles(original, "*.stc"))
+            File.Copy(file, Path.Combine(source, Path.GetFileName(file)));
+        File.Copy(Input("SPACETANGENT_STC_ASTROMETRY")!, Path.Combine(source, "stars.dat"));
+        var after = archive.WithStc(source, supplemental, default);
+        Assert.Equal(0, after.DiagnosticCount);
+        Assert.Equal(before.AppliedRecords + 20, after.AppliedRecords);
+        Assert.Equal(before.Catalogue.Find(new("hip/70890"))!.PositionParsecs,
+            after.Catalogue.Find(new("hip/70890"))!.PositionParsecs);
+        var recovered = Assert.IsType<StellarEntry>(after.Catalogue.Find(new("hip/6726")));
+        // Native float coordinates are in light-years and use the catalogue's ecliptic axes. The reference includes the J2000-to-ICRF bias.
+        var equatorial = new Vector3d(1541.6116683939858, 611.7789758281654, -3686.1974062717773);
+        Assert.InRange((recovered.PositionParsecs -
+            equatorial * (StellarEntry.KilometersPerLightYear / StellarEntry.KilometersPerParsec)).Length, 0, 1e-9);
+        Assert.Equal(336 / 256d, recovered.AbsoluteMagnitude);
+        string packed = Path.Combine(scratch.Root.FullName, "packed");
+        SkyCataloguePack.Build(source, packed);
+        var reopened = archive.WithStc(packed, supplemental, default);
+        Assert.Equal(0, reopened.DiagnosticCount);
+        Assert.Equal(after.Catalogue.Stars.Select(star => (star.Id, star.PositionParsecs, star.BarycenterId)),
+            reopened.Catalogue.Stars.Select(star => (star.Id, star.PositionParsecs, star.BarycenterId)));
+    }
+
+    private sealed class BinaryAstrometryFactAttribute : RealStcFactAttribute
+    {
+        public BinaryAstrometryFactAttribute()
+        {
+            if (new[] { "SPACETANGENT_SPATIAL_STARS", "SPACETANGENT_STC_ASTROMETRY" }
+                .Any(name => string.IsNullOrWhiteSpace(Input(name))))
+                Skip = "Set the supplementary astrometry and original binary catalogue paths.";
+        }
+    }
+
     private sealed class SkyPackFixture : IDisposable
     {
         internal DirectoryInfo Root { get; } = Directory.CreateTempSubdirectory("space-tangent-sky-pack-");

@@ -39,6 +39,7 @@ public sealed partial class StellarCatalogue
                 aliases.TryAdd(name, star.Id);
         }
         var drafts = new Dictionary<ObjectId, StcDraft>();
+        var missingNumbers = new Dictionary<uint, ObjectId>();
         var warnings = new List<string>();
         int applied = 0, omitted = 0;
         foreach (string path in files)
@@ -67,6 +68,8 @@ public sealed partial class StellarCatalogue
                         throw new InvalidDataException("The enabled STC files exceed 100,000 records.");
                     drafts.TryGetValue(id, out var previous);
                     var original = Find(id) ?? supplementary?.Find(id);
+                    if (number is { } missing && original is null)
+                        missingNumbers.TryAdd(missing, id);
                     string[] names = incoming.Concat(previous?.Aliases ?? []).Concat(original?.Aliases ?? [])
                         .Concat(original is null ? [] : [original.Name])
                         .Append(number is { } designation ? CatalogDesignation(designation) : incoming[0])
@@ -96,6 +99,7 @@ public sealed partial class StellarCatalogue
             });
         }
 
+        var binary = ReadStcAstrometry(root, missingNumbers, cancellation);
         var resolved = new Dictionary<ObjectId, StellarEntry>(_index.Count + drafts.Count);
         var visiting = new HashSet<ObjectId>();
         var failed = new HashSet<ObjectId>();
@@ -157,7 +161,7 @@ public sealed partial class StellarCatalogue
                 return ready;
             if (failed.Contains(id))
                 return null;
-            StellarEntry? previous = Find(id) ?? (drafts.ContainsKey(id) ? supplementary?.Find(id) : null);
+            StellarEntry? previous = Find(id) ?? (drafts.ContainsKey(id) ? supplementary?.Find(id) ?? binary.GetValueOrDefault(id) : null);
             if (depth > 8 || !visiting.Add(id))
                 return null;
             try
