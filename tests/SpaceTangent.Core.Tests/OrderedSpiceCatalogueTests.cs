@@ -218,6 +218,51 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
+    public void OnlyExplicitSscRepeatsAreSuppressed()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!;
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            foreach (string name in new[] { "a.bsp", "b.bsp" })
+                File.Copy(Path.Combine(corpus, name), Path.Combine(scratch.FullName, name));
+            File.WriteAllText(Path.Combine(scratch.FullName, "a.tm"), """
+                KPL/MK
+                \begindata
+                KERNELS_TO_LOAD = ( 'a.bsp' )
+                """);
+            string path = Path.Combine(scratch.FullName, "priority.ssc");
+            var epoch = JulianInstant.FromTdbSeconds(5);
+            Check("a.bsp", 222, 111);
+            Check("a.tm", 111, 111);
+
+            void Check(string first, double expectedSsc, double expectedFurnish)
+            {
+                File.WriteAllText(path, $$"""
+                    "Test" "Sol" {
+                        OrbitFrame { EclipticJ2000 {} }
+                        SpiceOrbit { Kernel [ "{{first}}" "b.bsp" "a.bsp" ]
+                            Target "1999999" Origin "0" BoundingRadius 300 }
+                    }
+                    """);
+                var ssc = Assert.Single(SscBodyCatalogue.Load(scratch.FullName));
+                Assert.Equal(expectedSsc, ssc.Sample(epoch)!.Value.PositionKilometers.X);
+
+                File.WriteAllText(Path.Combine(scratch.FullName, "kernels.json"),
+                    """{"version":"1.0","spiceKernels":["a.bsp"]}""");
+                var combined = SscBodyCatalogue.LoadWithMissions([scratch.FullName], ["kernels.json"], scratch.FullName,
+                    _ => null, _ => { });
+                Assert.Equal(expectedFurnish, Assert.Single(combined.Bodies).Sample(epoch)!.Value.PositionKilometers.X);
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
         public OrderedSpiceFactAttribute()

@@ -15,7 +15,11 @@ public static class SscSpiceCatalog
         string root = Path.GetFullPath(assetRoot);
         var result = new List<SpiceSpacecraft>();
         foreach (var definition in SscDefinitions.Load(catalogPaths, root))
-            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () => ReadSpacecraft(root, definition, new SpiceResources(root, ReadKernels(definition, requireOrbitKernel: true)))));
+            result.Add(AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () =>
+            {
+                var resources = new SpiceResources(Groups(root, ReadKernels(definition, requireOrbitKernel: true)));
+                return ReadSpacecraft(root, definition, resources);
+            }));
         return result.AsReadOnly();
     }
 
@@ -24,11 +28,14 @@ public static class SscSpiceCatalog
     {
         string root = Path.GetFullPath(assetRoot);
         var definitions = SscDefinitions.Load(catalogPaths, root);
-        loads = definitions.SelectMany(definition => ReadKernels(definition, requireOrbitKernel: false))
-            .Select(file => new SpiceResources.KernelGroup(root, [file])).ToArray();
+        loads = Groups(root, definitions.SelectMany(definition => ReadKernels(definition, requireOrbitKernel: false))).ToArray();
+
         return resources => new(Array.AsReadOnly(definitions.Select(definition =>
             AddonDiagnostics.Read(AddonStage.Catalog, definition.SourceFile, () => ReadSpacecraft(root, definition, resources))).ToArray()), []);
     }
+
+    private static IEnumerable<SpiceResources.KernelGroup> Groups(string root, IEnumerable<(string Directory, string Name)> kernels) =>
+        kernels.Select(file => new SpiceResources.KernelGroup(root, [file], SkipRepeatedExplicit: true));
 
     private static SpiceSpacecraft ReadSpacecraft(string root, SscDefinition definition, SpiceResources resources)
     {

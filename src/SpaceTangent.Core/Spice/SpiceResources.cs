@@ -24,7 +24,7 @@ internal sealed class SpiceResources
         : this(sources.Select(source => (root, source.Directory, source.Name))) { }
 
     internal sealed record KernelGroup(string Root, IReadOnlyList<(string Directory, string Name)> Files,
-        Action<Exception>? Unavailable = null);
+        Action<Exception>? Unavailable = null, bool SkipRepeatedExplicit = false);
 
     internal SpiceResources(IEnumerable<(string Root, string Directory, string Name)> sources)
         : this(sources.Select(source => new KernelGroup(source.Root, [(source.Directory, source.Name)]))) { }
@@ -35,14 +35,16 @@ internal sealed class SpiceResources
         var ordered = new List<(string Path, KernelKind Kind)>();
         var parsedSpk = new Dictionary<string, SpkKernel>(FileNames);
         var parsedCk = new Dictionary<string, CkKernel>(FileNames);
+        var explicitSscLoads = new HashSet<string>(StringComparer.Ordinal);
         int visits = 0;
         foreach (var group in groups)
         {
             int first = ordered.Count;
+            HashSet<string>? pending = group.SkipRepeatedExplicit ? new(StringComparer.Ordinal) : null;
             try
             {
                 foreach (var (directory, name) in group.Files)
-                    Expand(group.Root, directory, name, active, ordered, ref visits, 0);
+                    Expand(group.Root, directory, name, active, ordered, ref visits, 0, explicitSscLoads, pending);
             }
             catch (FileNotFoundException error) when (group.Unavailable is not null)
             {
@@ -52,7 +54,11 @@ internal sealed class SpiceResources
                 continue;
             }
             if (group.Unavailable is null)
+            {
+                if (pending is not null)
+                    explicitSscLoads.UnionWith(pending);
                 continue;
+            }
 
             try
             {
@@ -64,6 +70,8 @@ internal sealed class SpiceResources
                     else if (kind == KernelKind.Attitude)
                         GetKernel(parsedCk, path, file => new CkKernel(file));
                 }
+                if (pending is not null)
+                    explicitSscLoads.UnionWith(pending);
             }
             catch (Exception error) when (error is InvalidDataException or EndOfStreamException or FileNotFoundException)
             {
@@ -117,14 +125,17 @@ internal sealed class SpiceResources
 
 
     private static void Expand(string root, string directory, string name, HashSet<string> active,
-        List<(string Path, KernelKind Kind)> result, ref int visits, int depth)
+        List<(string Path, KernelKind Kind)> result, ref int visits, int depth,
+        HashSet<string>? previousExplicit = null, HashSet<string>? pending = null)
     {
         string file = Path.Combine(directory, name);
         try
         {
+            file = LocalAddonFiles.ResolveRelative(root, directory, name);
+            if (pending is not null && (previousExplicit!.Contains(file) || !pending.Add(file)))
+                return;
             if (++visits > MaximumLoads || depth > MaximumDepth)
                 throw new InvalidDataException("SPICE metakernel load limit exceeded.");
-            file = LocalAddonFiles.ResolveRelative(root, directory, name);
             KernelKind kind = Classify(file);
             result.Add((file, kind));
             if (kind != KernelKind.Meta)

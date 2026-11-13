@@ -61,7 +61,7 @@ public static partial class SscBodyCatalogue
                 }
                 yield return (new SpiceResources.KernelGroup(owner,
                     files.Select(file => (Path.GetDirectoryName(file)!, Path.GetFileName(file))).ToArray(),
-                    optional ? error => unavailable.Add(key, error) : null), kernelOrder?.GetValueOrDefault(directory) ?? 0);
+                    optional ? error => unavailable.Add(key, error) : null, SkipRepeatedExplicit: true), kernelOrder?.GetValueOrDefault(directory) ?? 0);
             }
         }
     }
