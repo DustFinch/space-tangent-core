@@ -20,7 +20,7 @@ internal static class SpiceFixedFrames
             if (visited.Count == 12 || !visited.Add(id))
                 throw new InvalidDataException("A fixed SPICE frame chain contains a cycle or exceeds twelve frames.");
             int classId = pool.GetInteger(key + "_CLASS_ID");
-            string local = "TKFRAME_" + classId.ToString(CultureInfo.InvariantCulture);
+            string local = Key(pool, id, classId);
             basis = Compose(Transform(pool, local), basis);
             frame = Text(pool, local + "_RELATIVE");
         }
@@ -43,6 +43,15 @@ internal static class SpiceFixedFrames
         return Compose(destination.Transpose(), source);
 
         string Key(string name) => "FRAME_" + pool.GetInteger("FRAME_" + name).ToString(CultureInfo.InvariantCulture);
+    }
+
+    internal static string Key(SpiceTextKernel pool, int frameId, int classId)
+    {
+        string numeric = FormattableString.Invariant($"TKFRAME_{classId}");
+        if (pool.Contains(numeric + "_SPEC"))
+            return numeric;
+        string nameKey = FormattableString.Invariant($"FRAME_{frameId}_NAME");
+        return pool.Contains(nameKey) && pool.Get(nameKey) is [string name] ? "TKFRAME_" + name : numeric;
     }
 
     internal static Basis3d Compose(Basis3d parent, Basis3d local) =>
