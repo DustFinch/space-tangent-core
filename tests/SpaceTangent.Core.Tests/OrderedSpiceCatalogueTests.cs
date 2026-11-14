@@ -33,6 +33,14 @@ public sealed class OrderedSpiceCatalogueTests
                 naif => naif == 499 ? _ => new FrameKinematics(Basis3d.Identity, default(Vector3d)) : null);
 
             var before = SscBodyCatalogue.Load(packed, warning: warnings.Add, custom: custom);
+            string rebuilt = Path.Combine(scratch.FullName, "Повторная упаковка");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(Path.Combine(archive, "source", "00-ssc"), rebuilt,
+                warnings.Add, custom: custom));
+            Assert.Equal(2, warnings.Count);
+            Assert.All(warnings, warning => Assert.Contains("resource was not indexed", warning));
+            warnings.Clear();
+            var roundtrip = SscBodyCatalogue.Load(rebuilt, warning: warnings.Add, custom: custom);
+            Assert.Equal(before.Select(body => body.Name), roundtrip.Select(body => body.Name));
             var after = SscBodyCatalogue.LoadSources([packed, Path.Combine(root, "99-override")], warnings.Add, custom: custom);
             Assert.Empty(warnings);
             Assert.Equal(["Cassini SOI", "Unselected"], after.Select(body => body.Name));
@@ -45,6 +53,7 @@ public sealed class OrderedSpiceCatalogueTests
                 epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
                 Assert.NotNull(before[0].Sample(epoch));
                 Assert.Equal(before[0].Sample(epoch), after[0].Sample(epoch));
+                Assert.Equal(before[0].Sample(epoch), roundtrip[0].Sample(epoch));
                 var original = before[0].SampleRotation!(epoch)!.Value.ToWorld;
                 var updated = after[0].SampleRotation!(epoch)!.Value.ToWorld;
                 Assert.InRange(Vector3d.Dot(original.X, updated.X), Math.Cos(Math.PI / 18) - 1e-10,

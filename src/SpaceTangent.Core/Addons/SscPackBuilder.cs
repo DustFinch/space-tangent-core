@@ -11,7 +11,7 @@ public static partial class SscBodyCatalogue
 
     /// <summary>Builds a relocatable body pack from the same loose SSC documents the body loader reads.</summary>
     public static int BuildPack(string source, string destination, Action<string> warning,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default, SscCustomModels? custom = null)
     {
         ArgumentNullException.ThrowIfNull(warning);
         string root = Path.GetFullPath(source);
@@ -63,9 +63,14 @@ public static partial class SscBodyCatalogue
             {
                 warning($"{definition.Parent}/{definition.Name}: {field} module is missing ({error.FileName}).");
             }
+            catch (InvalidDataException error) when (definition.Properties.Fields.ContainsKey(
+                field == "ScriptedOrbit" ? "SpiceOrbit" : "SpiceRotation"))
+            {
+                warning($"{definition.Parent}/{definition.Name}: {field} resource was not indexed ({error.Message}).");
+            }
         }
 
-        var bodies = ReadBodyDefinitions(definitions, declarations, _ => root, null, warning, Resolve, cancellation, [root], []);
+        var bodies = ReadBodyDefinitions(definitions, declarations, _ => root, null, warning, Resolve, cancellation, [root], [], custom: custom);
         Directory.CreateDirectory(parent);
         string stage = Path.Combine(parent, ".body-pack-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(stage);
@@ -128,7 +133,7 @@ public static partial class SscBodyCatalogue
                 writer.WriteEndArray();
                 writer.WriteEndObject();
             }
-            int installed = Load(stage, cancellation).Count;
+            int installed = Load(stage, cancellation, custom: custom).Count;
             if (installed != bodies.Count)
                 throw new InvalidDataException("The generated pack does not load the same number of bodies as its source.");
             cancellation.ThrowIfCancellationRequested();

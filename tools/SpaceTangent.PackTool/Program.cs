@@ -28,6 +28,14 @@ try
         Console.WriteLine($"{bodies} SSC bodies -> {Path.GetFullPath(destination)}");
         return 0;
     }
+    if (args is ["import", var modelSource, "--pack", var modelDestination, "--planetary-models",
+        var inputDe440, var inputSeries, var inputPck])
+    {
+        var custom = PlanetaryModels(inputDe440, inputSeries, inputPck);
+        int bodies = SscBodyCatalogue.BuildPack(modelSource, modelDestination, Warn, custom: custom);
+        Console.WriteLine($"{bodies} SSC bodies -> {Path.GetFullPath(modelDestination)}");
+        return 0;
+    }
     if (args is ["check-ssc", var de440, var series, var pck, .. var inputs])
     {
         bool strictSsc = inputs is ["--strict", ..];
@@ -35,9 +43,7 @@ try
         if (roots.Length == 0)
             throw new InvalidDataException("Supply at least one SSC pack directory.");
 
-        var ephemeris = HistoricalSolarEphemeris.Load(De440Ephemeris.Load(de440), series);
-        var frames = new Dictionary<int, SpicePolynomialBodyFrame>();
-        var custom = SscCustomModels.FromSolarSystem(ephemeris, Rotation);
+        var custom = PlanetaryModels(de440, series, pck);
         int notices = 0;
         var contents = SscBodyCatalogue.LoadSources(roots, message =>
         {
@@ -51,17 +57,7 @@ try
             throw new InvalidDataException("The supplied SSC installation contains no readable bodies.");
         return strictSsc && notices != 0 ? 1 : 0;
 
-        Func<JulianInstant, FrameKinematics?>? Rotation(int naif)
-        {
-            if (naif == 399)
-                return null;
-            if (!frames.TryGetValue(naif, out var frame))
-            {
-                frame = new SpicePolynomialBodyFrame(pck, naif);
-                frames.Add(naif, frame);
-            }
-            return epoch => frame.Sample(epoch);
-        }
+
     }
     if (args is ["check-missions", var missionRoot, .. var missionArguments])
     {
@@ -162,7 +158,7 @@ try
         Console.WriteLine($"{bodies.Count} SSC/MPC bodies, {warnings} warnings");
         return strict && warnings != 0 ? 1 : 0;
     }
-    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites] | check-missions <root> <manifest>... [--strict] [--body <name>]... | check-ssc <DE440> <VSOP87> <PCK> [--strict] <directory>...");
+    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> [--planetary-models <DE440> <VSOP87> <PCK>] | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites] | check-missions <root> <manifest>... [--strict] [--body <name>]... | check-ssc <DE440> <VSOP87> <PCK> [--strict] <directory>...");
     return 2;
 }
 catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog))
@@ -170,6 +166,25 @@ catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalo
     var issue = AddonDiagnostics.Get(error)!;
     Console.Error.WriteLine($"{issue.Stage}/{issue.Code}: {issue.File} {issue.Detail}".Trim());
     return 1;
+}
+
+static SscCustomModels PlanetaryModels(string de440, string series, string pck)
+{
+    var ephemeris = HistoricalSolarEphemeris.Load(De440Ephemeris.Load(de440), series);
+    var frames = new Dictionary<int, SpicePolynomialBodyFrame>();
+    return SscCustomModels.FromSolarSystem(ephemeris, Rotation);
+
+    Func<JulianInstant, FrameKinematics?>? Rotation(int naif)
+    {
+        if (naif == 399)
+            return null;
+        if (!frames.TryGetValue(naif, out var frame))
+        {
+            frame = new SpicePolynomialBodyFrame(pck, naif);
+            frames.Add(naif, frame);
+        }
+        return epoch => frame.Sample(epoch);
+    }
 }
 
 static int CheckMissions(string[] manifests, string root, string[] options, bool strict, bool requireContent = true)
