@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
+using SpaceTangent.Core.Time;
 using SpaceTangent.Core.World;
 using Xunit;
 
@@ -273,12 +274,12 @@ public sealed class SscBodyCatalogueTests
         var hubble = Check("Hubble", "Sol/Earth", "hubble.cmod", "2020-01-01T00:00:00Z", 6900, 6950);
         Assert.Equal("Hubble:HST:1990-037B", hubble.Names);
         var launch = At("1990-04-25T02:02:00Z");
-        Assert.Null(hubble.Sample(launch.AddSeconds(-1)));
+        Assert.Null(hubble.Sample(launch.AddNanoseconds(-1)));
         Assert.NotNull(hubble.Sample(launch));
 
         var mir = Check("Mir", "Sol/Earth", "mir.cmod", "2000-01-01T00:00:00Z", 6768, 6770);
-        Assert.NotNull(mir.Sample(At("2001-03-23T06:00:28Z")));
-        Assert.Null(mir.Sample(At("2001-03-23T06:00:29Z")));
+        Assert.NotNull(mir.Sample(At("2001-03-23T06:00:28.184Z")));
+        Assert.Null(mir.Sample(At("2001-03-23T06:00:28.184Z").AddNanoseconds(1)));
 
         Assert.Equal(7, bodies.Count(body => body.Name.StartsWith("Apollo ", StringComparison.Ordinal)));
         var apollo = Check("Apollo 11", "Sol/Earth/Moon", "apollo.3ds", "1969-07-20T12:00:00Z", 1700, 2100);
@@ -301,8 +302,19 @@ public sealed class SscBodyCatalogueTests
             return body;
         }
 
-        static JulianInstant At(string value) => JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb)
-            .AddSeconds(DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).ToUnixTimeSeconds());
+        static JulianInstant At(string value)
+        {
+            var civil = DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).UtcDateTime;
+            var day = DateOnly.FromDateTime(civil);
+            if (day < new DateOnly(1972, 1, 1))
+            {
+                var terrestrial = JulianInstant.FromJulianDate(2440587.5, TimeScale.Tt)
+                    .AddSeconds(new DateTimeOffset(civil).ToUnixTimeSeconds());
+                return TimeConversion.Convert(terrestrial.AddSeconds(DeltaT.Seconds(terrestrial, DeltaTModel.EspenakMeeus2006)), TimeScale.Tdb);
+            }
+            var utc = new UtcDateTime(day, civil.Hour, civil.Minute, civil.Second, (int)(civil.Ticks % TimeSpan.TicksPerSecond) * 100);
+            return TimeConversion.FromUtc(utc, TimeScale.Tdb);
+        }
     }
 
     private sealed class OriginalSpacecraftFactAttribute : FactAttribute

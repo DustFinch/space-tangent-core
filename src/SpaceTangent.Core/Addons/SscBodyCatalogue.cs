@@ -216,8 +216,8 @@ public static partial class SscBodyCatalogue
             SscConicAxes.ConstantTwoVector => SscConstantOrbitFrame.Read(fields.Object("OrbitFrame").Object("TwoVector")),
             _ => throw new NotSupportedException($"The SSC orbital frame {reference.Axes} is unavailable.")
         };
-        JulianInstant? beginning = Text("Beginning") is { } begin ? SscSampledCatalog.ReadDate(begin) : null;
-        JulianInstant? ending = Text("Ending") is { } end ? SscSampledCatalog.ReadDate(end) : null;
+        JulianInstant? beginning = Text("Beginning") is { } begin ? ReadCatalogueDate(begin) : null;
+        JulianInstant? ending = Text("Ending") is { } end ? ReadCatalogueDate(end) : null;
         if (beginning is { } first && ending is { } last && first.CompareTo(last) >= 0)
             throw new InvalidDataException("SSC ending must follow its beginning.");
         Func<JulianInstant, CartesianState?> raw;

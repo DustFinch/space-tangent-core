@@ -40,9 +40,9 @@ public static partial class SscBodyCatalogue
             {
                 if (index != 0)
                     throw new InvalidDataException("Only the first SSC Timeline phase may declare Beginning.");
-                start = ReadTimelineDate(begins.AsText());
+                start = ReadCatalogueDate(begins.AsText());
             }
-            var end = phase.Fields.TryGetValue("Ending", out var ends) ? ReadTimelineDate(ends.AsText()) :
+            var end = phase.Fields.TryGetValue("Ending", out var ends) ? ReadCatalogueDate(ends.AsText()) :
                 index == phases.Items.Length - 1 ? ending ?? LatestTimelineEpoch :
                 throw new InvalidDataException("A nonfinal SSC Timeline phase requires Ending.");
             if (end.CompareTo(start) <= 0)
@@ -278,7 +278,7 @@ public static partial class SscBodyCatalogue
             new(find(axis.Observer), find(axis.Target), axis.Quantity);
     }
 
-    private static JulianInstant ReadTimelineDate(string text)
+    private static JulianInstant ReadCatalogueDate(string text)
     {
         var epoch = SscSampledCatalog.ReadDate(text);
         if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
