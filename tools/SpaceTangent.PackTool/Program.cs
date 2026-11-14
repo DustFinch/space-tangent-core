@@ -61,6 +61,19 @@ try
             Console.WriteLine($"{tables.Count} atmosphere tables verified");
             return 0;
         }
+        if (bodyOptions is ["--satellites"])
+        {
+            int notices = 0;
+            var satellites = PackedSatelliteCatalog.Load(root, message =>
+            {
+                notices++;
+                Warn(message);
+            });
+            foreach (var satellite in satellites)
+                Console.WriteLine(satellite.Name);
+            Console.WriteLine($"{satellites.Count} modeled Earth satellites, {notices} warnings");
+            return strict && notices != 0 ? 1 : 0;
+        }
         int warnings = 0;
         const int maximumManifestBytes = 16 * 1024 * 1024;
         using var inputFile = File.OpenRead(manifest);
@@ -108,7 +121,7 @@ try
         Console.WriteLine($"{bodies.Count} SSC/MPC bodies, {warnings} warnings");
         return strict && warnings != 0 ? 1 : 0;
     }
-    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres]");
+    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites]");
     return 2;
 }
 catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog))

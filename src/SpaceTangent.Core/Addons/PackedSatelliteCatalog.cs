@@ -49,6 +49,12 @@ public static class PackedSatelliteCatalog
                 warning?.Invoke($"{name}: not a modeled Earth satellite in this pack.");
                 continue;
             }
+            if (orbit.TryGetProperty("frame", out var orbitFrame) &&
+                Text(orbitFrame, "kind") != "equatorJ2000")
+            {
+                warning?.Invoke($"{name}: unsupported packed satellite trajectory frame {Text(orbitFrame, "kind")}.");
+                continue;
+            }
             var satellite = ReadSatellite(body, orbit, root);
             if (!ids.Add(satellite.Id))
                 throw new InvalidDataException($"Duplicate packed satellite {satellite.Id.Value}.");
