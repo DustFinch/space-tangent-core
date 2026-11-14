@@ -316,6 +316,74 @@ public sealed class SscTimelineTests
         public void Dispose() => _root.Delete(recursive: true);
     }
 
+    [GalileoFact]
+    [Trait("Category", "ExternalData")]
+    public void StandaloneProbeMountUsesTheOriginalGalileoBodyFrame()
+    {
+        string file = Path.Combine(Environment.GetEnvironmentVariable("SPACETANGENT_STANDARD_SPACECRAFT")!, "galileo.ssc");
+        if (!File.Exists(file))
+            file = Directory.GetFiles(Path.GetDirectoryName(file)!, "galileo.ssc", SearchOption.AllDirectories).Single();
+        string original = File.ReadAllText(file);
+        var mount = System.Text.RegularExpressions.Regex.Match(original,
+            @"FixedPosition\s*(\[\s*0\s+0\s+-0\.00155\s*\])").Groups[1].Value;
+        Assert.NotEmpty(mount);
+
+        var fixture = Directory.CreateTempSubdirectory("st-ssc-body-fixed-");
+        try
+        {
+            string source = fixture.CreateSubdirectory("source").FullName;
+            string pack = Path.Combine(fixture.FullName, "pack");
+            File.WriteAllText(Path.Combine(source, "probe.ssc"), $$"""
+                "Galileo Probe" "Sol/Jupiter/Galileo" {
+                    Beginning 2451545
+                    Ending 2451546
+                    OrbitFrame { BodyFixed { Center "Sol/Jupiter/Galileo" } }
+                    BodyFrame { BodyFixed { Center "Sol/Jupiter/Galileo" } }
+                    FixedRotation { }
+                    FixedPosition {{mount}}
+                }
+                """);
+
+            Check(SscBodyCatalogue.Load(source));
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, pack, _ => { }));
+            Check(SscBodyCatalogue.Load(pack));
+        }
+        finally { fixture.Delete(recursive: true); }
+
+        static void Check(IReadOnlyList<SscBodyDefinition> bodies)
+        {
+            var carrier = new ObjectId("mission/galileo");
+            var probe = new ObjectId("mission/galileo-probe");
+            var mission = Assert.Single(bodies).BindTimeline!(probe, path =>
+                path == "Sol/Jupiter/Galileo" ? carrier : throw new InvalidDataException(path));
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(carrier, _ => default(CartesianState));
+            const double speed = .001;
+            var angularVelocity = new Vector3d(speed, 0, 0);
+            builder.AddOrientation(carrier, epoch =>
+            {
+                double seconds = (double)epoch.DifferenceNanoseconds(mission.Start) / JulianInstant.NanosecondsPerSecond;
+                var (sin, cos) = Math.SinCos(seconds * speed);
+                return new(new(new(1, 0, 0), new(0, cos, sin), new(0, -sin, cos)), angularVelocity);
+            });
+            builder.AddSampledMission(mission);
+            var world = builder.Build();
+            foreach (var epoch in new[] { mission.Start, mission.Start.AddSeconds(500) })
+            {
+                var snapshot = world.Evaluate(epoch);
+                Assert.True(snapshot.TryOrientation(carrier, out var frame));
+                Assert.True(snapshot.TryState(probe, out var state));
+                var expected = frame.ToWorld.Transform(new(0, 0, -.00155));
+                Assert.Equal(expected, state.PositionKilometers);
+                Assert.Equal(Vector3d.Cross(angularVelocity, expected), state.VelocityKilometersPerSecond);
+                Assert.True(snapshot.TryOrientation(probe, out var attitude));
+                Assert.Equal(frame, attitude);
+            }
+            Assert.False(world.Evaluate(mission.End).TryState(probe, out _));
+        }
+    }
+
+
     private sealed class GalileoFactAttribute : FactAttribute
     {
         public GalileoFactAttribute()

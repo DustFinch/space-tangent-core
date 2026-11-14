@@ -206,10 +206,12 @@ public static partial class SscBodyCatalogue
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
         bool starScale = reference.Center.Equals("Sol", StringComparison.OrdinalIgnoreCase) || reference.Center.Equals("SSB", StringComparison.OrdinalIgnoreCase);
+        bool fixedInBodyFrame = reference.Axes == SscConicAxes.BodyFixed && fields.Fields.ContainsKey("FixedPosition");
         Basis3d orbitFrame = reference.Axes switch
         {
             SscConicAxes.EclipticJ2000 => Ecliptic,
             SscConicAxes.EquatorJ2000 => Basis3d.Identity,
+            SscConicAxes.BodyFixed when fixedInBodyFrame => Basis3d.Identity,
             SscConicAxes.ParentDefault => starScale ? Ecliptic : Basis3d.Identity,
             SscConicAxes.ConstantTwoVector => SscConstantOrbitFrame.Read(fields.Object("OrbitFrame").Object("TwoVector")),
             _ => throw new NotSupportedException($"The SSC orbital frame {reference.Axes} is unavailable.")
@@ -222,6 +224,7 @@ public static partial class SscBodyCatalogue
         double? orbitPeriodSeconds = null;
         double? orbitApoapsis = null;
         Vector3d? surfaceCoordinates = null;
+        CartesianState? rectangularPosition = null;
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, beginning, ending, resolve, spice, Warn, cancellation, custom, scripts, root) : null;
@@ -302,13 +305,16 @@ public static partial class SscBodyCatalogue
         }
         else if (fields.Fields.TryGetValue("FixedPosition", out var position))
         {
-            var fixedState = ReadFixedPosition(position, out surfaceCoordinates);
-            raw = _ => fixedState;
+            rectangularPosition = ReadFixedPosition(position, out surfaceCoordinates);
+            raw = _ => fixedInBodyFrame ? null : rectangularPosition;
         }
         else if (usesScriptOrbit || fields.Fields.ContainsKey("SampledOrbit"))
             return null;
         else
             throw new InvalidDataException("Missing SSC field SampledTrajectory.");
+
+        if (fixedInBodyFrame && timeline is null && !rectangularPosition.HasValue && !surfaceCoordinates.HasValue)
+            throw new NotSupportedException("This standalone SSC orbit requires an inertial frame.");
 
         Vector3d? radii = null;
         if (fields.Fields.TryGetValue("SemiAxes", out var dimensions))
@@ -335,6 +341,7 @@ public static partial class SscBodyCatalogue
         }
         SscBodyOrientation? orientation = null;
         Basis3d spinFrame = Ecliptic;
+        string? fixedAttitudeCenter = null;
         if (fields.Fields.ContainsKey("BodyFrame"))
         {
             var frame = fields.Object("BodyFrame");
@@ -350,6 +357,12 @@ public static partial class SscBodyCatalogue
             }
             else if (frame.Fields.ContainsKey("EquatorJ2000"))
                 spinFrame = Basis3d.Identity;
+            else if ((surfaceCoordinates.HasValue || fixedInBodyFrame && rectangularPosition.HasValue) &&
+                frame.Fields.TryGetValue("BodyFixed", out var fixedFrame) && fixedFrame is SscValue.Map parameters)
+            {
+                fixedAttitudeCenter = parameters.Fields.TryGetValue("Center", out var center) ? center.AsText() : item.Parent;
+                spinFrame = Basis3d.Identity;
+            }
             else if (!frame.Fields.ContainsKey("EclipticJ2000"))
                 throw new NotSupportedException("This SSC body frame is unavailable.");
         }
@@ -456,17 +469,22 @@ public static partial class SscBodyCatalogue
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
             BindTimeline = timeline is not null ? (id, find, radiusKilometers) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))
-                : surfaceCoordinates is { } site ? (id, find, radiusKilometers) =>
+                : surfaceCoordinates.HasValue || fixedInBodyFrame && rectangularPosition.HasValue ? (id, find, radiusKilometers) =>
                 {
                     ObjectId center = find(reference.Center);
-                    var fixedState = BindSurfacePosition(site, center, reference.Center, radiusKilometers);
-                    var basis = new MissionFrame.Inertial(Basis3d.Identity);
+                    var fixedState = rectangularPosition ?? BindSurfacePosition(surfaceCoordinates!.Value, center, reference.Center, radiusKilometers);
+                    MissionFrame basis = fixedAttitudeCenter is { } body
+                        ? new MissionFrame.BodyFixed(find(body)) : new MissionFrame.Inertial(Basis3d.Identity);
                     MissionFrame attitude = spin is not null ? new MissionFrame.RelativeAttitude(basis, spin) :
                         orientation is { } vectors ? new MissionFrame.TwoVector(vectors.Primary.Axis, Direction(vectors.Primary),
                             vectors.Secondary.Axis, Direction(vectors.Secondary)) : basis;
                     return new(id, item.Name, mesh, radius, [new(beginning ?? EarliestTimelineEpoch, ending ?? LatestTimelineEpoch,
                         center, _ => fixedState, new MissionFrame.BodyFixed(center), attitude)
-                        { BodyReferenceFrame = orientation is null ? new MissionFrame.Inertial(spinFrame) : attitude, UsePhysicalBodyFixedVelocity = true }]);
+                        {
+                            BodyReferenceFrame = fixedAttitudeCenter is not null ? basis :
+                                orientation is null ? new MissionFrame.Inertial(spinFrame) : attitude,
+                            UsePhysicalBodyFixedVelocity = true
+                        }]);
 
                     RelativeDirection Direction(SscBodyAxis axis) => new(find(axis.Observer), find(axis.Target), axis.Quantity);
                 }
