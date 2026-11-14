@@ -62,6 +62,16 @@ public static partial class SscBodyCatalogue
                 bool hasKernel = parameters.Fields.TryGetValue("Kernel", out var kernel);
                 if (!retained && !hasKernel)
                     continue;
+                try
+                {
+                    _ = SpiceCoverage(parameters);
+                }
+                catch (InvalidDataException error)
+                {
+                    if (retained)
+                        unavailable.Add((model.Fields, field), error);
+                    continue;
+                }
                 string[] authored = hasKernel
                     ? (kernel is SscValue.List list ? list.Items : [kernel!]).Select(name => name.AsText()).ToArray() : [];
                 var key = (model.Fields, field);
@@ -228,6 +238,8 @@ public static partial class SscBodyCatalogue
 
     private static (JulianInstant? Beginning, JulianInstant? Ending) SpiceCoverage(SscValue.Map block)
     {
+        if (block.Fields.ContainsKey("Beginning") != block.Fields.ContainsKey("Ending"))
+            throw new InvalidDataException("SSC SPICE coverage requires both Beginning and Ending.");
         return (Date("Beginning"), Date("Ending"));
 
         JulianInstant? Date(string name) => block.Fields.TryGetValue(name, out var value)

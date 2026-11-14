@@ -1231,6 +1231,23 @@ public sealed class OrderedSpiceCatalogueTests
                 }
             }
 
+            // Malformed bounds must be diagnosed before an unselected model opens any kernel.
+            File.WriteAllText(path, declaration
+                .Replace(" Ending 2453187.6", "", StringComparison.Ordinal)
+                .Replace("late.dat", "missing-unselected.dat", StringComparison.Ordinal)
+                .Replace("Beginning 2453187.55 }", "Beginning 2453187.55 }\n    FixedRotation { MeridianAngle 10 }", StringComparison.Ordinal));
+            string partialPack = Path.Combine(scratch.FullName, "partial-pack");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, partialPack, _ => { }));
+            foreach (string folder in new[] { source, partialPack })
+            {
+                var notices = new List<string>();
+                var fallback = Assert.Single(SscBodyCatalogue.Load(folder, warning: notices.Add));
+                Assert.Contains("requires both Beginning and Ending", Assert.Single(notices));
+                var epoch = JulianInstant.FromJulianDate(2453187.57, TimeScale.Tdb);
+                Assert.NotNull(fallback.SampleRotation!(epoch));
+                Assert.NotEqual(numeric.SampleRotation!(epoch), fallback.SampleRotation!(epoch));
+            }
+
             static string Calendar(double day)
             {
                 var utc = TimeConversion.ToUtc(JulianInstant.FromJulianDate(day, TimeScale.Tdb));
