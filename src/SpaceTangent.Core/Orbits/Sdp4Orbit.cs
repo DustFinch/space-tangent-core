@@ -25,8 +25,23 @@ internal sealed partial class Sdp4Orbit
 
     internal bool TrySample(double minutes, out CartesianState state)
     {
-        // Copy the resonance integrator and periodic cache for independent observers and out-of-order calls.
         var current = _initial;
+        return TrySample(minutes, ref current, out state);
+    }
+
+    internal Evaluation CreateEvaluation() => new(this);
+
+    internal sealed class Evaluation(Sdp4Orbit orbit)
+    {
+        private DeepArgument _current = orbit._initial;
+
+        internal bool TrySample(double minutes, out CartesianState state) => orbit.TrySample(minutes, ref _current, out state);
+
+        internal void Reset() => _current = orbit._initial;
+    }
+
+    private bool TrySample(double minutes, ref DeepArgument current, out CartesianState state)
+    {
         Span<double> position = stackalloc double[3], velocity = stackalloc double[3];
         Sdp(minutes, _elements, _coefficients, ref current, position, velocity);
         var point = new Vector3d(position[0], position[1], position[2]);

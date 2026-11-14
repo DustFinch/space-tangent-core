@@ -95,6 +95,66 @@ public sealed class LocalTleCatalogueTests
         }
     }
 
+    [NativeSequenceFact]
+    [Trait("Category", "ExternalData")]
+    public void DeepSpaceStreamsMatchOriginalHistoryAndRemainIndependent()
+    {
+        using var reference = File.OpenRead(Environment.GetEnvironmentVariable("SPACETANGENT_TLE_SEQUENCE_REFERENCE")!);
+        using var document = JsonDocument.Parse(reference);
+        var body = Assert.Single(document.RootElement.GetProperty("cases").EnumerateArray(),
+            entry => entry.GetProperty("line1").GetString()!.StartsWith("1 24208", StringComparison.Ordinal));
+        var orbit = new Sgp4Orbit(TwoLineElements.Parse(body.GetProperty("line1").GetString()!,
+            body.GetProperty("line2").GetString()!));
+        Assert.True(orbit.DeepSpace);
+        var stream = orbit.CreateEvaluation();
+        var other = orbit.CreateEvaluation();
+        Assert.True(orbit.TrySample(orbit.Epoch, out var fresh));
+        Assert.True(other.TrySample(orbit.Epoch, out var independent));
+
+        var samples = body.GetProperty("sequenceSamples");
+        CartesianState firstAtEpoch = default, lastAtEpoch = default;
+        int repeatedEpochs = 0;
+        foreach (var sample in samples.EnumerateArray())
+        {
+            double minutes = sample.GetProperty("minutes").GetDouble();
+            var time = orbit.Epoch.AddSeconds(minutes * 60);
+            Assert.True(stream.TrySample(time, out var state));
+            var expectedPosition = Read(sample.GetProperty("positionKm"));
+            var expectedVelocity = Read(sample.GetProperty("velocityKmS"));
+            Assert.InRange((state.PositionKilometers - expectedPosition).Length, 0, .000001);
+            Assert.InRange((state.VelocityKilometersPerSecond - expectedVelocity).Length, 0, .000000001);
+            if (minutes == 0)
+            {
+                if (repeatedEpochs++ == 0)
+                    firstAtEpoch = state;
+                lastAtEpoch = state;
+            }
+        }
+
+        Assert.Equal(2, repeatedEpochs);
+        Assert.InRange((firstAtEpoch.PositionKilometers - lastAtEpoch.PositionKilometers).Length, .0045, .0047);
+        Assert.Equal(fresh, independent);
+        Assert.True(other.TrySample(orbit.Epoch, out independent));
+        Assert.Equal(fresh, independent);
+        Assert.True(orbit.TrySample(orbit.Epoch, out var unchanged));
+        Assert.Equal(fresh, unchanged);
+        stream.Reset();
+        Assert.True(stream.TrySample(orbit.Epoch, out var reset));
+        Assert.Equal(fresh, reset);
+
+        static Vector3d Read(JsonElement vector) => new(vector[0].GetDouble(), vector[1].GetDouble(), vector[2].GetDouble());
+    }
+
+    private sealed class NativeSequenceFactAttribute : FactAttribute
+    {
+        public NativeSequenceFactAttribute()
+        {
+            if (!File.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_TLE_SEQUENCE_REFERENCE")))
+                Skip = "Set the original sequential orbital reference.";
+        }
+    }
+
+
     private static string ReplaceChecksum(string line)
     {
         int sum = line[..68].Sum(character => char.IsAsciiDigit(character) ? character - '0' : character == '-' ? 1 : 0);

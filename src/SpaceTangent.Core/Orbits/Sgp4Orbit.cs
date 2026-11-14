@@ -9,6 +9,7 @@ namespace SpaceTangent.Core.Orbits;
 /// <summary>Near-Earth SGP4 and deep-space SDP4. States are Earth-centred TEME in km and km/s.</summary>
 public sealed class Sgp4Orbit
 {
+    private const int MaximumMinutesFromEpoch = 365 * 1440;
     private const double Mu = 398600.8;
     private const double EarthRadius = 6378.135;
     private const double J2 = .001082616, J3 = -.00000253881, J4 = -.00000165597;
@@ -111,11 +112,44 @@ public sealed class Sgp4Orbit
     public bool DeepSpace => _deep is not null;
     public static FrameId Frame { get; } = new("teme-of-date");
 
+    private double MinutesFromEpoch(JulianInstant tdb) =>
+        (double)tdb.DifferenceNanoseconds(Epoch) / (60 * JulianInstant.NanosecondsPerSecond);
+
+    /// <summary>Creates an independent stream that retains the deep-space model's query history.</summary>
+    public Evaluation CreateEvaluation() => new(this);
+
+    /// <summary>A sequential orbit evaluation stream. Use a separate instance for each observer or parallel caller.</summary>
+    public sealed class Evaluation
+    {
+        private readonly Sgp4Orbit _orbit;
+        private readonly Sdp4Orbit.Evaluation? _deep;
+
+        internal Evaluation(Sgp4Orbit orbit)
+        {
+            _orbit = orbit;
+            _deep = orbit._deep?.CreateEvaluation();
+        }
+
+        public bool TrySample(JulianInstant tdb, out CartesianState state)
+        {
+            if (_deep is null)
+                return _orbit.TrySample(tdb, out state);
+
+            double minutes = _orbit.MinutesFromEpoch(tdb);
+            state = default;
+            return Math.Abs(minutes) <= MaximumMinutesFromEpoch && _deep.TrySample(minutes, out state);
+        }
+
+        /// <summary>Restores the stream to the orbit's initial state.</summary>
+        public void Reset() => _deep?.Reset();
+    }
+
+    /// <summary>Samples without retaining previous queries.</summary>
     public bool TrySample(JulianInstant tdb, out CartesianState state)
     {
-        double minutes = (double)tdb.DifferenceNanoseconds(Epoch) / (60 * JulianInstant.NanosecondsPerSecond);
+        double minutes = MinutesFromEpoch(tdb);
         state = default;
-        if (Math.Abs(minutes) > 365 * 1440)
+        if (Math.Abs(minutes) > MaximumMinutesFromEpoch)
             return false;
 
         if (_deep is not null)
