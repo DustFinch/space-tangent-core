@@ -255,9 +255,7 @@ public static partial class SscBodyCatalogue
                 name = data.AsText();
             string file = ResolveSampleTable(name,
                 () => resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories"));
-            if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
-                throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
-            var curve = ReadSampleTable(name, () => SampledStateTrajectory.ReadSsc(file, Icrs));
+            var curve = ReadSampleTable(name, () => ReadSscTrajectory(file));
             raw = epoch => curve.TrySample(epoch, out CartesianState state) ? state : null;
         }
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
@@ -514,6 +512,13 @@ public static partial class SscBodyCatalogue
             throw new RejectedSampleTable(name, error.Message, error, context);
         }
     }
+
+    private static SampledStateTrajectory ReadSscTrajectory(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".xyzv" => SampledStateTrajectory.ReadSsc(path, Icrs),
+        ".xyz" => SampledStateTrajectory.ReadSsc(path, Icrs, positionsOnly: true),
+        _ => throw new NotSupportedException("An SSC SampledTrajectory needs XYZ or XYZV samples.")
+    };
 
     private static SampledStateTrajectory ReadSampleTable(string name, Func<SampledStateTrajectory> read,
         string? context = null)

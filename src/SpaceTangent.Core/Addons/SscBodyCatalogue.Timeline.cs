@@ -154,12 +154,7 @@ public static partial class SscBodyCatalogue
                 if (!curves.TryGetValue(path, out var curve))
                 {
                     CountBytes(path);
-                    curve = ReadSampleTable(name, () => Path.GetExtension(path).ToLowerInvariant() switch
-                    {
-                        ".xyzv" => SampledStateTrajectory.ReadSsc(path, Icrs),
-                        ".xyz" => SampledStateTrajectory.ReadSsc(path, Icrs, positionsOnly: true),
-                        _ => throw new NotSupportedException("An SSC Timeline needs XYZ or XYZV samples.")
-                    }, context);
+                    curve = ReadSampleTable(name, () => ReadSscTrajectory(path), context);
                     curves.Add(path, curve);
                 }
                 return epoch => curve.TrySample(epoch, out var sample) ? sample : null;

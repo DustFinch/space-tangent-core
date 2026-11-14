@@ -208,6 +208,39 @@ public sealed class SscBodyCatalogueTests
         }
     }
 
+    [LocalBodyPackFact]
+    [Trait("Category", "ExternalData")]
+    public void PositionOnlyTrajectoryUsesOriginalTc3SamplesInSourceAndPack()
+    {
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_SSC_ADDON_PACK")!;
+        var scratch = Directory.CreateTempSubdirectory("st-ssc-position-only-");
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            string file = Path.Combine(archive, "data", "2008TC3.xyzv");
+            string[] rows = File.ReadLines(file).Take(12).ToArray();
+            var positions = rows.Chunk(3).Select(row => row[0] + " " + row[1].Trim()).ToArray();
+            File.WriteAllLines(Path.Combine(source, "2008TC3.xyz"), positions);
+            string catalogue = File.ReadAllText(Path.Combine(archive, "data", "2008-tc3.ssc"));
+            File.WriteAllText(Path.Combine(source, "2008-tc3.ssc"),
+                catalogue.Replace("2008TC3.xyzv", "2008TC3.xyz", StringComparison.Ordinal));
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, packed, warning => throw new InvalidDataException(warning)));
+            var authored = Assert.Single(SscBodyCatalogue.Load(archive), body => body.Name == "2008 TC3");
+            var loose = Assert.Single(SscBodyCatalogue.Load(source));
+            var relocated = Assert.Single(SscBodyCatalogue.Load(packed));
+            foreach (double jd in new[] { 2454013.5, 2454015.5, 2454017.5, 2454019.5 })
+            {
+                var epoch = Epoch(jd);
+                Assert.Equal(authored.Sample(epoch)!.Value.PositionKilometers, loose.Sample(epoch)!.Value.PositionKilometers);
+                Assert.Equal(loose.Sample(epoch), relocated.Sample(epoch));
+                Assert.True(loose.Sample(epoch)!.Value.VelocityKilometersPerSecond.Length > 0);
+            }
+            Assert.Equal(loose.Sample(Epoch(2454014.5)), relocated.Sample(Epoch(2454014.5)));
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
     [OriginalSpacecraftFact]
     [Trait("Category", "ExternalData")]
     public void OriginalConicSpacecraftKeepMissionWindowsAndModels()
