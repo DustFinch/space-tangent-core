@@ -40,10 +40,11 @@ The example evaluates the geometric state of the Moon relative to Earth at JD 24
 
 | Area | Current implementation |
 | --- | --- |
-| Ephemerides | Geometric positions and velocities for the Sun, Earth, and Moon from the classic JPL DE440 format. [Data notes](docs/DE440.md) |
+| Ephemerides | Geometric states for the Sun, Earth, Moon and planetary systems from JPL DE440. An optional analytic model extends coverage to years 1–4000. [Data and coverage](docs/DE440.md) |
 | Time and frames | UTC, TAI, TT, and TDB conversions, ΔT models, and a world graph with body-fixed, two-vector, and mean-equator frames. [Time](docs/TIME.md) · [World graph](docs/WORLD_GRAPH.md) |
-| Trajectories | Near-Earth SGP4 from TLEs, elliptic through hyperbolic conics, and Hermite interpolation of sampled states. [SGP4](docs/SGP4.md) · [Conics](docs/CONIC_ORBITS.md) · [Sampled states](docs/SAMPLED_TRAJECTORIES.md) |
-| Mission data | Selected SSC and SPICE JSON inputs, SPK types 1–3, CK type 3, local metakernels, and camera geometry. [Supported formats](docs/SSC_SPICE.md) |
+| Trajectories | Near-Earth SGP4 and deep-space SDP4 from TLEs, analytic satellite orbits, elliptic through hyperbolic conics, and interpolation of sampled states. [Satellite orbits](docs/SATELLITE_ORBITS.md) · [Conics](docs/CONIC_ORBITS.md) · [Sampled states](docs/SAMPLED_TRAJECTORIES.md) |
+| Mission data | Supported SSC and SPICE mission JSON, ordered catalogue overrides, local metakernels, selected SPK segments, CK types 2 and 3, and camera geometry. PackTool validates and builds portable add-ons. [Mission formats and PackTool](docs/SSC_SPICE.md) |
+| Observation events | Solar and lunar eclipses, angular approaches, and passes of Earth satellites above a supplied altitude. [Event searches](docs/OBSERVATION_EVENTS.md) |
 
 ## Engine integration
 
