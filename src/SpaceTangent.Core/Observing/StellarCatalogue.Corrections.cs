@@ -22,15 +22,26 @@ public sealed partial class StellarCatalogue
         if (directories.Length > 64)
             throw new InvalidDataException("A stellar correction source contains more than 64 pack folders.");
 
+        var manifests = directories.Order(StringComparer.OrdinalIgnoreCase).ThenBy(path => path, StringComparer.Ordinal)
+            .Prepend(root).Select(directory => Path.Combine(directory, "pack.json")).Where(AddonDependencies.FileExists);
+        return ApplyDistanceCorrectionPacks(root, manifests, cancellation);
+    }
+
+    /// <summary>Applies the specified archived version 1 correction manifest.</summary>
+    public StellarImport WithDistanceCorrectionPack(string manifest, CancellationToken cancellation = default)
+    {
+        manifest = Path.GetFullPath(manifest);
+        return ApplyDistanceCorrectionPacks(Path.GetDirectoryName(manifest)!, [manifest], cancellation);
+    }
+
+    private StellarImport ApplyDistanceCorrectionPacks(string root, IEnumerable<string> manifests, CancellationToken cancellation)
+    {
         var corrections = new Dictionary<ObjectId, double>();
         var warnings = new List<string>();
         int omitted = 0;
-        foreach (string directory in directories.Order(StringComparer.OrdinalIgnoreCase).ThenBy(path => path, StringComparer.Ordinal).Prepend(root))
+        foreach (string path in manifests)
         {
             cancellation.ThrowIfCancellationRequested();
-            string path = Path.Combine(directory, "pack.json");
-            if (!AddonDependencies.FileExists(path))
-                continue;
             AddonDiagnostics.Read(AddonStage.Catalog, path, () =>
             {
                 using FileStream input = AddonDependencies.OpenRead(LocalAddonFiles.Resolve(root, root, path), MaximumCorrectionPackBytes);
@@ -62,7 +73,7 @@ public sealed partial class StellarCatalogue
                     {
                         omitted++;
                         if (warnings.Count < 80)
-                            warnings.Add($"{Path.GetFileName(directory)}/pack.json: no star named {name}.");
+                            warnings.Add($"{Path.GetFileName(Path.GetDirectoryName(path))}/pack.json: no star named {name}.");
                     }
                 }
                 return true;

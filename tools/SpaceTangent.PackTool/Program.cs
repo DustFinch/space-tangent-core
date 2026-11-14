@@ -55,6 +55,16 @@ try
         using var document = JsonDocument.Parse(inputFile,
             new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
         JsonElement pack = document.RootElement;
+        if (pack.ValueKind == JsonValueKind.Object && pack.TryGetProperty("corrections", out _))
+        {
+            if (bodyOptions is not ["--stellar-archive", var stellarRoot])
+                throw new InvalidDataException("Supply the base stellar catalogue directory as --stellar-archive <folder>.");
+            var result = StellarCatalogue.LoadArchive(stellarRoot).WithDistanceCorrectionPack(manifest);
+            foreach (string warning in result.Warnings)
+                Warn(warning);
+            Console.WriteLine($"{result.AppliedRecords} stellar distance corrections, {result.DiagnosticCount} warnings");
+            return strict && result.DiagnosticCount != 0 ? 1 : 0;
+        }
         bool archivedMission = pack.ValueKind == JsonValueKind.Object && pack.TryGetProperty("formatVersion", out _) &&
             !pack.TryGetProperty("sscCatalogs", out _) &&
             (pack.TryGetProperty("bodies", out _) || pack.TryGetProperty("annotations", out _) || pack.TryGetProperty("viewpoints", out _));
@@ -84,7 +94,7 @@ try
         Console.WriteLine($"{bodies.Count} SSC/MPC bodies, {warnings} warnings");
         return strict && warnings != 0 ? 1 : 0;
     }
-    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]...");
+    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>]");
     return 2;
 }
 catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog))

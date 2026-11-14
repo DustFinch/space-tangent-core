@@ -26,4 +26,14 @@ dotnet run --project tools/SpaceTangent.PackTool -- check "/path/to/mission-pack
 
 Use --body for references to objects supplied by a separate installation. The check prints the missions, annotations and viewpoints handled by the mission reader. Packs with embedded SSC use the SSC reader.
 
+Check a version 1 stellar distance correction pack against the archived catalogue directory containing `stars.bin`.
+
+```sh
+dotnet run --project tools/SpaceTangent.PackTool -- check "/path/to/corrections/pack.json" --strict --stellar-archive "/path/to/stellar-archive"
+```
+
+The check applies the named manifest and reports unresolved stellar targets. Strict mode fails on unresolved targets.
+
+
+
 Exit codes are 0 for success, 1 for an input, output or strict check failure, and 2 for invalid arguments.
