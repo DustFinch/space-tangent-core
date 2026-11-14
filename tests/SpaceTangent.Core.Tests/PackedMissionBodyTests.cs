@@ -94,6 +94,75 @@ public sealed class PackedMissionBodyTests
         }
     }
 
+    [OriginPacksFact]
+    [Trait("Category", "ExternalData")]
+    public void TwoOriginalPacksWithIdenticalResourceNamesKeepTheirOwners()
+    {
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_ORIGIN_PACKS")!;
+        var scratch = Directory.CreateTempSubdirectory("st-origin-packs-");
+        try
+        {
+            var manifests = new List<string>();
+            foreach (string owner in new[] { "0", "1" })
+            {
+                string original = Path.Combine(archive, owner, "same");
+                string root = Path.Combine(scratch.FullName, "перенос", owner, "same");
+                foreach (string file in Directory.EnumerateFiles(original, "*", SearchOption.AllDirectories))
+                {
+                    string copy = Path.Combine(root, Path.GetRelativePath(original, file));
+                    Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+                    File.Copy(file, copy);
+                }
+                manifests.Add(Path.Combine(root, "pack.json"));
+            }
+
+            var earth = new ObjectId("sol/earth");
+            var bodies = SampledMissionCatalog.Load(manifests, scratch.FullName,
+                name => name is "Earth" or "Sol/Earth" ? earth : null,
+                warning => throw new InvalidDataException(warning));
+            Assert.Equal(4, bodies.Count);
+            Verify(0, "OriginJason", "OriginRed", 12000, 5000,
+                "A3739C2EE604ADB66930D69964A3282040425ADA199901BB4F769D963EBC5829",
+                "4FF6AB670A58C14270E034E2090D9A432CAA263A14E0A25785386B0C12F880B5");
+            Verify(1, "OriginSorce", "OriginBlue", 16000, -5000,
+                "175B1C1AA5BD7F3E47EC36B63EB468596359D0C5CE153759FCB97D4B15B87A8D",
+                "6A34118BA2E0BF5DA5AB14CB63B121E2E8B2987A876668A9B2F9C30E1357470B");
+
+            void Verify(int owner, string spacecraft, string marker, double radius, double lateral,
+                string meshHash, string textureHash)
+            {
+                var mission = Assert.Single(bodies, body => body.Name == spacecraft);
+                var fixedBody = Assert.Single(bodies, body => body.Name == marker);
+                var arc = Assert.Single(mission.Arcs);
+                var markerArc = Assert.Single(fixedBody.Arcs);
+                Assert.Equal(earth, arc.Center);
+                Assert.Equal(earth, markerArc.Center);
+                var epoch = JulianInstant.FromJulianDate(2455755.25, TimeScale.Tdb);
+                Assert.Equal(new Vector3d(radius, 0, 0), arc.LocalState(epoch)!.Value.PositionKilometers);
+                Assert.Equal(new Vector3d(14000, lateral, 0), markerArc.LocalState(epoch)!.Value.PositionKilometers);
+                CheckFile(mission.MeshPath!, meshHash);
+                CheckFile(Assert.Single(fixedBody.Geometry!).Shape.GlobeTexturePath!, textureHash);
+
+                void CheckFile(string file, string hash)
+                {
+                    string directory = Path.GetDirectoryName(manifests[owner])!;
+                    Assert.StartsWith(directory + Path.DirectorySeparatorChar, file, StringComparison.Ordinal);
+                    Assert.Equal(hash, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file))));
+                }
+            }
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
+    private sealed class OriginPacksFactAttribute : FactAttribute
+    {
+        public OriginPacksFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ORIGIN_PACKS")))
+                Skip = "Set the root containing the two archived same-name packs.";
+        }
+    }
+
     [MissionVersionsFact]
     [Trait("Category", "ExternalData")]
     public void OlderMissionPacksRestoreTheCeresSystemAtMatchingEpochs()
