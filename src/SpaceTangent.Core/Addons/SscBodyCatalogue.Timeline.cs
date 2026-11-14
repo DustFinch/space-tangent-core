@@ -17,7 +17,7 @@ public static partial class SscBodyCatalogue
 
     private static IReadOnlyList<TimelinePhaseBinder> ReadTimeline(SscDefinition item, SscValue value,
         JulianInstant? beginning, JulianInstant? ending, SscResource resolve, SscSpiceInput spice,
-        Action<string> warn, CancellationToken cancellation)
+        Action<string> warn, CancellationToken cancellation, SscCustomModels? custom)
     {
         if (value is not SscValue.List { Items.Length: >= 1 and <= 128 } phases)
             throw new InvalidDataException("An SSC Timeline needs one to 128 phases.");
@@ -55,7 +55,10 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.ContainsKey("OrbitFrame"))
                 trajectory = ReadTimelineFrame(phase.Object("OrbitFrame"), center, out center);
 
-            var state = TrySpiceModel(phase, spice, "SpiceOrbit",
+            var builtInOrbit = phase.Fields.TryGetValue("CustomOrbit", out var orbitName) ? custom?.Orbit(orbitName.AsText()) : null;
+            if (builtInOrbit is not null)
+                trajectory = _ => new MissionFrame.Inertial(Basis3d.Identity);
+            var state = builtInOrbit ?? TrySpiceModel(phase, spice, "SpiceOrbit",
                 (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
@@ -66,10 +69,13 @@ public static partial class SscBodyCatalogue
             if (phase.Fields.ContainsKey("BodyFrame"))
                 bodyFrame = ReadTimelineFrame(phase.Object("BodyFrame"), item.Parent, out _);
 
-            var spiceSpin = TrySpiceModel(phase, spice, "SpiceRotation",
+            var builtInSpin = phase.Fields.TryGetValue("CustomRotation", out var rotationName) ? custom?.Rotation(rotationName.AsText()) : null;
+            if (builtInSpin is not null)
+                bodyFrame = _ => new MissionFrame.Inertial(Basis3d.Identity);
+            var absoluteOrSpiceSpin = builtInSpin ?? TrySpiceModel(phase, spice, "SpiceRotation",
                 (block, pool, initial) => ReadSpiceRotation(block, pool, initial, Basis3d.Identity,
                     HasSpiceAlternative(phase, "SpiceRotation", timeline: true)), WarnPhase, timeline: true);
-            var spin = spiceSpin ?? ReadTimelineSpin(phase, orbitPeriodSeconds, WarnPhase);
+            var spin = absoluteOrSpiceSpin ?? ReadTimelineSpin(phase, orbitPeriodSeconds, WarnPhase);
             result.Add((find, radiusKilometers) =>
             {
                 ObjectId origin = find(center);
@@ -83,7 +89,7 @@ public static partial class SscBodyCatalogue
                 }
                 MissionFrame body = bodyFrame(find);
                 return new(start, end, origin, local, trajectory(find),
-                    spin is null ? body : spiceSpin is not null ? new MissionFrame.RelativeAttitude(body, spin) :
+                    spin is null ? body : absoluteOrSpiceSpin is not null ? new MissionFrame.RelativeAttitude(body, spin) :
                         new MissionFrame.Rotating(body, epoch => spin(epoch)!.Value))
                 {
                     BodyReferenceFrame = body,
@@ -113,7 +119,7 @@ public static partial class SscBodyCatalogue
                 return ReadUniformSpin(phase.Object("FixedRotation"), Basis3d.Identity, null, stationary: true);
             if (ReadTimeQuantity(phase, "RotationPeriod", 3_600) is { } legacyPeriod)
                 return ReadUniformSpin(new SscValue.Map(new Dictionary<string, SscValue>()), Basis3d.Identity, legacyPeriod);
-            if (phase.Fields.Keys.Any(key => key is "CustomRotation" or "ScriptedRotation" or "FixedAttitude"))
+            if (phase.Fields.Keys.Any(key => key is "ScriptedRotation" or "FixedAttitude"))
                 throw new NotSupportedException("This SSC Timeline rotation model is unavailable.");
             return null;
 
@@ -140,7 +146,7 @@ public static partial class SscBodyCatalogue
         {
             orbitPeriodSeconds = null;
             surfaceCoordinates = null;
-            if (phase.Fields.Keys.Any(key => key is "CustomOrbit" or "ScriptedOrbit" or "LongLat"))
+            if (phase.Fields.Keys.Any(key => key is "ScriptedOrbit" or "LongLat"))
                 throw new NotSupportedException("This SSC Timeline orbit model is unavailable.");
             if (phase.Fields.TryGetValue("SampledTrajectory", out var data))
             {

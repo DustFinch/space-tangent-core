@@ -53,7 +53,7 @@ public static partial class SscBodyCatalogue
                 cancellation.ThrowIfCancellationRequested();
                 if (!properties.Fields.TryGetValue(field, out var value) || value is not SscValue.Map parameters)
                     continue;
-                if (!timeline && custom is not null && PreferCustom(properties, field, custom))
+                if (custom is not null && PreferCustom(properties, field, custom))
                     continue;
                 string ownerField = timeline ? "Timeline" : field;
                 string directory = item.DirectoryFor(ownerField);

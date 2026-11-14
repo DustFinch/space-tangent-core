@@ -63,6 +63,61 @@ public sealed class OrderedSpiceCatalogueTests
         finally { scratch.Delete(recursive: true); }
     }
 
+    [ArchivedV16Fact]
+    [Trait("Category", "ExternalData")]
+    public void CassiniArchiveCustomModelsTakePrecedenceInsideTimelinePhases()
+    {
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_V16")!;
+        string source = Path.Combine(archive, "source", "00-ssc");
+        var ephemeris = SpaceTangent.Core.Ephemerides.HistoricalSolarEphemeris.Load(
+            SpaceTangent.Core.Ephemerides.De440Ephemeris.Load(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")!),
+            Environment.GetEnvironmentVariable("SPACETANGENT_VSOP87")!);
+        var scratch = Directory.CreateTempSubdirectory("st-v16-timeline-");
+        try
+        {
+            string loose = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(loose, Path.GetRelativePath(source, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target);
+            }
+
+            // Use the archived Cassini data and move only the competing models in the test entry into a phase.
+            string catalogue = Path.Combine(loose, "cassini.ssc");
+            string text = File.ReadAllText(catalogue);
+            int start = text.IndexOf("    CustomOrbit", StringComparison.Ordinal);
+            int end = text.LastIndexOf('}');
+            Assert.InRange(start, 1, end - 1);
+            File.WriteAllText(catalogue, text[..start] + "    Timeline [ {\n" + text[start..end] + "    } ]\n}\n");
+            var fixedSpin = new FrameKinematics(new(new(0, 1, 0), new(-1, 0, 0), new(0, 0, 1)), default(Vector3d));
+            var custom = SscCustomModels.FromSolarSystem(ephemeris, naif => naif == 499 ? _ => fixedSpin : null);
+            var diagnostics = new List<string>();
+            var packed = Path.Combine(scratch.FullName, "pack");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(loose, packed, diagnostics.Add, custom: custom));
+            Assert.DoesNotContain(diagnostics, message => message.Contains("poison.dat", StringComparison.Ordinal));
+            Check(SscBodyCatalogue.Load(loose, warning: diagnostics.Add, custom: custom));
+            Check(SscBodyCatalogue.Load(packed, warning: diagnostics.Add, custom: custom));
+
+            void Check(IReadOnlyList<SscBodyDefinition> bodies)
+            {
+                var body = Assert.Single(bodies, entry => entry.Name == "Unselected");
+                var sun = new ObjectId("sol/sun");
+                var id = new ObjectId("ssc/sol/unselected");
+                var builder = new WorldGraphBuilder();
+                builder.AddTrajectory(sun, _ => new CartesianState(default, default));
+                builder.AddSampledMission(body.BindTimeline!(id, path => path == "Sol" ? sun : throw new InvalidDataException(path)));
+                var epoch = JulianInstant.FromJulianDate(2453187.57, TimeScale.Tdb);
+                var world = builder.Build().Evaluate(epoch);
+                Assert.True(world.TryState(id, out var state));
+                Assert.Equal(ephemeris.SamplePlanetarySeries(4, epoch), state);
+                Assert.True(world.TryOrientation(id, out var orientation));
+                Assert.Equal(fixedSpin, orientation);
+            }
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
     private sealed class ArchivedV16FactAttribute : FactAttribute
     {
         public ArchivedV16FactAttribute()

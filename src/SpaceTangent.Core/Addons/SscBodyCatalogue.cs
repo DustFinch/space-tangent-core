@@ -223,7 +223,7 @@ public static partial class SscBodyCatalogue
         double? orbitApoapsis = null;
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
-            ? ReadTimeline(item, timelineValue, beginning, ending, resolve, spice, Warn, cancellation) : null;
+            ? ReadTimeline(item, timelineValue, beginning, ending, resolve, spice, Warn, cancellation, custom) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
         var builtInOrbit = Text("CustomOrbit") is { } orbitName ? custom?.Orbit(orbitName) : null;
         if (timeline is not null)
