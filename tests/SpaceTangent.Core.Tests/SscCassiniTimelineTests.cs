@@ -101,6 +101,61 @@ public sealed class SscCassiniTimelineTests
         };
     }
 
+    [CassiniFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalHuygensLandingCoordinatesBindOutsideATimeline()
+    {
+        string original = Path.Combine(Data("SPACETANGENT_SSC_WORLD_ROOT"), "ssc", "cassini.ssc");
+        var site = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(original),
+            @"Planetographic\s*\[\s*([^\]]+)\]").Groups[1].Value;
+        Assert.NotEmpty(site);
+        var root = Directory.CreateTempSubdirectory("st-ssc-huygens-site-");
+        try
+        {
+            string source = root.CreateSubdirectory("source").FullName;
+            string pack = Path.Combine(root.FullName, "pack");
+            File.WriteAllText(Path.Combine(source, "site.ssc"), $$"""
+                "Huygens" "Sol/Saturn/Titan" {
+                    Beginning 2453385.1
+                    Ending 2453386.1
+                    FixedPosition { Planetographic [ {{site}} ] }
+                }
+                """);
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, pack, _ => { }));
+            var frame = new SpicePolynomialBodyFrame(Data("SPACETANGENT_SATURN_PCK"), 606);
+            foreach (string installed in new[] { source, pack })
+            {
+                var definition = Assert.Single(SscBodyCatalogue.Load(installed));
+                var titan = new ObjectId("sol/titan");
+                var id = new ObjectId("ssc/sol/saturn/titan/huygens");
+                Assert.Throws<InvalidDataException>(() => definition.BindTimeline!(id, _ => titan));
+                var mission = definition.BindTimeline!(id, _ => titan, _ => frame.RadiiKilometers.X);
+                var builder = new WorldGraphBuilder();
+                builder.AddTrajectory(titan, _ => new CartesianState(default, default));
+                builder.AddOrientation(titan, epoch => frame.Sample(epoch));
+                builder.AddSampledMission(mission);
+                var graph = builder.Build();
+                foreach (var epoch in new[] { mission.Start, mission.Start.AddSeconds(3600) })
+                {
+                    Assert.True(graph.Evaluate(epoch).TryState(id, out var state));
+                    double distance = frame.RadiiKilometers.X + .91926;
+                    double longitude = 163.17754 * (Math.PI / 180);
+                    double latitude = -10.29358 * (Math.PI / 180);
+                    var expected = new Vector3d(Math.Cos(latitude) * Math.Cos(longitude),
+                        Math.Cos(latitude) * Math.Sin(longitude), Math.Sin(latitude)) * distance;
+                    var kinematics = frame.Sample(epoch);
+                    var position = kinematics.ToWorld.Transform(expected);
+                    Assert.InRange((position - state.PositionKilometers).Length, 0, 1e-8);
+                    var velocity = Vector3d.Cross(kinematics.AngularVelocityRadiansPerSecond!.Value, position);
+                    Assert.InRange((velocity - state.VelocityKilometersPerSecond).Length, 0, 1e-10);
+                }
+                Assert.False(graph.Evaluate(mission.Start.AddNanoseconds(-1)).TryState(id, out _));
+                Assert.False(graph.Evaluate(mission.End).TryState(id, out _));
+            }
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
     private static string Data(string name) => Environment.GetEnvironmentVariable(name)!;
 
     private sealed class CassiniFactAttribute : FactAttribute

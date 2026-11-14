@@ -100,10 +100,8 @@ public static partial class SscBodyCatalogue
                 var local = state;
                 if (surfaceCoordinates is { } site)
                 {
-                    double radius = radiusKilometers?.Invoke(origin) ??
-                        throw new InvalidDataException($"SSC surface position requires a radius for {center}.");
-                    var offset = SurfaceOffset(site, radius);
-                    local = _ => new CartesianState(offset, default);
+                    var fixedState = BindSurfacePosition(site, origin, center, radiusKilometers);
+                    local = _ => fixedState;
                 }
                 MissionFrame body = bodyFrame(find);
                 return new(start, end, origin, local, trajectory(find),
@@ -200,16 +198,7 @@ public static partial class SscBodyCatalogue
             }
             if (phase.Fields.TryGetValue("FixedPosition", out var fixedPosition))
             {
-                if (fixedPosition is SscValue.Map coordinates)
-                {
-                    if (!coordinates.Fields.TryGetValue("Rectangular", out fixedPosition))
-                    {
-                        surfaceCoordinates = ReadVector(coordinates.Fields.TryGetValue("Planetographic", out var geographic)
-                            ? geographic : coordinates.Get("Planetocentric"));
-                        return _ => null;
-                    }
-                }
-                var state = new CartesianState(ReadVector(fixedPosition), default);
+                var state = ReadFixedPosition(fixedPosition, out surfaceCoordinates);
                 return _ => state;
             }
             throw new NotSupportedException("This SSC Timeline has no supported trajectory.");
@@ -224,6 +213,26 @@ public static partial class SscBodyCatalogue
                 return curve;
             }
         }
+    }
+
+    private static CartesianState? ReadFixedPosition(SscValue position, out Vector3d? surfaceCoordinates)
+    {
+        surfaceCoordinates = null;
+        if (position is SscValue.Map coordinates && !coordinates.Fields.TryGetValue("Rectangular", out position!))
+        {
+            surfaceCoordinates = ReadVector(coordinates.Fields.TryGetValue("Planetographic", out var geographic)
+                ? geographic : coordinates.Get("Planetocentric"));
+            return null;
+        }
+        return new(ReadVector(position), default);
+    }
+
+    private static CartesianState BindSurfacePosition(Vector3d site, ObjectId center, string centerName,
+        Func<ObjectId, double>? radiusKilometers)
+    {
+        double radius = radiusKilometers?.Invoke(center) ??
+            throw new InvalidDataException($"SSC surface position requires a radius for {centerName}.");
+        return new(SurfaceOffset(site, radius), default);
     }
 
     private static Vector3d SurfaceOffset(Vector3d coordinates, double radius)

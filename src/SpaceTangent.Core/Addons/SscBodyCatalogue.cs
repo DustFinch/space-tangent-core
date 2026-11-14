@@ -221,6 +221,7 @@ public static partial class SscBodyCatalogue
         Func<JulianInstant, CartesianState?> raw;
         double? orbitPeriodSeconds = null;
         double? orbitApoapsis = null;
+        Vector3d? surfaceCoordinates = null;
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, beginning, ending, resolve, spice, Warn, cancellation, custom, scripts, root) : null;
@@ -309,10 +310,8 @@ public static partial class SscBodyCatalogue
         }
         else if (fields.Fields.TryGetValue("FixedPosition", out var position))
         {
-            if (position is SscValue.Map coordinates)
-                position = coordinates.Get("Rectangular");
-            var state = new CartesianState(ReadVector(position), default);
-            raw = _ => state;
+            var fixedState = ReadFixedPosition(position, out surfaceCoordinates);
+            raw = _ => fixedState;
         }
         else if (usesScriptOrbit || fields.Fields.ContainsKey("SampledOrbit"))
             return null;
@@ -463,8 +462,23 @@ public static partial class SscBodyCatalogue
             Rings = rings, GeometricAlbedo = albedo, BindExtrasolarOrbit = extrasolarOrbit,
             OrbitApoapsisKilometers = orbitApoapsis is { } distance && double.IsFinite(distance) ? distance : null,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),
-            BindTimeline = timeline is null ? null : (id, find, radiusKilometers) =>
+            BindTimeline = timeline is not null ? (id, find, radiusKilometers) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))
+                : surfaceCoordinates is { } site ? (id, find, radiusKilometers) =>
+                {
+                    ObjectId center = find(reference.Center);
+                    var fixedState = BindSurfacePosition(site, center, reference.Center, radiusKilometers);
+                    var basis = new MissionFrame.Inertial(Basis3d.Identity);
+                    MissionFrame attitude = spin is not null ? new MissionFrame.RelativeAttitude(basis, spin) :
+                        orientation is { } vectors ? new MissionFrame.TwoVector(vectors.Primary.Axis, Direction(vectors.Primary),
+                            vectors.Secondary.Axis, Direction(vectors.Secondary)) : basis;
+                    return new(id, item.Name, mesh, radius, [new(beginning ?? EarliestTimelineEpoch, ending ?? LatestTimelineEpoch,
+                        center, _ => fixedState, new MissionFrame.BodyFixed(center), attitude)
+                        { BodyReferenceFrame = orientation is null ? new MissionFrame.Inertial(spinFrame) : attitude, UsePhysicalBodyFixedVelocity = true }]);
+
+                    RelativeDirection Direction(SscBodyAxis axis) => new(find(axis.Observer), find(axis.Target), axis.Quantity);
+                }
+                : null
         };
 
         void Warn(string message) => warning?.Invoke($"{item.Parent}/{item.Name}: {message}");
