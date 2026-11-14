@@ -174,7 +174,9 @@ public sealed class SpiceCkOracleTests
             Verify(SscBodyCatalogue.Load(packed));
 
             File.WriteAllText(catalog, File.ReadAllText(catalog).Replace(" \"terrestrial.tpc\"", "", StringComparison.Ordinal));
-            Assert.Throws<InvalidDataException>(() => SscBodyCatalogue.Load(source));
+            var withoutCoefficients = SscBodyCatalogue.Load(source);
+            Assert.Equal(2, withoutCoefficients.Count);
+            Assert.All(withoutCoefficients, body => Assert.Null(body.SampleRotation!(JulianInstant.FromTdbSeconds(0))));
         }
         finally
         {

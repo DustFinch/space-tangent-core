@@ -34,6 +34,9 @@ internal sealed class SpiceFramePool(SpiceTextKernel definitions, Func<CkKernel[
         return definitions.Contains(key) ? definitions.GetInteger(key) : 0;
     }
 
+    internal bool IsKnown(int id) => id == 10081 || SpiceReferenceFrames.InertialBasis(id).HasValue ||
+        SpiceReferenceFrames.Body(id).Body > 0 || definitions.Contains(FormattableString.Invariant($"FRAME_{id}_NAME"));
+
     internal void RequireDefinition(int id)
     {
         for (int depth = 0; depth < MaximumFrameDepth; depth++)

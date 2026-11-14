@@ -215,17 +215,20 @@ public static partial class SscBodyCatalogue
         var frames = resources.Frames;
         string frame = rotation.Text("Frame");
         string baseFrame = rotation.Fields.TryGetValue("BaseFrame", out var value) ? value.AsText() : "ECLIPJ2000";
-        int frameId = initial.Frames.Id(frame), baseId = initial.Frames.Id(baseFrame);
-        if (!optional)
+        var lookup = initial.Frames;
+        int frameId = lookup.Id(frame);
+        if (!optional && !lookup.IsKnown(frameId))
         {
             // Required pointing can be supplied by a separately installed mission.
-            if (frameId == 0) frameId = frames.Id(frame);
-            if (baseId == 0) baseId = frames.Id(baseFrame);
+            lookup = frames;
+            frameId = lookup.Id(frame);
         }
-        if (frameId == 0 || baseId == 0)
-            throw new InvalidDataException($"Unknown SSC SPICE frame {frame} or {baseFrame}.");
-        frames.RequireDefinition(frameId);
-        frames.RequireDefinition(baseId);
+        if (!lookup.IsKnown(frameId))
+            throw new InvalidDataException($"Unknown SSC SPICE frame {frame}.");
+
+        // Native initialization transforms the pointing frame to itself. Its base frame and
+        // any kernels needed for the actual transform only matter when evaluating an epoch.
+        int baseId = frames.Id(baseFrame);
         var bounds = SpiceCoverage(rotation);
         var coverage = (bounds.Beginning is { } first ? Inset(first, .001) : (JulianInstant?)null,
             bounds.Ending is { } last ? Inset(last, -.001) : (JulianInstant?)null);

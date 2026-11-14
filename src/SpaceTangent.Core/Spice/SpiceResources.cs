@@ -106,7 +106,7 @@ internal sealed class SpiceResources
 
                     HashSet<(string File, string Authored)>? pending = group.SkipRepeatedExplicit ? [] : null;
                     Expand(group.Root, physicalDirectory, physicalName, ordered, ref visits, dependency: false,
-                        group.Unavailable is null ? null : Validate, ReadText, explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
+                        group.Unavailable is not null || group.SkipRepeatedExplicit ? Validate : null, ReadText, explicitSscLoads, pending, group.SkipRepeatedExplicit ? name : null);
                     if (pending is not null)
                         explicitSscLoads.UnionWith(pending);
                     hasOtherKernel = true;

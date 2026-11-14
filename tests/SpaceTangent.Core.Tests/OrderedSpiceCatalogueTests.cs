@@ -1238,6 +1238,61 @@ public sealed class OrderedSpiceCatalogueTests
 
     [OrderedSpiceFact]
     [Trait("Category", "ExternalData")]
+    public void KnownSscPointingFramesInitializeBeforeTheirTransformIsAvailable()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        using var reference = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            File.WriteAllText(Path.Combine(source, "pointing.ssc"), """
+                "Builtin without PCK" "Sol" {
+                    FixedPosition [ 1 0 0 ]
+                    SpiceRotation { Frame "IAU_MARS" }
+                    FixedRotation { MeridianAngle 10 }
+                }
+                "Unknown base" "Sol" {
+                    FixedPosition [ 2 0 0 ]
+                    SpiceRotation { Frame "J2000" BaseFrame "UNKNOWN_BASE" }
+                    FixedRotation { MeridianAngle 10 }
+                }
+                "Unknown pointing" "Sol" {
+                    FixedPosition [ 3 0 0 ]
+                    SpiceRotation { Frame "PREFIX_FRAME" }
+                    FixedRotation { MeridianAngle 10 }
+                }
+                """);
+            string packed = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(3, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            string[] cases = ["builtin-frame-init-without-pck", "rotation-base-not-tested-at-init", "unknown-rotation-frame"];
+            var epoch = JulianInstant.FromTdbSeconds(0);
+            foreach (string folder in new[] { source, packed })
+            {
+                var warnings = new List<string>();
+                var bodies = SscBodyCatalogue.Load(folder, warning: warnings.Add);
+                Assert.Equal(cases.Length, bodies.Count);
+                Assert.Contains("Unknown SSC SPICE frame PREFIX_FRAME", Assert.Single(warnings));
+                for (int index = 0; index < cases.Length; index++)
+                {
+                    var expected = reference.RootElement.GetProperty("rows").EnumerateArray()
+                        .Single(row => row.GetProperty("case").GetString() == cases[index])
+                        .GetProperty("results")[0].GetProperty("ok").GetBoolean();
+                    var sample = bodies[index].SampleRotation!(epoch);
+                    // The selected SPICE models lack data to sample here. Only the rejected
+                    // model selects the authored fixed rotation and produces a transform.
+                    Assert.Equal(expected, sample is null);
+                }
+            }
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
     public void BoundedCassiniPointingHoldsTheNativeEndpoints()
     {
         string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
