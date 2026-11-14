@@ -8,6 +8,64 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class OrderedSpiceCatalogueTests
 {
+    [ArchivedV16Fact]
+    [Trait("Category", "ExternalData")]
+    public void RelocatedCassiniV16SkipsSpiceForAvailableCustomModels()
+    {
+        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_V16")!;
+        string series = Environment.GetEnvironmentVariable("SPACETANGENT_VSOP87")!;
+        var ephemeris = SpaceTangent.Core.Ephemerides.HistoricalSolarEphemeris.Load(
+            SpaceTangent.Core.Ephemerides.De440Ephemeris.Load(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")!), series);
+        var scratch = Directory.CreateTempSubdirectory("st-v16-");
+        try
+        {
+            string root = scratch.CreateSubdirectory("Перенесённый пак").FullName;
+            foreach (string file in Directory.EnumerateFiles(Path.Combine(archive, "packed"), "*", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(root, Path.GetRelativePath(Path.Combine(archive, "packed"), file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target);
+            }
+            string packed = Path.Combine(root, "00-ssc");
+            var warnings = new List<string>();
+            Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.Load(packed));
+            var custom = new SscCustomModels(
+                name => name == "vsop87-mars" ? epoch => ephemeris.SamplePlanetarySeries(4, epoch) : null,
+                name => name == "iau-mars" ? _ => new FrameKinematics(Basis3d.Identity, default(Vector3d)) : null);
+
+            var before = SscBodyCatalogue.Load(packed, warning: warnings.Add, custom: custom);
+            var after = SscBodyCatalogue.LoadSources([packed, Path.Combine(root, "99-override")], warnings.Add, custom: custom);
+            Assert.Empty(warnings);
+            Assert.Equal(["Cassini SOI", "Unselected"], after.Select(body => body.Name));
+            Assert.EndsWith("cassini.glb", after[0].Mesh);
+            var epoch = JulianInstant.FromJulianDate(2453187.57, TimeScale.Tdb);
+            Assert.Equal(ephemeris.SamplePlanetarySeries(4, epoch), after[1].Sample(epoch));
+            Assert.Equal(Basis3d.Identity, after[1].SampleRotation!(epoch)!.Value.ToWorld);
+            foreach (double day in new[] { 2453187.55, 2453187.57, 2453187.6 })
+            {
+                epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
+                Assert.NotNull(before[0].Sample(epoch));
+                Assert.Equal(before[0].Sample(epoch), after[0].Sample(epoch));
+                var original = before[0].SampleRotation!(epoch)!.Value.ToWorld;
+                var updated = after[0].SampleRotation!(epoch)!.Value.ToWorld;
+                Assert.InRange(Vector3d.Dot(original.X, updated.X), Math.Cos(Math.PI / 18) - 1e-10,
+                    Math.Cos(Math.PI / 18) + 1e-10);
+            }
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
+    private sealed class ArchivedV16FactAttribute : FactAttribute
+    {
+        public ArchivedV16FactAttribute()
+        {
+            if (!Directory.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_CASSINI_V16")) ||
+                !File.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_VSOP87")) ||
+                !File.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")))
+                Skip = "Set the original v16 pack, VSOP87 series and DE440.";
+        }
+    }
+
     [OrderedSpiceFact]
     [Trait("Category", "ExternalData")]
     public void LaterKernelOnlyCatalogueCompletesTheOriginalCassiniInstrumentFrames()

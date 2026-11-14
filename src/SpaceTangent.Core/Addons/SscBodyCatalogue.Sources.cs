@@ -13,15 +13,15 @@ public static partial class SscBodyCatalogue
 {
     /// <summary>Applies enabled SSC sources in order while resolving each inherited field in its owning source.</summary>
     public static IReadOnlyList<SscBodyDefinition> LoadSources(IEnumerable<string> directories, Action<string> warning,
-        CancellationToken cancellation = default, ISscScriptModels? scripts = null) =>
-        LoadSources(directories, warning, cancellation, scripts, null, out _);
+        CancellationToken cancellation = default, ISscScriptModels? scripts = null, SscCustomModels? custom = null) =>
+        LoadSources(directories, warning, cancellation, scripts, null, out _, custom);
 
     /// <summary>Loads SSC sources followed by mission catalogues into one ordered world SPICE pool.</summary>
     public static InstalledMissionCatalogues LoadWithMissions(IEnumerable<string> sscDirectories,
         IEnumerable<string> missionCatalogues, string missionRoot, Func<string, ObjectId?> resolveBody,
         Action<string> sscWarning, Action<string>? missionWarning = null, CancellationToken cancellation = default,
         ISscScriptModels? scripts = null, string? dedicatedMission = null,
-        IEnumerable<string>? dedicatedSscCatalogues = null)
+        IEnumerable<string>? dedicatedSscCatalogues = null, SscCustomModels? custom = null)
     {
         IReadOnlyList<SscBodyDefinition> bodies = [];
         IReadOnlyList<SpiceResources.KernelGroup> dedicatedLoads = [];
@@ -50,7 +50,7 @@ public static partial class SscBodyCatalogue
             {
                 try
                 {
-                    bodies = LoadSources(sscDirectories, sscWarning, cancellation, scripts, [.. loads, .. dedicatedLoads], out var resources);
+                    bodies = LoadSources(sscDirectories, sscWarning, cancellation, scripts, [.. loads, .. dedicatedLoads], out var resources, custom);
                     pool = resources;
                     return resources;
                 }
@@ -68,7 +68,7 @@ public static partial class SscBodyCatalogue
 
     private static IReadOnlyList<SscBodyDefinition> LoadSources(IEnumerable<string> directories, Action<string> warning,
         CancellationToken cancellation, ISscScriptModels? scripts,
-        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, out SpiceResources resources)
+        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, out SpiceResources resources, SscCustomModels? custom)
     {
         ArgumentNullException.ThrowIfNull(directories);
         ArgumentNullException.ThrowIfNull(warning);
@@ -76,7 +76,7 @@ public static partial class SscBodyCatalogue
         if (roots.Length == 1 && missionLoads is null)
         {
             resources = null!; // The standalone caller does not consume the pool.
-            return LoadWithMpc(roots[0], warning, cancellation, scripts);
+            return LoadWithMpc(roots[0], warning, cancellation, scripts, custom);
         }
         var documents = new List<SscDocument>();
         var kernels = new List<PackedKernel>();
@@ -105,7 +105,7 @@ public static partial class SscBodyCatalogue
         var definitions = SscDefinitions.Load(documents, cancellation, declarations);
         var bodies = ReadBodyDefinitions(definitions, declarations, directory => owners[directory].Root, scripts, warning,
             (body, field, stage, name, fallbacks) => owners[body.DirectoryFor(field)].Resolve(body, field, stage, name, fallbacks),
-            cancellation, roots, kernels, out resources, missionLoads, kernelOrder).ToList();
+            cancellation, roots, kernels, out resources, missionLoads, kernelOrder, custom).ToList();
         foreach (string root in roots)
             AppendMpc(root, bodies, warning, cancellation);
         return bodies.AsReadOnly();

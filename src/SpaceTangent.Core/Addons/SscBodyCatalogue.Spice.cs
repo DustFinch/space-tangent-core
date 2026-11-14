@@ -27,7 +27,7 @@ public static partial class SscBodyCatalogue
         IReadOnlyList<SscDefinition> declarations,
         Func<string, string> root, SscResource resolve, CancellationToken cancellation,
         string[] roots, IReadOnlyList<PackedKernel> furnished,
-        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder)
+        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder, SscCustomModels? custom)
     {
         var order = roots.Select((path, index) => (path, index)).ToLookup(item => item.path, item => item.index);
         var unavailable = new Dictionary<(SscValue.Map Properties, string Field), Exception>();
@@ -52,6 +52,8 @@ public static partial class SscBodyCatalogue
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (!properties.Fields.TryGetValue(field, out var value) || value is not SscValue.Map parameters)
+                    continue;
+                if (!timeline && custom is not null && PreferCustom(properties, field, custom))
                     continue;
                 string ownerField = timeline ? "Timeline" : field;
                 string directory = item.DirectoryFor(ownerField);
@@ -86,6 +88,13 @@ public static partial class SscBodyCatalogue
         if (properties.Fields.TryGetValue("Timeline", out var timeline) && timeline is SscValue.List phases)
             foreach (var phase in phases.Items.OfType<SscValue.Map>())
                 yield return (phase, true);
+    }
+
+    private static bool PreferCustom(SscValue.Map properties, string spiceField, SscCustomModels custom)
+    {
+        if (!properties.Fields.TryGetValue(spiceField == "SpiceOrbit" ? "CustomOrbit" : "CustomRotation", out var model))
+            return false;
+        return spiceField == "SpiceOrbit" ? custom.Orbit(model.AsText()) is not null : custom.Rotation(model.AsText()) is not null;
     }
 
     private static bool HasSpiceAlternative(SscValue.Map properties, string field, bool timeline = false)

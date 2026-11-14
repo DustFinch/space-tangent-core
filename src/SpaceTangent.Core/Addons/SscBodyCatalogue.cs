@@ -43,19 +43,19 @@ public static partial class SscBodyCatalogue
     private static readonly Basis3d Ecliptic = Rotation(new(1, 0, 0), 23.4392911);
 
     public static IReadOnlyList<SscBodyDefinition> Load(string root, CancellationToken cancellation = default,
-        ISscScriptModels? scripts = null, Action<string>? warning = null)
+        ISscScriptModels? scripts = null, Action<string>? warning = null, SscCustomModels? custom = null)
     {
         root = Path.GetFullPath(root);
         if (!AddonDependencies.DirectoryExists(root))
             return [];
         string pack = Path.Combine(root, "pack.json");
         if (AddonDependencies.FileExists(pack))
-            return AddonDiagnostics.Read(AddonStage.Catalog, pack, () => ReadPackedSsc(root, pack, scripts, warning, cancellation));
+            return AddonDiagnostics.Read(AddonStage.Catalog, pack, () => ReadPackedSsc(root, pack, scripts, warning, cancellation, custom));
         var source = ReadLooseDocuments(root);
         var declarations = new List<SscDefinition>();
         var definitions = SscDefinitions.Load(source.Documents, cancellation, declarations);
         return ReadBodyDefinitions(definitions, declarations, _ => root,
-            scripts, warning, source.Resolve, cancellation, [root], source.Kernels);
+            scripts, warning, source.Resolve, cancellation, [root], source.Kernels, custom: custom);
     }
 
     private static SscSource ReadLooseDocuments(string root)
@@ -75,18 +75,18 @@ public static partial class SscBodyCatalogue
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
         IReadOnlyList<SscDefinition> declarations,
         Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
-        string[] roots, IReadOnlyList<PackedKernel> kernels, IReadOnlyDictionary<string, int>? kernelOrder = null) =>
-        ReadBodyDefinitions(definitions, declarations, root, scripts, warning, resolve, cancellation, roots, kernels, out _, null, kernelOrder);
+        string[] roots, IReadOnlyList<PackedKernel> kernels, IReadOnlyDictionary<string, int>? kernelOrder = null, SscCustomModels? custom = null) =>
+        ReadBodyDefinitions(definitions, declarations, root, scripts, warning, resolve, cancellation, roots, kernels, out _, null, kernelOrder, custom);
 
     private static IReadOnlyList<SscBodyDefinition> ReadBodyDefinitions(IReadOnlyList<SscDefinition> definitions,
         IReadOnlyList<SscDefinition> declarations,
         Func<string, string> root, ISscScriptModels? scripts, Action<string>? warning, SscResource resolve, CancellationToken cancellation,
         string[] roots, IReadOnlyList<PackedKernel> kernels, out SpiceResources resources,
-        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder)
+        IReadOnlyList<SpiceResources.KernelGroup>? missionLoads, IReadOnlyDictionary<string, int>? kernelOrder, SscCustomModels? custom)
     {
         if (definitions.Count > 512)
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
-        var spice = ReadSpiceResources(definitions, declarations, root, resolve, cancellation, roots, kernels, missionLoads, kernelOrder);
+        var spice = ReadSpiceResources(definitions, declarations, root, resolve, cancellation, roots, kernels, missionLoads, kernelOrder, custom);
         resources = spice.Pool;
         var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
         var result = new List<SscBodyDefinition>();
@@ -109,7 +109,7 @@ public static partial class SscBodyCatalogue
                 try
                 {
                     var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile,
-                        () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation));
+                        () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation, custom));
                     installed = body is not null;
                     if (body is not null)
                         result.Add(body);
@@ -127,11 +127,11 @@ public static partial class SscBodyCatalogue
 
     /// <summary>Reads a local body pack and its optional fixed-column MPC selections.</summary>
     public static IReadOnlyList<SscBodyDefinition> LoadWithMpc(string root, Action<string> warning,
-        CancellationToken cancellation = default, ISscScriptModels? scripts = null)
+        CancellationToken cancellation = default, ISscScriptModels? scripts = null, SscCustomModels? custom = null)
     {
         ArgumentNullException.ThrowIfNull(warning);
         root = Path.GetFullPath(root);
-        var bodies = Load(root, cancellation, scripts, warning).ToList();
+        var bodies = Load(root, cancellation, scripts, warning, custom).ToList();
         AppendMpc(root, bodies, warning, cancellation);
         return bodies.AsReadOnly();
     }
@@ -201,7 +201,7 @@ public static partial class SscBodyCatalogue
         ? [name[..^1] + "png", name[..^1] + "jpg", name[..^1] + "dds"] : [name];
 
     private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts,
-        Action<string>? warning, SscResource resolve, SscSpiceInput spice, CancellationToken cancellation)
+        Action<string>? warning, SscResource resolve, SscSpiceInput spice, CancellationToken cancellation, SscCustomModels? custom)
     {
         SscValue.Map fields = item.Properties;
         var reference = SscConicOrbits.ReadReference(item);
@@ -225,8 +225,14 @@ public static partial class SscBodyCatalogue
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
             ? ReadTimeline(item, timelineValue, resolve, spice, Warn, cancellation) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
+        var builtInOrbit = Text("CustomOrbit") is { } orbitName ? custom?.Orbit(orbitName) : null;
         if (timeline is not null)
             raw = _ => null; // A timeline needs its bound graph to select a center and frame.
+        else if (builtInOrbit is not null)
+        {
+            orbitFrame = Basis3d.Identity;
+            raw = builtInOrbit;
+        }
         else if (TrySpiceModel(fields, spice, "SpiceOrbit",
             (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(fields, "SpiceOrbit"), Warn), Warn) is { } spiceSample)
             raw = spiceSample;
@@ -359,7 +365,9 @@ public static partial class SscBodyCatalogue
 
         Func<JulianInstant, FrameKinematics?>? spin = null;
         bool usesScriptRotation = fields.Fields.ContainsKey("ScriptedRotation");
-        if (TrySpiceModel(fields, spice, "SpiceRotation", (block, pool, initial) => ReadSpiceRotation(block, pool, initial, spinFrame, HasSpiceAlternative(fields, "SpiceRotation")), Warn) is { } spiceSpin)
+        if (Text("CustomRotation") is { } rotationName && custom?.Rotation(rotationName) is { } builtInSpin)
+            spin = builtInSpin;
+        else if (TrySpiceModel(fields, spice, "SpiceRotation", (block, pool, initial) => ReadSpiceRotation(block, pool, initial, spinFrame, HasSpiceAlternative(fields, "SpiceRotation")), Warn) is { } spiceSpin)
             spin = spiceSpin;
         else if (usesScriptRotation &&
             TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)

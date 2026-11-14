@@ -95,6 +95,14 @@ public sealed class HistoricalSolarEphemeris : ISolarSystemEphemeris
         CartesianState Planet(int body) => sun + EclipticToIcrf(_series.Evaluate(body, epoch));
     }
 
+    /// <summary>Evaluate the underlying heliocentric series without switching to DE440.</summary>
+    public CartesianState SamplePlanetarySeries(int planet, JulianInstant epoch)
+    {
+        if (planet is < 1 or > 8)
+            throw new ArgumentOutOfRangeException(nameof(planet));
+        return EclipticToIcrf(_series.Evaluate(planet, epoch));
+    }
+
     private static CartesianState EclipticToIcrf(CartesianState state) =>
         new(Rotate(state.PositionKilometers), Rotate(state.VelocityKilometersPerSecond));
 

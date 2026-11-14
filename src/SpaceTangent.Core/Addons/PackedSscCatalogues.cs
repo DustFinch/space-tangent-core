@@ -10,12 +10,12 @@ public static partial class SscBodyCatalogue
         string name, params string[] fallbackDirectories);
 
     private static IReadOnlyList<SscBodyDefinition> ReadPackedSsc(string root, string file, ISscScriptModels? scripts,
-        Action<string>? warning, CancellationToken cancellation)
+        Action<string>? warning, CancellationToken cancellation, SscCustomModels? custom)
     {
         var documents = ReadPackedDocuments(root, file, cancellation);
         var declarations = new List<SscDefinition>();
         var definitions = SscDefinitions.Load(documents.Documents, cancellation, declarations);
-        return ReadBodyDefinitions(definitions, declarations, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels, documents.KernelOrder);
+        return ReadBodyDefinitions(definitions, declarations, _ => root, scripts, warning, documents.Resolve, cancellation, [root], documents.Kernels, documents.KernelOrder, custom);
     }
 
     private sealed record SscSource(IReadOnlyList<SscDocument> Documents, SscResource Resolve,
