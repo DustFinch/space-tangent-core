@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Observing;
@@ -47,7 +48,17 @@ try
         if (!name.Equals("pack.json", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Supply a pack.json or sky-pack.json manifest.");
         int warnings = 0;
-        if (MissionCataloguePack.IsManifest(manifest))
+        const int maximumManifestBytes = 16 * 1024 * 1024;
+        using var inputFile = File.OpenRead(manifest);
+        if (inputFile.Length > maximumManifestBytes)
+            throw new InvalidDataException("The pack manifest exceeds 16 MiB.");
+        using var document = JsonDocument.Parse(inputFile,
+            new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+        JsonElement pack = document.RootElement;
+        bool archivedMission = pack.ValueKind == JsonValueKind.Object && pack.TryGetProperty("formatVersion", out _) &&
+            !pack.TryGetProperty("sscCatalogs", out _) &&
+            (pack.TryGetProperty("bodies", out _) || pack.TryGetProperty("annotations", out _) || pack.TryGetProperty("viewpoints", out _));
+        if (archivedMission || MissionCataloguePack.IsManifest(manifest))
         {
             var content = SampledMissionCatalog.LoadContent([manifest], root, MissionReferences(bodyOptions), message =>
             {
@@ -57,6 +68,8 @@ try
             foreach (var mission in content.Missions)
                 Console.WriteLine(mission.Name);
             Console.WriteLine($"{content.Missions.Count} missions, {content.Annotations.Count} annotations, {content.Viewpoints.Count} viewpoints, {warnings} warnings");
+            if (archivedMission && content.Missions.Count + content.Annotations.Count + content.Viewpoints.Count == 0)
+                throw new InvalidDataException("The mission reader did not find any supported content in this archived pack.");
             return strict && warnings != 0 ? 1 : 0;
         }
         if (bodyOptions.Length != 0)

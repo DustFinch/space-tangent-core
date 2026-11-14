@@ -18,4 +18,12 @@ dotnet run --project tools/SpaceTangent.PackTool -- check "/path/to/new-sky-pack
 
 The versioned sky manifest lists the catalogue files in import order. The pack keeps the original catalogue bytes and companion paths. Point the simulator's `SPACETANGENT_STC_ROOT` and `SPACETANGENT_DSC_ROOT` at the pack directory to load both types. STC modifications are applied to the simulator's installed base catalogue. The standalone check runs without that base, so it reports diagnostics for modifications that require existing stars.
 
+Check a mission pack built with import-missions or an archived versioned mission manifest:
+
+```sh
+dotnet run --project tools/SpaceTangent.PackTool -- check "/path/to/mission-pack/pack.json" --strict --body "Cassini"
+```
+
+Use --body for references to objects supplied by a separate installation. The check prints the missions, annotations and viewpoints handled by the mission reader. Packs with embedded SSC use the SSC reader.
+
 Exit codes are 0 for success, 1 for an input, output or strict check failure, and 2 for invalid arguments.
