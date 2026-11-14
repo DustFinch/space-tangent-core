@@ -402,9 +402,9 @@ public static partial class SscBodyCatalogue
             if (fixedSpin.Fields.Values.Any(value => Number(value) != 0))
                 spin = ReadUniformSpin(fixedSpin, spinFrame, orbitPeriodSeconds, stationary: true);
         }
-        else if (usesScriptRotation)
+        else if (usesScriptRotation && !HasLegacyRotationPeriod(fields))
             return null;
-        else if (fields.Fields.ContainsKey("CustomRotation"))
+        else if (fields.Fields.ContainsKey("CustomRotation") && !HasLegacyRotationPeriod(fields))
             throw new NotSupportedException("This body catalogue needs a different rotation model.");
         else if (ReadTimeQuantity(fields, "RotationPeriod", 3_600) is { } legacyPeriod)
             spin = ReadUniformSpin(new SscValue.Map(new Dictionary<string, SscValue>()), spinFrame, legacyPeriod);
@@ -592,6 +592,9 @@ public static partial class SscBodyCatalogue
             return period == 0 ? degrees : (float)(degrees / 180 * Math.PI) * (180 / Math.PI);
         }
     }
+
+    private static bool HasLegacyRotationPeriod(SscValue.Map fields) =>
+        fields.Fields.Keys.Any(key => key == "RotationPeriod" || key.StartsWith("RotationPeriod<", StringComparison.Ordinal));
 
     internal static double? ReadTimeQuantity(SscValue.Map fields, string name, double defaultScale)
     {

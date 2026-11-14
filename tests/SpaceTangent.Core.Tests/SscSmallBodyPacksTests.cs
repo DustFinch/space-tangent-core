@@ -118,6 +118,63 @@ public sealed class SscSmallBodyPacksTests
         }
     }
 
+    [OriginalCataloguesFact]
+    [Trait("Category", "ExternalData")]
+    public void EnckeLegacyRotationIsRetainedInTimelineAndReplacedByModify()
+    {
+        string corpus = Environment.GetEnvironmentVariable("SPACETANGENT_SMALL_BODY_SSC")!;
+        var scratch = Directory.CreateTempSubdirectory("st-ssc-encke-spin-");
+        try
+        {
+            string source = Path.Combine(scratch.FullName, "source");
+            Directory.CreateDirectory(source);
+            string original = File.ReadAllText(Path.Combine(corpus, "p4-original-comets", "comets.ssc"));
+            var match = System.Text.RegularExpressions.Regex.Match(original,
+                @"(?s)EllipticalOrbit\s*\{[^}]+\}\s*[^""]*?RotationPeriod\s+11\.083\b");
+            Assert.True(match.Success);
+            string orbit = match.Value[..(match.Value.IndexOf('}') + 1)];
+            string definition = $$"""
+                "2P Encke" "Sol" {
+                    Class "comet"
+                    Radius 2.4
+                    Timeline [
+                        {
+                            {{orbit}}
+                            SpiceRotation { Frame "UNKNOWN_FRAME" BaseFrame "J2000" }
+                            SampledOrientation "missing.q"
+                            RotationPeriod<h> 11.083
+                        }
+                    ]
+                }
+                "Encke override" "Sol" {
+                    Radius 2.4
+                    {{orbit}}
+                    RotationPeriod<h> 11.083
+                }
+                Modify "Encke override" "Sol" { RotationPeriod<min> 600 }
+                """;
+            File.WriteAllText(Path.Combine(source, "encke.ssc"), definition);
+            string pack = Path.Combine(scratch.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, pack, _ => { }));
+            foreach (string root in new[] { source, pack })
+            {
+                var diagnostics = new List<string>();
+                var bodies = SscBodyCatalogue.Load(root, warning: diagnostics.Add);
+                Assert.Contains(diagnostics, warning => warning.Contains("SampledOrientation", StringComparison.Ordinal));
+                Assert.Contains(diagnostics, warning => warning.Contains("SpiceRotation", StringComparison.Ordinal));
+                var encke = Assert.Single(bodies, body => body.Name == "2P Encke");
+                var overlaid = Assert.Single(bodies, body => body.Name == "Encke override");
+                var phase = Assert.Single(encke.BindTimeline!(new("encke"), path => new(path)).Arcs);
+                var spin = Assert.IsType<MissionFrame.Rotating>(phase.BodyFrame);
+                var epoch = JulianInstant.FromJulianDate(2451545, TimeScale.Tdb);
+                Assert.Equal(Math.Tau / (11.083 * 3600), spin.Local(epoch).AngularVelocityRadiansPerSecond!.Value.Length, 15);
+                Assert.Equal(Math.Tau / 36000, overlaid.SampleRotation!(epoch)!.Value.AngularVelocityRadiansPerSecond!.Value.Length, 15);
+            }
+        }
+        finally { scratch.Delete(recursive: true); }
+    }
+
+
     private sealed class OriginalCataloguesFactAttribute : FactAttribute
     {
         public OriginalCataloguesFactAttribute()

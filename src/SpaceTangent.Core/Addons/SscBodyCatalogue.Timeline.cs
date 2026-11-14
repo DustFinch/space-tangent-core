@@ -110,6 +110,8 @@ public static partial class SscBodyCatalogue
                 return ReadUniformSpin(phase.Object("UniformRotation"), Basis3d.Identity, orbitPeriodSeconds);
             if (phase.Fields.ContainsKey("FixedRotation"))
                 return ReadUniformSpin(phase.Object("FixedRotation"), Basis3d.Identity, null, stationary: true);
+            if (ReadTimeQuantity(phase, "RotationPeriod", 3_600) is { } legacyPeriod)
+                return ReadUniformSpin(new SscValue.Map(new Dictionary<string, SscValue>()), Basis3d.Identity, legacyPeriod);
             if (phase.Fields.Keys.Any(key => key is "CustomRotation" or "ScriptedRotation" or "FixedAttitude"))
                 throw new NotSupportedException("This SSC Timeline rotation model is unavailable.");
             return null;

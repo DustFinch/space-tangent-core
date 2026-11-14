@@ -102,7 +102,7 @@ public static partial class SscBodyCatalogue
         string[] keys = field == "SpiceOrbit"
             ? ["EllipticalOrbit", "FixedPosition", "SampledTrajectory", "SampledOrbit"]
             : ["SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation"];
-        if (keys.Any(properties.Fields.ContainsKey))
+        if (keys.Any(properties.Fields.ContainsKey) || field == "SpiceRotation" && HasLegacyRotationPeriod(properties))
             return true;
         return !timeline && (field == "SpiceOrbit"
             ? properties.Fields.ContainsKey("ScriptedOrbit")

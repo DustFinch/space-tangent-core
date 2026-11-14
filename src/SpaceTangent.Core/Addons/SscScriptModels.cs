@@ -83,7 +83,7 @@ public static partial class SscBodyCatalogue
             return null;
         string name = orientation.AsText();
         bool hasFallback = fields.Fields.ContainsKey("PrecessingRotation") || fields.Fields.ContainsKey("UniformRotation") ||
-            fields.Fields.ContainsKey("FixedRotation") || fields.Fields.ContainsKey("RotationPeriod");
+            fields.Fields.ContainsKey("FixedRotation") || HasLegacyRotationPeriod(fields);
         try
         {
             string path = resolve(name);

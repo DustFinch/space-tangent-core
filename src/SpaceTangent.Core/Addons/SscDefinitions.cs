@@ -20,7 +20,7 @@ internal static class SscDefinitions
     private static readonly string[] OrbitModels = ["Timeline", "CustomOrbit", "SpiceOrbit", "ScriptedOrbit",
         "SampledTrajectory", "SampledOrbit", "EllipticalOrbit", "FixedPosition", "LongLat"];
     private static readonly string[] RotationModels = ["CustomRotation", "SpiceRotation", "ScriptedRotation",
-        "SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation", "FixedAttitude"];
+        "SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation", "FixedAttitude", "RotationPeriod"];
 
     internal static IReadOnlyList<SscDefinition> Load(IEnumerable<string> paths, string? root,
         CancellationToken cancellation = default, IReadOnlyDictionary<string, string>? embedded = null)
@@ -145,13 +145,19 @@ internal static class SscDefinitions
 
         void RemoveSuperseded(string[] family)
         {
-            if (!family.Any(patch.Fields.ContainsKey))
+            if (!patch.Fields.Keys.Any(Matches))
                 return;
-            foreach (string key in family)
+            foreach (string key in fields.Keys.Where(Matches).ToArray())
             {
                 fields.Remove(key);
                 origins.Remove(key);
                 order.Remove(key);
+            }
+
+            bool Matches(string key)
+            {
+                int unit = key.IndexOf('<');
+                return family.Contains(unit >= 0 ? key[..unit] : key, StringComparer.Ordinal);
             }
         }
     }
