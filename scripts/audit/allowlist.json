@@ -133,5 +133,10 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedSpice.cs",
     "sha256": "8c709d21ff1ae741a71c8653d7169c1387a9ce06f5ba4236510f80e80448f80b",
     "reason": "Exact load-policy value required by archived SSC packs without embedded sources."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
+    "sha256": "ffb804ca4da8e491c24ad9ff301b0ccc6e00022cc3613b6da7d34e8752346b9e",
+    "reason": "Exact sample convention required by the version eighteen packed trajectory schema."
   }
 ]

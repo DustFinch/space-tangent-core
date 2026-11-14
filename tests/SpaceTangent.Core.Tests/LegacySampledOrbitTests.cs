@@ -102,6 +102,54 @@ public sealed class LegacySampledOrbitTests
         }
     }
 
+    [ArchivedCruisePackFact]
+    [Trait("Category", "ExternalData")]
+    public void ReadsTheVersionEighteenCruisePreviewWithoutItsEmbeddedSource()
+    {
+        string original = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SAMPLED_ORBIT")!;
+        string manifest = Path.Combine(original, "pack.json");
+        var preview = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(manifest))!.AsObject();
+        Assert.Equal(18, preview["formatVersion"]!.GetValue<int>());
+        Assert.True(preview.Remove("sscCatalogs"));
+        var source = Assert.Single(SscBodyCatalogue.Load(original));
+
+        var temp = Directory.CreateTempSubdirectory("st-archived-cruise-");
+        try
+        {
+            string trajectories = temp.CreateSubdirectory("trajectories").FullName;
+            string name = "cruise.xyzv";
+            File.Copy(Path.Combine(original, "trajectories", name), Path.Combine(trajectories, name));
+            File.WriteAllText(Path.Combine(temp.FullName, "pack.json"), preview.ToJsonString());
+            var sun = new ObjectId("sun");
+            var warnings = new List<string>();
+            var mission = Assert.Single(SampledMissionCatalog.Load("pack.json", temp.FullName,
+                body => body is "Sol" ? sun : null, warnings.Add));
+            Assert.Empty(warnings);
+            Assert.Equal("Mars Cruise", mission.Name);
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(sun, _ => default(CartesianState));
+            builder.AddSampledMission(mission);
+            var graph = builder.Build();
+            foreach (double day in new[] { 2455892.16126, 2455893.25, 2456000.125, 2456145.7287, 2456200d })
+            {
+                var epoch = Epoch(day);
+                Assert.True(graph.Evaluate(epoch).TryState(mission.Id, out var actual));
+                Assert.Equal(source.Sample(epoch), actual);
+            }
+        }
+        finally { temp.Delete(recursive: true); }
+    }
+
+    private sealed class ArchivedCruisePackFactAttribute : FactAttribute
+    {
+        public ArchivedCruisePackFactAttribute()
+        {
+            if (!Directory.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SAMPLED_ORBIT")))
+                Skip = "Set the version eighteen cruise pack.";
+        }
+    }
+
+
     [OriginalCruiseFact]
     [Trait("Category", "ExternalData")]
     public void OriginalMarsCruiseFileMatchesNativeSinglePrecisionThroughAnAdaptedCatalogue()

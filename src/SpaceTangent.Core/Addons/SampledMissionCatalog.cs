@@ -264,6 +264,8 @@ public static partial class SampledMissionCatalog
                             timedChildren.TryAdd((path, key), groups[key].ToList());
                         }
                     }
+                    bool hasEmbeddedSsc = catalogue.TryGetProperty("sscCatalogs", out var embeddedSsc) &&
+                        embeddedSsc.GetArrayLength() > 0;
                     foreach (JsonElement body in bodies.EnumerateArray())
                         if (timedParents.Contains(Text(body, "path")) ||
                             (IsTimedComponent(body) && timedParents.Contains(Text(body, "parent"))) ||
@@ -271,7 +273,8 @@ public static partial class SampledMissionCatalog
                             body.TryGetProperty("display", out _) && !body.TryGetProperty("replaces", out _) ||
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
-                            HasPackedSpice(body) || HasCompoundTrajectory(body) || IsArchivedFixedModel(body))
+                            HasPackedSpice(body) || HasCompoundTrajectory(body) || IsArchivedFixedModel(body) ||
+                            !hasEmbeddedSsc && HasLegacySampledTrajectory(body))
                             Register(body, path, owner, packed: true);
                     return true;
                 }
@@ -406,6 +409,15 @@ public static partial class SampledMissionCatalog
             throw new InvalidDataException($"Unknown packed mission reference {path}.");
         }
     }
+
+    private static bool HasLegacySampledTrajectory(JsonElement body) =>
+        body.TryGetProperty("orbit", out var orbit) && UsesLegacySamples(orbit) ||
+        body.TryGetProperty("timeline", out var phases) &&
+        phases.EnumerateArray().Any(phase => UsesLegacySamples(phase.GetProperty("orbit")));
+
+    private static bool UsesLegacySamples(JsonElement orbit) =>
+        Text(orbit, "kind") == "sampled" && orbit.TryGetProperty("sampleConvention", out var convention) &&
+        convention.ValueEquals(LegacySampleConvention);
 
     private static bool HasCompoundTrajectory(JsonElement body) =>
         body.TryGetProperty("orbit", out var orbit) && IsCompound(orbit) ||

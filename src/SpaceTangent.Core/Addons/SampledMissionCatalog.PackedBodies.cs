@@ -179,6 +179,7 @@ public static partial class SampledMissionCatalog
         Basis3d? NativeVelocitySource = null, bool PhysicalVelocity = false);
 
     private const string PackedBuiltinKind = "cosmographiaBuiltin";
+    private const string LegacySampleConvention = "celestiaLegacy";
 
     private static PackedOrbit PackedTrajectory(JsonElement orbit, string center, Func<string, ObjectId> resolve,
         ObjectId owner, string root, SpiceResources resources, CancellationToken cancellation, int depth = 0, bool framed = false)
@@ -321,6 +322,7 @@ public static partial class SampledMissionCatalog
         {
             "cosmographiaXyz" => SampledStateTrajectory.ReadXyz(path, MissionSource),
             "cosmographiaXyzv" => SampledStateTrajectory.ReadXyzv(path, MissionSource),
+            LegacySampleConvention => SampledStateTrajectory.ReadLegacy(path, MissionSource),
             var kind => throw new NotSupportedException($"Unsupported packed mission sample convention {kind}.")
         };
         return epoch => samples.TrySample(epoch, out var state) ? state : null;
