@@ -11,6 +11,15 @@ public static partial class SampledMissionCatalog
     private static readonly MissionFrame.Inertial PackedIcrf = new(PackedIcrfAxes());
     private static readonly MissionFrame.Inertial PackedB1950 = new(PackedB1950Axes());
 
+    internal static Basis3d PackedSatelliteInertialFrame(JsonElement value)
+    {
+        var frame = PackedFrame(value, _ => throw new NotSupportedException("A packed satellite needs an inertial frame."), default);
+        if (ReferenceEquals(frame, PackedB1950))
+            return PackedB1950Axes(rawSatellite: true);
+        return frame is MissionFrame.Inertial inertial ? inertial.ToWorld
+            : throw new NotSupportedException("A packed satellite needs an inertial frame.");
+    }
+
     private static Basis3d PackedIcrfAxes()
     {
         // The positive-trace branch of the original Vesta frame-bias matrix, in astronomical axes.
@@ -21,12 +30,16 @@ public static partial class SampledMissionCatalog
         return QuaternionBasis.FromRaw(.5 * trace, -2 * eta * scale, 2 * xi * scale, 2 * da * scale);
     }
 
-    private static Basis3d PackedB1950Axes()
+    private static Basis3d PackedB1950Axes(bool rawSatellite = false)
     {
         // Vesta constructs this matrix column-first and retains the ecliptic rotation on the right.
         double trace = Math.Sqrt(((.9999256794956877 + .9999374848933135) + .9999881946023742) + 1), scale = .5 / trace;
-        var bias = QuaternionBasis.FromRaw(.5 * trace, (-.0000271702937440 - (-.0000271625947142)) * scale,
-            -(.0111814832391717 - (-.0111814832204662)) * scale, (-.0048590038153592 - .0048590037723143) * scale);
+        double x = (-.0000271702937440 - (-.0000271625947142)) * scale;
+        double y = (-.0048590038153592 - .0048590037723143) * scale;
+        double z = (.0111814832391717 - (-.0111814832204662)) * scale;
+        // TLE components are raw NORAD coordinates. Mission samples already use the converted pack axes.
+        var bias = rawSatellite ? QuaternionBasis.FromRaw(.5 * trace, x, y, z)
+            : QuaternionBasis.FromRaw(.5 * trace, x, -z, y);
         return Multiply(bias, RotateX(23.4392911 * (Math.PI / 180)));
     }
 

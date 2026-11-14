@@ -17,7 +17,7 @@
   {
     "path": "src/SpaceTangent.Core/Addons/PackedSatelliteCatalog.cs",
     "reason": "Exact two-vector frame tag required to read legacy compiled scientific satellite packs.",
-    "sha256": "aa831cb6e6116c87663675e124a3bf6c17de1fb59f5c903d46051e30da69e400"
+    "sha256": "11433739067dff077a8258357b7f569e41c2c711f270641d2c50f97a7689adbd"
   },
   {
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedParticles.cs",

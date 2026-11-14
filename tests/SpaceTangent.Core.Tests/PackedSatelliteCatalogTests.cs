@@ -97,6 +97,54 @@ public sealed class PackedSatelliteCatalogTests
         Assert.Equal(original[0].Display! with { OrbitLeadSeconds = display.OrbitLeadSeconds }, display);
     }
 
+    [DeepProbeArchiveFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalDeepProbeUsesItsB1950TrajectoryAndFixedAttitude()
+    {
+        string path = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_DEEP_PROBE")!;
+        var warnings = new List<string>();
+        var pack = PackedSatelliteCatalog.Load(path, warnings.Add);
+        Assert.Empty(warnings);
+        Assert.Equal(3, pack.Count);
+        var probe = Assert.Single(pack, body => body.Name == "DeepProbe");
+        Assert.Equal(new ObjectId("norad/24208"), probe.Id);
+        Assert.Equal("jason.glb", Path.GetFileName(probe.MeshPath));
+
+        // The independent native reference reports Vesta ecliptic coordinates.
+        // Map (x, y, z) to (x, -z, y), then rotate the ecliptic into the simulator equator.
+        const double obliquity = 23.4392911 * Math.PI / 180;
+        var (sin, cos) = Math.SinCos(obliquity);
+        Vector3d World(double x, double y, double z) => new(x, -z * cos - y * sin, -z * sin + y * cos);
+        var middle = new JulianInstant(2453912, 46774527584512, TimeScale.Tdb);
+        var samples = new (JulianInstant Epoch, Vector3d Position, Vector3d Velocity)[]
+        {
+            (middle.AddSeconds(-86400), World(9051.372954388045, -138.67449879790934, -40955.96256990895),
+                World(-3.004709869220577, .20744993224272446, -.6706885519893631)),
+            (middle, World(7030.44299635239, -.0328708739989452, -41355.1791289267),
+                World(-3.03375846669312, .207951496205923, -.521901275347844)),
+            (middle.AddSeconds(86400), World(4993.614384000887, 138.37944951018608, -41654.25438198337),
+                World(-3.0554561524270136, .20792663596964825, -.37197961687416115))
+        };
+        Assert.True(probe.TrySample(middle, out var reference));
+        foreach (var (epoch, position, velocity) in samples)
+        {
+            Assert.True(probe.TrySample(epoch, out var sample));
+            Assert.True((sample.EarthRelativeState.PositionKilometers - position).Length < 5,
+                $"Actual {sample.EarthRelativeState.PositionKilometers}, expected {position}.");
+            Assert.InRange((sample.EarthRelativeState.VelocityKilometersPerSecond - velocity).Length, 0, .001);
+            Assert.Equal(reference.BodyToTrajectory, sample.BodyToTrajectory);
+        }
+    }
+
+    private sealed class DeepProbeArchiveFactAttribute : FactAttribute
+    {
+        public DeepProbeArchiveFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_DEEP_PROBE")))
+                Skip = "Set the original DeepProbe science pack.";
+        }
+    }
+
     private sealed class ArchiveDisplayFactAttribute : FactAttribute
     {
         public ArchiveDisplayFactAttribute()

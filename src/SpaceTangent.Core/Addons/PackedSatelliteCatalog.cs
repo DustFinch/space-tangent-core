@@ -49,13 +49,17 @@ public static class PackedSatelliteCatalog
                 warning?.Invoke($"{name}: not a modeled Earth satellite in this pack.");
                 continue;
             }
-            if (orbit.TryGetProperty("frame", out var orbitFrame) &&
-                Text(orbitFrame, "kind") != "equatorJ2000")
+            Basis3d? trajectory = null;
+            if (orbit.TryGetProperty("frame", out var orbitFrame) && Text(orbitFrame, "kind") != "equatorJ2000")
             {
-                warning?.Invoke($"{name}: unsupported packed satellite trajectory frame {Text(orbitFrame, "kind")}.");
-                continue;
+                try { trajectory = SampledMissionCatalog.PackedSatelliteInertialFrame(orbitFrame); }
+                catch (NotSupportedException)
+                {
+                    warning?.Invoke($"{name}: unsupported packed satellite trajectory frame {Text(orbitFrame, "kind")}.");
+                    continue;
+                }
             }
-            var satellite = ReadSatellite(body, orbit, root);
+            var satellite = ReadSatellite(body, orbit, root, trajectory);
             if (!ids.Add(satellite.Id))
                 throw new InvalidDataException($"Duplicate packed satellite {satellite.Id.Value}.");
             satellites.Add(satellite);
@@ -65,17 +69,21 @@ public static class PackedSatelliteCatalog
         return satellites.AsReadOnly();
     }
 
-    private static ScienceSatellite ReadSatellite(JsonElement body, JsonElement orbit, string root)
+    private static ScienceSatellite ReadSatellite(JsonElement body, JsonElement orbit, string root, Basis3d? trajectory)
     {
         string name = Text(body, "name");
         var elements = TwoLineElements.Parse(Text(orbit, "line1"), Text(orbit, "line2"));
-        var bodyFrame = body.GetProperty("bodyFrame");
-        if (Text(bodyFrame, "kind") != "cosmographiaTwoVector")
-            throw new NotSupportedException($"{name}: unsupported packed body frame.");
-        var nadir = ReadAxis(bodyFrame.GetProperty("primary"), "relativePosition");
-        var velocity = ReadAxis(bodyFrame.GetProperty("secondary"), "relativeVelocity");
-        if (nadir.Index == velocity.Index)
-            throw new InvalidDataException($"{name}: two-vector frame axes must differ.");
+        bool usesTwoVector = body.TryGetProperty("bodyFrame", out var bodyFrame) && bodyFrame.ValueKind != JsonValueKind.Null;
+        SignedAxis nadir = default, velocity = default;
+        if (usesTwoVector)
+        {
+            if (Text(bodyFrame, "kind") != "cosmographiaTwoVector")
+                throw new NotSupportedException($"{name}: unsupported packed body frame.");
+            nadir = ReadAxis(bodyFrame.GetProperty("primary"), "relativePosition");
+            velocity = ReadAxis(bodyFrame.GetProperty("secondary"), "relativeVelocity");
+            if (nadir.Index == velocity.Index)
+                throw new InvalidDataException($"{name}: two-vector frame axes must differ.");
+        }
 
         var model = body.GetProperty("appearance").GetProperty("model");
         string asset = Text(model, "file");
@@ -87,15 +95,20 @@ public static class PackedSatelliteCatalog
             throw new NotSupportedException($"{name}: this packed model has an unsupported center offset.");
         var modelBasis = Quaternion(model.GetProperty("orientation")).Transpose();
         var rotation = body.GetProperty("rotation");
-        if (Text(rotation, "kind") != "quaternion" || Text(rotation.GetProperty("frame"), "kind") != "eclipticJ2000")
+        string rotationFrame = Text(rotation.GetProperty("frame"), "kind");
+        if (Text(rotation, "kind") != "quaternion" || usesTwoVector && rotationFrame != "eclipticJ2000")
             throw new NotSupportedException($"{name}: unsupported packed satellite rotation.");
         var fixedBasis = Quaternion(rotation.GetProperty("quaternion"));
+        Basis3d? fixedBody = usesTwoVector ? null : SampledMissionCatalog.PackedSatelliteInertialFrame(rotation.GetProperty("frame"));
         var meshToBody = new Basis3d(Compose(modelBasis.X), Compose(modelBasis.Y), Compose(modelBasis.Z));
 
         double radius = body.GetProperty("radiusKm").GetDouble();
         if (!(radius > 0) || !double.IsFinite(radius))
             throw new InvalidDataException($"{name}: the packed satellite radius is invalid.");
-        return new(name, elements, nadir, velocity, meshToBody, fixedBasis, mesh, radius) { Display = SampledMissionCatalog.ReadDisplay(body, packed: true) };
+        return new(name, elements, nadir, velocity, meshToBody, fixedBasis, mesh, radius, trajectory, fixedBody)
+        {
+            Display = SampledMissionCatalog.ReadDisplay(body, packed: true)
+        };
 
         Vector3d Compose(Vector3d value) => fixedBasis.Transform(NativeToAstronomical.Transform(value));
     }

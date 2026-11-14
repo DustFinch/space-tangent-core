@@ -16,9 +16,11 @@ public sealed class ScienceSatellite
     private readonly SignedAxis _nadir;
     private readonly SignedAxis _relativeVelocity;
     private readonly Basis3d _meshToBody;
+    private readonly Basis3d? _trajectoryAxes;
 
     internal ScienceSatellite(string name, TwoLineElements elements, SignedAxis nadir, SignedAxis relativeVelocity,
-        Basis3d meshToBody, Basis3d instrumentToFrame, string meshPath, double sizeKilometers)
+        Basis3d meshToBody, Basis3d instrumentToFrame, string meshPath, double sizeKilometers,
+        Basis3d? trajectoryAxes = null, Basis3d? fixedBodyAxes = null)
     {
         Name = name;
         Id = new($"norad/{elements.CatalogNumber}");
@@ -27,6 +29,8 @@ public sealed class ScienceSatellite
         _nadir = nadir;
         _relativeVelocity = relativeVelocity;
         _meshToBody = meshToBody;
+        _trajectoryAxes = trajectoryAxes;
+        FixedBodyAxes = fixedBodyAxes;
         InstrumentToFrame = instrumentToFrame;
         MeshToOrientedBody = SampledMissionCatalog.Multiply(instrumentToFrame.Transpose(), meshToBody);
         MeshPath = meshPath;
@@ -47,8 +51,16 @@ public sealed class ScienceSatellite
     internal SignedAxis NadirAxis => _nadir;
     internal SignedAxis RelativeVelocityAxis => _relativeVelocity;
 
-    internal CartesianState? TryOrbit(JulianInstant epoch) =>
-        _orbit.TrySample(epoch, out var state) ? state : null;
+    internal Basis3d? FixedBodyAxes { get; }
+
+    internal CartesianState? TryOrbit(JulianInstant epoch)
+    {
+        if (!_orbit.TrySample(epoch, out var state))
+            return null;
+        return _trajectoryAxes is { } axes
+            ? new(axes.Transform(state.PositionKilometers), axes.Transform(state.VelocityKilometersPerSecond))
+            : state;
+    }
 
     /// <summary>The original catalogue interprets the raw SGP4 state in its declared frame.</summary>
     public static FrameId TrajectoryFrame { get; } = new("compatibility/equator-j2000");
@@ -56,9 +68,11 @@ public sealed class ScienceSatellite
     public bool TrySample(JulianInstant epoch, out ScienceSatelliteSample sample)
     {
         sample = default;
-        if (!_orbit.TrySample(epoch, out var state) ||
-            !TwoVectorBasis.TryCreate(_nadir, state.PositionKilometers * -1, _relativeVelocity,
-                state.VelocityKilometersPerSecond * -1, out var bodyToTrajectory))
+        if (TryOrbit(epoch) is not { } state)
+            return false;
+        Basis3d bodyToTrajectory = FixedBodyAxes.GetValueOrDefault();
+        if (FixedBodyAxes is null && !TwoVectorBasis.TryCreate(_nadir, state.PositionKilometers * -1, _relativeVelocity,
+            state.VelocityKilometersPerSecond * -1, out bodyToTrajectory))
             return false;
 
         sample = new(state, bodyToTrajectory, _meshToBody)

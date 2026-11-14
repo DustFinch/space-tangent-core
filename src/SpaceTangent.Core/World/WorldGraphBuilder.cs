@@ -146,10 +146,13 @@ public sealed partial class WorldGraphBuilder
         AddTrajectory(satellite.Id, epoch => preferUpdate
             ? updatedElements!.SampleInWorld(epoch) ?? satellite.TryOrbit(epoch)
             : satellite.TryOrbit(epoch) ?? updatedElements?.SampleInWorld(epoch), SolarSystemSample.EarthId);
-        AddTwoVectorOrientation(satellite.Id, ToAxis(satellite.NadirAxis),
-            new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Position),
-            ToAxis(satellite.RelativeVelocityAxis),
-            new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Velocity), satellite.InstrumentToFrame);
+        if (satellite.FixedBodyAxes is { } fixedAxes)
+            AddOrientation(satellite.Id, _ => new(SampledMissionCatalog.Multiply(fixedAxes, satellite.InstrumentToFrame), default(Vector3d)));
+        else
+            AddTwoVectorOrientation(satellite.Id, ToAxis(satellite.NadirAxis),
+                new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Position),
+                ToAxis(satellite.RelativeVelocityAxis),
+                new(satellite.Id, SolarSystemSample.EarthId, DirectionQuantity.Velocity), satellite.InstrumentToFrame);
     }
 
     public void AddSampledSpacecraft(SscSampledSpacecraft spacecraft)
