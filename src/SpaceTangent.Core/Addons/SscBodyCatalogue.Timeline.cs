@@ -16,7 +16,8 @@ public static partial class SscBodyCatalogue
         new(JulianInstant.MaximumDay, JulianInstant.NanosecondsPerDay - 1, TimeScale.Tdb);
 
     private static IReadOnlyList<TimelinePhaseBinder> ReadTimeline(SscDefinition item, SscValue value,
-        SscResource resolve, SscSpiceInput spice, Action<string> warn, CancellationToken cancellation)
+        JulianInstant? beginning, JulianInstant? ending, SscResource resolve, SscSpiceInput spice,
+        Action<string> warn, CancellationToken cancellation)
     {
         if (value is not SscValue.List { Items.Length: >= 1 and <= 128 } phases)
             throw new InvalidDataException("An SSC Timeline needs one to 128 phases.");
@@ -27,7 +28,7 @@ public static partial class SscBodyCatalogue
         var attitudes = new Dictionary<string, Func<JulianInstant, FrameKinematics?>>(curves.Comparer);
         long totalBytes = 0;
         var result = new List<TimelinePhaseBinder>(phases.Items.Length);
-        var previousEnd = EarliestTimelineEpoch;
+        var previousEnd = beginning ?? EarliestTimelineEpoch;
         for (int index = 0; index < phases.Items.Length; index++)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -42,7 +43,7 @@ public static partial class SscBodyCatalogue
                 start = ReadTimelineDate(begins.AsText());
             }
             var end = phase.Fields.TryGetValue("Ending", out var ends) ? ReadTimelineDate(ends.AsText()) :
-                index == phases.Items.Length - 1 ? LatestTimelineEpoch :
+                index == phases.Items.Length - 1 ? ending ?? LatestTimelineEpoch :
                 throw new InvalidDataException("A nonfinal SSC Timeline phase requires Ending.");
             if (end.CompareTo(start) <= 0)
                 throw new InvalidDataException("SSC Timeline phases must have increasing bounds.");

@@ -160,6 +160,50 @@ public sealed class SscTimelineTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TimelineInheritsOuterLifetimeUnlessThePhaseDeclaresAnEndpoint(bool phaseBounds)
+    {
+        using var fixture = new TemporaryAttitude();
+        string catalog = Directory.EnumerateFiles(fixture.Source, "*.ssc").Single();
+        string first = phaseBounds ? "Beginning 2451546" : "";
+        string last = phaseBounds ? "Ending 2451548" : "";
+        File.WriteAllText(catalog, $$"""
+            "Probe" "Sol/Earth" {
+                Beginning 2451545 Ending 2451549
+                Timeline [
+                    { {{first}} Ending 2451547 FixedPosition [ 1 0 0 ] }
+                    { {{last}} FixedPosition [ 2 0 0 ] }
+                ]
+            }
+            """);
+        Check(SscBodyCatalogue.Load(fixture.Source));
+        Assert.Equal(1, SscBodyCatalogue.BuildPack(fixture.Source, fixture.Pack, _ => { }));
+        Check(SscBodyCatalogue.Load(fixture.Pack));
+
+        void Check(IReadOnlyList<SscBodyDefinition> definitions)
+        {
+            var id = new ObjectId("probe");
+            var center = SolarSystemSample.EarthId;
+            var mission = Assert.Single(definitions).BindTimeline!(id, _ => center);
+            var start = JulianInstant.FromJulianDate(phaseBounds ? 2451546 : 2451545, TimeScale.Tdb);
+            var end = JulianInstant.FromJulianDate(phaseBounds ? 2451548 : 2451549, TimeScale.Tdb);
+            Assert.Equal(start, mission.Start);
+            Assert.Equal(end, mission.End);
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(center, _ => new CartesianState(default, default));
+            builder.AddSampledMission(mission);
+            var graph = builder.Build();
+            Assert.False(graph.Evaluate(start.AddNanoseconds(-1)).TryState(id, out _));
+            Assert.True(graph.Evaluate(start).TryState(id, out var firstState));
+            Assert.Equal(1, firstState.PositionKilometers.X);
+            Assert.True(graph.Evaluate(end.AddNanoseconds(-1)).TryState(id, out var lastState));
+            Assert.Equal(2, lastState.PositionKilometers.X);
+            Assert.False(graph.Evaluate(end).TryState(id, out _));
+        }
+    }
+
     [Fact]
     public void PackedSampledAttitudeInterpolatesInsideThePhaseAndHoldsAtBothEnds()
     {
