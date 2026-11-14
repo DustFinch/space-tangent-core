@@ -29,9 +29,8 @@ public sealed class OrderedSpiceCatalogueTests
             string packed = Path.Combine(root, "00-ssc");
             var warnings = new List<string>();
             Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.Load(packed));
-            var custom = new SscCustomModels(
-                name => name == "vsop87-mars" ? epoch => ephemeris.SamplePlanetarySeries(4, epoch) : null,
-                name => name == "iau-mars" ? _ => new FrameKinematics(Basis3d.Identity, default(Vector3d)) : null);
+            var custom = SscCustomModels.FromSolarSystem(ephemeris,
+                naif => naif == 499 ? _ => new FrameKinematics(Basis3d.Identity, default(Vector3d)) : null);
 
             var before = SscBodyCatalogue.Load(packed, warning: warnings.Add, custom: custom);
             var after = SscBodyCatalogue.LoadSources([packed, Path.Combine(root, "99-override")], warnings.Add, custom: custom);

@@ -4,6 +4,8 @@ using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Observing;
 using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.Spice;
+using SpaceTangent.Core.World;
 
 try
 {
@@ -25,6 +27,41 @@ try
         int bodies = SscBodyCatalogue.BuildPack(source, destination, Warn);
         Console.WriteLine($"{bodies} SSC bodies -> {Path.GetFullPath(destination)}");
         return 0;
+    }
+    if (args is ["check-ssc", var de440, var series, var pck, .. var inputs])
+    {
+        bool strictSsc = inputs is ["--strict", ..];
+        string[] roots = strictSsc ? inputs[1..] : inputs;
+        if (roots.Length == 0)
+            throw new InvalidDataException("Supply at least one SSC pack directory.");
+
+        var ephemeris = HistoricalSolarEphemeris.Load(De440Ephemeris.Load(de440), series);
+        var frames = new Dictionary<int, SpicePolynomialBodyFrame>();
+        var custom = SscCustomModels.FromSolarSystem(ephemeris, Rotation);
+        int notices = 0;
+        var contents = SscBodyCatalogue.LoadSources(roots, message =>
+        {
+            notices++;
+            Warn(message);
+        }, custom: custom);
+        foreach (var body in contents)
+            Console.WriteLine($"{body.Parent}/{body.Name}");
+        Console.WriteLine($"{contents.Count} SSC/MPC bodies, {notices} warnings");
+        if (contents.Count == 0)
+            throw new InvalidDataException("The supplied SSC installation contains no readable bodies.");
+        return strictSsc && notices != 0 ? 1 : 0;
+
+        Func<JulianInstant, FrameKinematics?>? Rotation(int naif)
+        {
+            if (naif == 399)
+                return null;
+            if (!frames.TryGetValue(naif, out var frame))
+            {
+                frame = new SpicePolynomialBodyFrame(pck, naif);
+                frames.Add(naif, frame);
+            }
+            return epoch => frame.Sample(epoch);
+        }
     }
     if (args is ["check-missions", var missionRoot, .. var missionArguments])
     {
@@ -125,7 +162,7 @@ try
         Console.WriteLine($"{bodies.Count} SSC/MPC bodies, {warnings} warnings");
         return strict && warnings != 0 ? 1 : 0;
     }
-    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites] | check-missions <root> <manifest>... [--strict] [--body <name>]...");
+    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites] | check-missions <root> <manifest>... [--strict] [--body <name>]... | check-ssc <DE440> <VSOP87> <PCK> [--strict] <directory>...");
     return 2;
 }
 catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog))
