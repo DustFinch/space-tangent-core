@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.Orbits;
 using SpaceTangent.Core.Time;
 using SpaceTangent.Core.World;
 using Xunit;
@@ -203,6 +204,57 @@ public sealed class SscTimelineTests
             Assert.False(graph.Evaluate(end).TryState(id, out _));
         }
     }
+
+    [OriginalSampleFact]
+    [Trait("Category", "ExternalData")]
+    public void StringSampledTrajectoryRetainsOriginalAsteroidStatesInsideTimeline()
+    {
+        using var fixture = new TemporaryAttitude();
+        string source = Environment.GetEnvironmentVariable("SPACETANGENT_2008TC3_XYZV")!;
+        File.Copy(source, Path.Combine(fixture.Source, "data", "asteroid.xyzv"));
+        File.WriteAllText(Path.Combine(fixture.Source, "probe.ssc"), """
+            "Probe" "Sol" {
+                Timeline [
+                    { OrbitFrame { EquatorJ2000 {} }
+                      SampledTrajectory "asteroid.xyzv" }
+                ]
+            }
+            """);
+
+        var reference = SampledStateTrajectory.ReadXyzv(source, new FrameId("icrs"));
+        Check(SscBodyCatalogue.Load(fixture.Source));
+        Assert.Equal(1, SscBodyCatalogue.BuildPack(fixture.Source, fixture.Pack, _ => { }));
+        Check(SscBodyCatalogue.Load(fixture.Pack));
+
+        void Check(IReadOnlyList<SscBodyDefinition> bodies)
+        {
+            var center = SolarSystemSample.SunId;
+            var id = new ObjectId("probe");
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(center, _ => default(CartesianState));
+            builder.AddSampledMission(Assert.Single(bodies).BindTimeline!(id, _ => center));
+            var world = builder.Build();
+            var start = reference.Start!.Value;
+            var end = reference.End!.Value;
+            var middle = start.AddNanoseconds(end.DifferenceNanoseconds(start) / 2);
+            foreach (var epoch in new[] { start, middle, end })
+            {
+                Assert.True(reference.TrySample(epoch, out var expected));
+                Assert.True(world.Evaluate(epoch).TryState(id, out var actual));
+                Assert.Equal(expected, actual);
+            }
+        }
+    }
+
+    private sealed class OriginalSampleFactAttribute : FactAttribute
+    {
+        public OriginalSampleFactAttribute()
+        {
+            if (!File.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_2008TC3_XYZV")))
+                Skip = "Set the original 2008 TC3 trajectory.";
+        }
+    }
+
 
     [Fact]
     public void PackedSampledAttitudeInterpolatesInsideThePhaseAndHoldsAtBothEnds()

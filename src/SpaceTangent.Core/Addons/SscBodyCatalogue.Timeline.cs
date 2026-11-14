@@ -166,11 +166,10 @@ public static partial class SscBodyCatalogue
                 throw new NotSupportedException("This SSC Timeline orbit model is unavailable.");
             if (phase.Fields.TryGetValue("SampledTrajectory", out var data))
             {
-                if (data is not SscValue.Map source ||
-                    (source.Fields.TryGetValue("Interpolation", out var interpolation) && interpolation.AsText() != "cubic") ||
-                    (source.Fields.TryGetValue("DoublePrecision", out var precision) && precision.AsText() != "true"))
-                    throw new NotSupportedException("This SSC Timeline needs cubic double-precision samples.");
-                string name = source.Text("Source");
+                if (data is SscValue.Map source &&
+                    source.Fields.TryGetValue("DoublePrecision", out var precision) && precision.AsText() != "true")
+                    throw new NotSupportedException("This SSC Timeline needs double-precision samples.");
+                string name = ReadSampledTrajectorySource(data);
                 string context = $"Timeline phase {phaseNumber}: ";
                 string path = ResolveSampleTable(name, () => resolve(item, "Timeline", AddonStage.Trajectory, name,
                     Path.Combine("models", "trajectories"), "data", "trajectories"), context);

@@ -245,15 +245,7 @@ public static partial class SscBodyCatalogue
         else if (fields.Fields.TryGetValue("SampledTrajectory", out var data))
         {
             const string key = "SampledTrajectory";
-            string name;
-            if (data is SscValue.Map sample)
-            {
-                if (sample.Fields.TryGetValue("Interpolation", out SscValue? interpolation) && interpolation.AsText() != "cubic")
-                    throw new NotSupportedException("Only cubic sampled trajectory interpolation is available.");
-                name = sample.Text("Source");
-            }
-            else
-                name = data.AsText();
+            string name = ReadSampledTrajectorySource(data);
             string file = ResolveSampleTable(name,
                 () => resolve(item, key, AddonStage.Trajectory, name, Path.Combine("models", "trajectories"), "data", "trajectories"));
             var curve = ReadSampleTable(name, () => ReadSscTrajectory(file));
@@ -508,6 +500,15 @@ public static partial class SscBodyCatalogue
         {
             throw new RejectedSampleTable(name, error.Message, error, context);
         }
+    }
+
+    private static string ReadSampledTrajectorySource(SscValue value)
+    {
+        if (value is not SscValue.Map options)
+            return value.AsText();
+        if (options.Fields.TryGetValue("Interpolation", out var interpolation) && interpolation.AsText() != "cubic")
+            throw new NotSupportedException("Only cubic sampled trajectory interpolation is available.");
+        return options.Text("Source");
     }
 
     private static SampledStateTrajectory ReadSscTrajectory(string path) => Path.GetExtension(path).ToLowerInvariant() switch
