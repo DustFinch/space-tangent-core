@@ -411,7 +411,7 @@ public static partial class SampledMissionCatalog
         {
             string file = Text(model, "file");
             string? path;
-            try { path = PackedAsset(root, "models", file); }
+            try { path = SscSampledCatalog.FindAsset(AddonStage.Mesh, root, root, file, "models"); }
             catch (FileNotFoundException) { path = null; warning?.Invoke($"{name}: mesh {file} is missing; the trajectory is available."); }
             string convention = model.TryGetProperty("geometryConvention", out var mode)
                 ? mode.GetString() ?? throw new InvalidDataException("Missing packed mesh geometry convention.")
