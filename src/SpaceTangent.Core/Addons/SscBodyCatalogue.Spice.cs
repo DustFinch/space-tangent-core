@@ -231,7 +231,7 @@ public static partial class SscBodyCatalogue
         return (Date("Beginning"), Date("Ending"));
 
         JulianInstant? Date(string name) => block.Fields.TryGetValue(name, out var value)
-            ? SscSampledCatalog.ReadDate(value.AsText()) : null;
+            ? ReadCatalogueDate(value.AsText()) : null;
     }
 
     // The authored SSC interval is in Julian days, with the native model's millisecond inset.

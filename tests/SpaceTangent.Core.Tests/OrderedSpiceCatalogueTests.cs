@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
+using SpaceTangent.Core.Time;
 using SpaceTangent.Core.World;
 using Xunit;
 
@@ -1211,6 +1212,31 @@ public sealed class OrderedSpiceCatalogueTests
                     if (day is <= 2453187.55 or >= 2453187.6)
                         Assert.Equal(default(Vector3d), orientation.AngularVelocityRadiansPerSecond);
                 }
+            }
+            // The same physical bounds can be expressed as calendar UTC or a numeric TDB day.
+            string path = Path.Combine(source, "cassini.ssc");
+            string declaration = File.ReadAllText(path);
+            File.WriteAllText(path, declaration.Replace("Beginning 2453187.55 Ending 2453187.6",
+                $"Beginning \"{Calendar(2453187.55)}\" Ending \"{Calendar(2453187.6)}\"", StringComparison.Ordinal));
+            string calendarPack = Path.Combine(scratch.FullName, "calendar-pack");
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, calendarPack, _ => { }));
+            var numeric = Assert.Single(SscBodyCatalogue.Load(packed));
+            foreach (string folder in new[] { source, calendarPack })
+            {
+                var calendar = Assert.Single(SscBodyCatalogue.Load(folder));
+                foreach (double day in new[] { 2453187.54, 2453187.57, 2453187.61 })
+                {
+                    var epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
+                    Assert.Equal(numeric.SampleRotation!(epoch), calendar.SampleRotation!(epoch));
+                }
+            }
+
+            static string Calendar(double day)
+            {
+                var utc = TimeConversion.ToUtc(JulianInstant.FromJulianDate(day, TimeScale.Tdb));
+                var time = utc.Date.ToDateTime(new TimeOnly(utc.Hour, utc.Minute, utc.Second))
+                    .AddTicks((utc.Nanosecond + 50) / 100);
+                return time.ToString("yyyy MM dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
         finally
