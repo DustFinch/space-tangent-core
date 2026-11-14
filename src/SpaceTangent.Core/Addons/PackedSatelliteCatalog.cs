@@ -105,7 +105,9 @@ public static class PackedSatelliteCatalog
         double radius = body.GetProperty("radiusKm").GetDouble();
         if (!(radius > 0) || !double.IsFinite(radius))
             throw new InvalidDataException($"{name}: the packed satellite radius is invalid.");
-        return new(name, elements, nadir, velocity, meshToBody, fixedBasis, mesh, radius, trajectory, fixedBody)
+        bool continueOutsideCoverage = orbit.TryGetProperty("convention", out var convention) &&
+            convention.ValueKind == JsonValueKind.String && convention.GetString() == "cosmographia";
+        return new(name, elements, nadir, velocity, meshToBody, fixedBasis, mesh, radius, trajectory, fixedBody, continueOutsideCoverage)
         {
             Display = SampledMissionCatalog.ReadDisplay(body, packed: true)
         };

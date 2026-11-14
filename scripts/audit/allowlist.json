@@ -123,5 +123,10 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
     "sha256": "657d92e1d22e69833bbab298ed62848e2fb1b00a4849cc649d590faec9cfe399",
     "reason": "Exact wire value required by the archived trajectory format."
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/PackedSatelliteCatalog.cs",
+    "reason": "Exact trajectory convention tag in the archived orbit schema.",
+    "sha256": "0ceb023bd501afa6c9b718f48193c220870c05437fded3f6ed8867be3ec555d0"
   }
 ]

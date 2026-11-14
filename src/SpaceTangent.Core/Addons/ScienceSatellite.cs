@@ -17,10 +17,12 @@ public sealed class ScienceSatellite
     private readonly SignedAxis _relativeVelocity;
     private readonly Basis3d _meshToBody;
     private readonly Basis3d? _trajectoryAxes;
+    private readonly (ConicOrbit? Before, ConicOrbit? After) _continuations;
+    private const int ContinuationBoundarySeconds = 365 * 86_400;
 
     internal ScienceSatellite(string name, TwoLineElements elements, SignedAxis nadir, SignedAxis relativeVelocity,
         Basis3d meshToBody, Basis3d instrumentToFrame, string meshPath, double sizeKilometers,
-        Basis3d? trajectoryAxes = null, Basis3d? fixedBodyAxes = null)
+        Basis3d? trajectoryAxes = null, Basis3d? fixedBodyAxes = null, bool continueOutsideCoverage = false)
     {
         Name = name;
         Id = new($"norad/{elements.CatalogNumber}");
@@ -31,6 +33,8 @@ public sealed class ScienceSatellite
         _meshToBody = meshToBody;
         _trajectoryAxes = trajectoryAxes;
         FixedBodyAxes = fixedBodyAxes;
+        if (continueOutsideCoverage)
+            _continuations = (ContinuationAt(-ContinuationBoundarySeconds), ContinuationAt(ContinuationBoundarySeconds));
         InstrumentToFrame = instrumentToFrame;
         MeshToOrientedBody = SampledMissionCatalog.Multiply(instrumentToFrame.Transpose(), meshToBody);
         MeshPath = meshPath;
@@ -56,10 +60,52 @@ public sealed class ScienceSatellite
     internal CartesianState? TryOrbit(JulianInstant epoch)
     {
         if (!_orbit.TrySample(epoch, out var state))
-            return null;
+        {
+            double elapsed = (double)epoch.DifferenceNanoseconds(Epoch) / JulianInstant.NanosecondsPerSecond;
+            var continuation = elapsed > ContinuationBoundarySeconds ? _continuations.After :
+                elapsed < -ContinuationBoundarySeconds ? _continuations.Before : null;
+            if (continuation is null)
+                return null;
+            state = continuation.Evaluate(epoch);
+        }
         return _trajectoryAxes is { } axes
             ? new(axes.Transform(state.PositionKilometers), axes.Transform(state.VelocityKilometersPerSecond))
             : state;
+    }
+
+    private ConicOrbit? ContinuationAt(int seconds)
+    {
+        const double earthMu = 398600.4418;
+        var epoch = Epoch.AddSeconds(seconds);
+        if (!_orbit.TrySample(epoch, out var state))
+            return null;
+
+        var position = state.PositionKilometers;
+        var velocity = state.VelocityKilometersPerSecond;
+        double radius = position.Length;
+        var angularMomentum = Vector3d.Cross(position, velocity);
+        var pole = angularMomentum / angularMomentum.Length;
+        var eccentricityVector = Vector3d.Cross(velocity, angularMomentum) / earthMu - position / radius;
+        double eccentricity = eccentricityVector.Length;
+        double inverseAxis = 2 / radius - Vector3d.Dot(velocity, velocity) / earthMu;
+        if (!(inverseAxis > 0 && eccentricity < 1 && pole.IsFinite))
+            return null;
+
+        double inclination = Math.Atan2(Math.Sqrt(pole.X * pole.X + pole.Y * pole.Y), pole.Z);
+        double node = Math.Atan2(pole.X, -pole.Y);
+        var (sinNode, cosNode) = Math.SinCos(node);
+        var ascending = new Vector3d(cosNode, sinNode, 0);
+        var transverse = Vector3d.Cross(pole, ascending);
+        var periapsis = eccentricity > 1e-12 ? eccentricityVector / eccentricity : ascending;
+        double argument = Math.Atan2(Vector3d.Dot(periapsis, transverse), Vector3d.Dot(periapsis, ascending));
+        double minorAxisRatio = Math.Sqrt(1 - eccentricity * eccentricity);
+        double axis = 1 / inverseAxis;
+        double anomaly = Math.Atan2(Vector3d.Dot(position, Vector3d.Cross(pole, periapsis)) / minorAxisRatio,
+            Vector3d.Dot(position, periapsis) + axis * eccentricity);
+        double meanAnomaly = anomaly - eccentricity * Math.Sin(anomaly);
+        double motion = Math.Sqrt(earthMu / axis) / axis;
+        return new(new(axis * (1 - eccentricity), eccentricity, inclination, node, argument,
+            epoch.AddSeconds(-meanAnomaly / motion), earthMu, TrajectoryFrame));
     }
 
     /// <summary>The original catalogue interprets the raw SGP4 state in its declared frame.</summary>
