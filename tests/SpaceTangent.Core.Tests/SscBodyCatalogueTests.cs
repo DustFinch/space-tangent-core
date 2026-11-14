@@ -9,6 +9,30 @@ namespace SpaceTangent.Core.Tests;
 public sealed class SscBodyCatalogueTests
 {
     [Fact]
+    public void RectangularFixedPositionSurvivesSourceAndPack()
+    {
+        var root = Directory.CreateTempSubdirectory("st-ssc-rectangular-");
+        try
+        {
+            string source = root.CreateSubdirectory("source").FullName;
+            string pack = Path.Combine(root.FullName, "pack");
+            File.WriteAllText(Path.Combine(source, "probe.ssc"), """
+                "Probe" "Sol/Earth" {
+                    OrbitFrame { EquatorJ2000 {} }
+                    FixedPosition { Rectangular [ 0 0 -0.00155 ] }
+                }
+                """);
+
+            var expected = new CartesianState(new(0, 0, -.00155), default);
+            var epoch = Epoch(2451545);
+            Assert.Equal(expected, Assert.Single(SscBodyCatalogue.Load(source)).Sample(epoch));
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, pack, _ => { }));
+            Assert.Equal(expected, Assert.Single(SscBodyCatalogue.Load(pack)).Sample(epoch));
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
     public void OrderedPatchesKeepAndReplaceTheEffectiveFields()
     {
         DirectoryInfo root = Directory.CreateTempSubdirectory("st-ssc-");

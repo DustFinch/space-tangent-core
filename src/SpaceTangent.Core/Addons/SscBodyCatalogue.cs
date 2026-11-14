@@ -309,6 +309,8 @@ public static partial class SscBodyCatalogue
         }
         else if (fields.Fields.TryGetValue("FixedPosition", out var position))
         {
+            if (position is SscValue.Map coordinates)
+                position = coordinates.Get("Rectangular");
             var state = new CartesianState(ReadVector(position), default);
             raw = _ => state;
         }
