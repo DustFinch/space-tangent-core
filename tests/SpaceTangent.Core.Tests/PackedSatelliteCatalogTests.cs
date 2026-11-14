@@ -2,6 +2,8 @@
 using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
+using SpaceTangent.Core.Ephemerides;
+using SpaceTangent.Core.World;
 using Xunit;
 
 namespace SpaceTangent.Core.Tests;
@@ -143,6 +145,45 @@ public sealed class PackedSatelliteCatalogTests
             Assert.Equal(reference.BodyToTrajectory, sample.BodyToTrajectory);
         }
     }
+
+    [DeepProbeArchiveFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalDeepProbeKeepsIndependentWorldHistoriesAcrossGraphReplacement()
+    {
+        string path = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_DEEP_PROBE")!;
+        var probe = Assert.Single(PackedSatelliteCatalog.Load(path), body => body.Id.Value == "norad/24208");
+        var first = new WorldEvaluation();
+        var second = new WorldEvaluation();
+        var world = Build(probe);
+        var initial = At(world, first, 0);
+        Assert.Equal(initial, At(world, second, 0));
+        foreach (double minutes in new[] { 1, 29.9, 30, 30.1, 31, 1440, 1439, -5 })
+            At(world, first, minutes);
+
+        var replacement = Build(probe);
+        var after = At(replacement, first, 0);
+        Assert.InRange((initial.PositionKilometers - after.PositionKilometers).Length, .0045, .0047);
+        Assert.Equal(initial, At(replacement, second, 0));
+        Assert.Equal(At(world, null, 0), At(replacement, null, 0));
+        var replacementProbe = Assert.Single(PackedSatelliteCatalog.Load(path), body => body.Id == probe.Id);
+        Assert.Equal(initial, At(Build(replacementProbe), first, 0));
+
+        static WorldGraph Build(ScienceSatellite satellite)
+        {
+            var builder = new WorldGraphBuilder();
+            builder.AddTrajectory(SolarSystemSample.EarthId, _ => default(CartesianState));
+            builder.AddScienceSatellite(satellite);
+            return builder.Build();
+        }
+
+        CartesianState At(WorldGraph graph, WorldEvaluation? history, double minutes)
+        {
+            var snapshot = graph.Evaluate(probe.Epoch.AddSeconds(minutes * 60), history);
+            Assert.True(snapshot.TryState(probe.Id, out var state));
+            return state;
+        }
+    }
+
 
     private sealed class DeepProbeArchiveFactAttribute : FactAttribute
     {

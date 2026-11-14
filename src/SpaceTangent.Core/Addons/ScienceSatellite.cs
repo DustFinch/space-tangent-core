@@ -18,6 +18,7 @@ public sealed class ScienceSatellite
     private readonly Basis3d _meshToBody;
     private readonly Basis3d? _trajectoryAxes;
     private readonly (ConicOrbit? Before, ConicOrbit? After) _continuations;
+    private readonly bool _sequentialArchive;
     private const int ContinuationBoundarySeconds = 365 * 86_400;
 
     internal ScienceSatellite(string name, TwoLineElements elements, SignedAxis nadir, SignedAxis relativeVelocity,
@@ -27,6 +28,7 @@ public sealed class ScienceSatellite
         Name = name;
         Id = new($"norad/{elements.CatalogNumber}");
         _orbit = new(elements);
+        _sequentialArchive = continueOutsideCoverage && _orbit.DeepSpace;
         OrbitPeriodSeconds = Math.Tau * 60 / elements.MeanMotion;
         _nadir = nadir;
         _relativeVelocity = relativeVelocity;
@@ -57,9 +59,20 @@ public sealed class ScienceSatellite
 
     internal Basis3d? FixedBodyAxes { get; }
 
-    internal CartesianState? TryOrbit(JulianInstant epoch)
+    internal Sgp4Orbit.Evaluation? CreateOrbitalHistory()
     {
-        if (!_orbit.TrySample(epoch, out var state))
+        if (!_sequentialArchive)
+            return null;
+        var history = _orbit.CreateEvaluation();
+        history.TrySample(Epoch.AddSeconds(-ContinuationBoundarySeconds), out _);
+        history.TrySample(Epoch.AddSeconds(ContinuationBoundarySeconds), out _);
+        return history;
+    }
+
+    internal CartesianState? TryOrbit(JulianInstant epoch, Sgp4Orbit.Evaluation? history = null)
+    {
+        bool available = history is null ? _orbit.TrySample(epoch, out var state) : history.TrySample(epoch, out state);
+        if (!available)
         {
             double elapsed = (double)epoch.DifferenceNanoseconds(Epoch) / JulianInstant.NanosecondsPerSecond;
             var continuation = elapsed > ContinuationBoundarySeconds ? _continuations.After :

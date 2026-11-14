@@ -36,13 +36,19 @@ public sealed partial class WorldGraphBuilder
 
     public void AddTrajectory(ObjectId id, Func<JulianInstant, CartesianState?> sample,
         ObjectId? center = null, ObjectId? orientation = null) =>
-        AddTrajectoryCore(id, sample, center, orientation is { } body ? new(body, WorldChannel.Orientation) : null);
+        AddTrajectoryCore(id, AdaptSampler(sample), center, orientation is { } body ? new(body, WorldChannel.Orientation) : null);
 
     public void AddTrajectoryInFrame(ObjectId id, Func<JulianInstant, CartesianState?> sample,
         FrameId frame, ObjectId? center = null) =>
-        AddTrajectoryCore(id, sample, center, WorldKey.Frame(frame));
+        AddTrajectoryCore(id, AdaptSampler(sample), center, WorldKey.Frame(frame));
 
-    private void AddTrajectoryCore(ObjectId id, Func<JulianInstant, CartesianState?> sample,
+    private static Func<EvaluationInput, CartesianState?> AdaptSampler(Func<JulianInstant, CartesianState?> sample)
+    {
+        ArgumentNullException.ThrowIfNull(sample);
+        return input => sample(input.Epoch);
+    }
+
+    private void AddTrajectoryCore(ObjectId id, Func<EvaluationInput, CartesianState?> sample,
         ObjectId? center, WorldKey? orientation)
     {
         ArgumentNullException.ThrowIfNull(sample);
@@ -54,7 +60,7 @@ public sealed partial class WorldGraphBuilder
 
         Add(new(new(id, WorldChannel.State), [.. dependencies], input =>
         {
-            if (sample(input.Epoch) is not { } state)
+            if (sample(input) is not { } state)
                 return default;
             if (orientation is { } frame && !input.Read(frame).Orientation.TryTransform(state, out state))
                 return default;
@@ -143,9 +149,12 @@ public sealed partial class WorldGraphBuilder
         if (updatedElements is not null && updatedElements.Id != satellite.Id)
             throw new ArgumentException("Updated elements must use the same satellite ID.", nameof(updatedElements));
         bool preferUpdate = updatedElements?.Epoch.CompareTo(satellite.Epoch) > 0;
-        AddTrajectory(satellite.Id, epoch => preferUpdate
-            ? updatedElements!.SampleInWorld(epoch) ?? satellite.TryOrbit(epoch)
-            : satellite.TryOrbit(epoch) ?? updatedElements?.SampleInWorld(epoch), SolarSystemSample.EarthId);
+        AddTrajectoryCore(satellite.Id, input => preferUpdate
+            ? updatedElements!.SampleInWorld(input.Epoch) ?? SampleArchive(input)
+            : SampleArchive(input) ?? updatedElements?.SampleInWorld(input.Epoch), SolarSystemSample.EarthId, null);
+
+        CartesianState? SampleArchive(EvaluationInput input) => input.History is { } history
+            ? history.Sample(satellite, input.Epoch) : satellite.TryOrbit(input.Epoch);
         if (satellite.FixedBodyAxes is { } fixedAxes)
             AddOrientation(satellite.Id, _ => new(SampledMissionCatalog.Multiply(fixedAxes, satellite.InstrumentToFrame), default(Vector3d)));
         else
