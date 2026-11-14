@@ -36,4 +36,12 @@ The check applies the named manifest and reports unresolved stellar targets. Str
 
 
 
+To validate the local atmosphere tables in an archived planetary pack, run:
+
+```sh
+dotnet run --project tools/SpaceTangent.PackTool -- check "/path/to/planetary-pack/pack.json" --atmospheres
+```
+
+The checker opens each table and prints its transmission and scattering dimensions.
+
 Exit codes are 0 for success, 1 for an input, output or strict check failure, and 2 for invalid arguments.
