@@ -28,7 +28,8 @@ public static partial class SampledMissionCatalog
                 throw new InvalidDataException("A mission pack may contain at most 256 SPICE load events.");
             var previews = new bool[count];
             int next = 0;
-            if (document.TryGetProperty("sscCatalogs", out var catalogues))
+            bool hasEmbeddedSsc = document.TryGetProperty("sscCatalogs", out var catalogues);
+            if (hasEmbeddedSsc)
             {
                 foreach (var catalogue in catalogues.EnumerateArray())
                 {
@@ -43,7 +44,8 @@ public static partial class SampledMissionCatalog
                     continue;
                 var load = loads[index];
                 string policy = Text(load, "policy");
-                if (policy != "furnish")
+                // Before SSC sources were embedded, the packed body used these load events directly.
+                if (policy != "furnish" && (hasEmbeddedSsc || policy != "celestia"))
                     continue;
                 foreach (var file in load.GetProperty("files").EnumerateArray())
                     Add(file.GetString() ?? throw new InvalidDataException("Missing packed SPICE kernel filename."));

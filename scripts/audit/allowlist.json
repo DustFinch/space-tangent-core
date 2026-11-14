@@ -128,5 +128,10 @@
     "path": "src/SpaceTangent.Core/Addons/PackedSatelliteCatalog.cs",
     "reason": "Exact trajectory convention tag in the archived orbit schema.",
     "sha256": "0ceb023bd501afa6c9b718f48193c220870c05437fded3f6ed8867be3ec555d0"
+  },
+  {
+    "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedSpice.cs",
+    "sha256": "8c709d21ff1ae741a71c8653d7169c1387a9ce06f5ba4236510f80e80448f80b",
+    "reason": "Exact load-policy value required by archived SSC packs without embedded sources."
   }
 ]

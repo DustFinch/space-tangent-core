@@ -397,6 +397,49 @@ public sealed class CassiniSpiceCatalogTests
         }
     }
 
+    [ArchivedSscSelectionFact]
+    [Trait("Category", "ExternalData")]
+    public void ArchivedSscSelectionLoadsItsSelectedCassiniKernelsInOrder()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SSC_SELECTION")!;
+        var saturn = new ObjectId("sol/saturn");
+        var diagnostics = new List<string>();
+        var cassini = Assert.Single(SampledMissionCatalog.Load("ssc-selection/pack.json", Path.Combine(root, "packed"),
+            name => name is "Sol/Saturn" or "Saturn" ? saturn : null, diagnostics.Add));
+        Assert.Empty(diagnostics);
+        Assert.Equal("Cassini SOI", cassini.Name);
+
+        var builder = new WorldGraphBuilder();
+        builder.AddTrajectory(saturn, _ => default(CartesianState));
+        builder.AddSampledMission(cassini);
+        var world = builder.Build();
+        using var oracle = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "reference.json")));
+        foreach (var row in oracle.RootElement.GetProperty("rows").EnumerateArray())
+        {
+            var epoch = JulianInstant.FromTdbSeconds(row.GetProperty("seconds").GetDouble());
+            var snapshot = world.Evaluate(epoch);
+            var state = row.GetProperty("state").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+            var matrix = row.GetProperty("matrix").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+            Assert.True(snapshot.TryState(cassini.Id, out var actual));
+            Assert.InRange((actual.PositionKilometers - new Vector3d(state[0], state[1], state[2])).Length, 0, 1e-6);
+            Assert.InRange((actual.VelocityKilometersPerSecond - new Vector3d(state[3], state[4], state[5])).Length, 0, 1e-9);
+            Assert.True(snapshot.TryOrientation(cassini.Id, out var attitude));
+            Assert.InRange((attitude.ToWorld.X - new Vector3d(matrix[0], matrix[1], matrix[2])).Length, 0, 3e-8);
+            Assert.InRange((attitude.ToWorld.Y - new Vector3d(matrix[3], matrix[4], matrix[5])).Length, 0, 3e-8);
+            Assert.InRange((attitude.ToWorld.Z - new Vector3d(matrix[6], matrix[7], matrix[8])).Length, 0, 3e-8);
+        }
+    }
+
+    private sealed class ArchivedSscSelectionFactAttribute : FactAttribute
+    {
+        public ArchivedSscSelectionFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_SSC_SELECTION")))
+                Skip = "Set the archived SSC selection pack and its CSPICE reference.";
+        }
+    }
+
+
     [PackedCassiniTheory]
     [InlineData(false)]
     [InlineData(true)]
