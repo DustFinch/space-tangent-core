@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Observing;
+using SpaceTangent.Core.Ephemerides;
 
 try
 {
@@ -24,6 +25,19 @@ try
         int bodies = SscBodyCatalogue.BuildPack(source, destination, Warn);
         Console.WriteLine($"{bodies} SSC bodies -> {Path.GetFullPath(destination)}");
         return 0;
+    }
+    if (args is ["check-missions", var missionRoot, .. var missionArguments])
+    {
+        int optionStart = Array.FindIndex(missionArguments, argument => argument.StartsWith("--", StringComparison.Ordinal));
+        if (optionStart < 0)
+            optionStart = missionArguments.Length;
+        if (optionStart == 0)
+            throw new InvalidDataException("Supply at least one mission manifest relative to the installation root.");
+        string root = Path.GetFullPath(missionRoot);
+        string[] files = missionArguments[..optionStart].Select(file => Path.GetFullPath(file, root)).ToArray();
+        string[] checkOptions = missionArguments[optionStart..];
+        bool strict = checkOptions is ["--strict", ..];
+        return CheckMissions(files, root, strict ? checkOptions[1..] : checkOptions, strict);
     }
     if (args is ["check", var input, .. var options])
     {
@@ -97,17 +111,7 @@ try
             (pack.TryGetProperty("bodies", out _) || pack.TryGetProperty("annotations", out _) || pack.TryGetProperty("viewpoints", out _));
         if (archivedMission || MissionCataloguePack.IsManifest(manifest))
         {
-            var content = SampledMissionCatalog.LoadContent([manifest], root, MissionReferences(bodyOptions), message =>
-            {
-                warnings++;
-                Warn(message);
-            });
-            foreach (var mission in content.Missions)
-                Console.WriteLine(mission.Name);
-            Console.WriteLine($"{content.Missions.Count} missions, {content.Annotations.Count} annotations, {content.Viewpoints.Count} viewpoints, {warnings} warnings");
-            if (archivedMission && content.Missions.Count + content.Annotations.Count + content.Viewpoints.Count == 0)
-                throw new InvalidDataException("The mission reader did not find any supported content in this archived pack.");
-            return strict && warnings != 0 ? 1 : 0;
+            return CheckMissions([manifest], root, bodyOptions, strict, requireContent: archivedMission);
         }
         if (bodyOptions.Length != 0)
             throw new InvalidDataException("SSC packs do not take body references.");
@@ -121,7 +125,7 @@ try
         Console.WriteLine($"{bodies.Count} SSC/MPC bodies, {warnings} warnings");
         return strict && warnings != 0 ? 1 : 0;
     }
-    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites]");
+    Console.Error.WriteLine("Usage: import <SSC source folder> --pack <new folder> | import-sky <STC/DSC source folder> --pack <new folder> | import-missions <JSON source folder> --pack <new folder> [--body <name>]... | check <pack.json|sky-pack.json> [--strict] [--body <name>]... [--stellar-archive <folder>] [--atmospheres] [--satellites] | check-missions <root> <manifest>... [--strict] [--body <name>]...");
     return 2;
 }
 catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalog))
@@ -131,11 +135,28 @@ catch (Exception error) when (AddonDiagnostics.Annotate(error, AddonStage.Catalo
     return 1;
 }
 
+static int CheckMissions(string[] manifests, string root, string[] options, bool strict, bool requireContent = true)
+{
+    int warnings = 0;
+    var content = SampledMissionCatalog.LoadContent(manifests, root, MissionReferences(options), message =>
+    {
+        warnings++;
+        Warn(message);
+    });
+    foreach (var mission in content.Missions)
+        Console.WriteLine(mission.Name);
+    Console.WriteLine($"{content.Missions.Count} missions, {content.Annotations.Count} annotations, {content.Viewpoints.Count} viewpoints, {warnings} warnings");
+    if (requireContent && content.Missions.Count + content.Annotations.Count + content.Viewpoints.Count == 0)
+        throw new InvalidDataException("The mission reader did not find any supported content in the supplied manifests.");
+    return strict && warnings != 0 ? 1 : 0;
+}
+
 static Func<string, ObjectId?> MissionReferences(string[] options)
 {
     string[] solar = ["Sun", "Mercury", "Venus", "Earth", "Moon", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"];
-    var ids = solar.ToDictionary(name => name, name => new ObjectId("sol/" + name.ToLowerInvariant()),
-        StringComparer.OrdinalIgnoreCase);
+    string[] otherMoons = ["Phobos", "Deimos", "Phoebe", "Proteus", "Nereid"];
+    var ids = solar.Concat(Enum.GetNames<SatelliteTheory>()).Concat(otherMoons)
+        .ToDictionary(name => name, name => new ObjectId("sol/" + name.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
     ids.Add("Sol", ids["Sun"]);
     for (int index = 0; index < options.Length; index += 2)
     {
