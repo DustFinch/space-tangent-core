@@ -1112,6 +1112,100 @@ public sealed class OrderedSpiceCatalogueTests
 
     [OrderedSpiceFact]
     [Trait("Category", "ExternalData")]
+    public void SscExplicitGapRejectionAndMetakernelRepeatMatchNativeCoverage()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        using var native = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+        using var input = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "cases.json")));
+        var scratch = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = scratch.CreateSubdirectory("source").FullName;
+            foreach (string file in new[] { "gaps.bsp", "linear.bsp" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(source, file));
+            var gap = Window("explicit-gap-rejected");
+            var partial = Window("explicit-partial-overlap-rejected");
+            File.WriteAllText(Path.Combine(source, "01-gaps.ssc"), $$"""
+                "Gap" "Sol" {
+                    SpiceOrbit { Kernel "gaps.bsp" Target "1999999" Origin "0" BoundingRadius 500 {{gap}} }
+                    FixedPosition [ 3 0 0 ]
+                }
+                "Partial overlap" "Sol" {
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 {{partial}} }
+                    FixedPosition [ 4 0 0 ]
+                }
+                """);
+            // Keep the continuity cases in a separate pool to prevent other kernels from bridging their gaps.
+            string repeat = scratch.CreateSubdirectory("repeat").FullName;
+            foreach (string file in new[] { "wide.bsp", "11-intervals.bsp", "repeat-wide.tm" })
+                File.Copy(Path.Combine(corpus, file), Path.Combine(repeat, file));
+            File.WriteAllText(Path.Combine(repeat, "repeat.ssc"), """
+                "Early" "Sol" {
+                    SpiceOrbit { Kernel [ "wide.bsp" "11-intervals.bsp" ] Target "1999999" Origin "0" BoundingRadius 500 }
+                    UniformRotation {}
+                }
+                "After repeat" "Sol" {
+                    SpiceOrbit { Kernel "repeat-wide.tm" Target "1999999" Origin "0" BoundingRadius 500 }
+                    UniformRotation {}
+                }
+                """);
+
+            Check(source, (bodies, notices) =>
+            {
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                Assert.Equal(2, notices.Count);
+                Assert.All(notices, notice => Assert.Contains("interval is not entirely covered", notice));
+                Assert.False(Expected("explicit-gap-rejected")[0].GetProperty("ok").GetBoolean());
+                Assert.False(Expected("explicit-partial-overlap-rejected")[0].GetProperty("ok").GetBoolean());
+                Assert.Equal(new[] { 3d, 4d }, bodies.Select(body => body.Sample(epoch)!.Value.PositionKilometers.X));
+            });
+            Check(repeat, (bodies, notices) =>
+            {
+                Assert.Empty(notices);
+                var expected = Expected("coverage-order-after-meta-repeat");
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                for (int index = 0; index < bodies.Count; index++)
+                {
+                    var row = expected[1 + index * 2];
+                    Assert.True(row.GetProperty("ok").GetBoolean());
+                    double periodSeconds = row.GetProperty("periodDays").GetDouble() * 86400;
+                    var rate = bodies[index].SampleRotation!(epoch)!.Value.AngularVelocityRadiansPerSecond!.Value;
+                    Assert.InRange(Math.Abs(rate.Length - Math.Tau / periodSeconds), 0, 1e-10);
+                    Assert.NotNull(bodies[index].Sample(epoch));
+                }
+            });
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+
+        void Check(string source, Action<IReadOnlyList<SscBodyDefinition>, List<string>> verify)
+        {
+            string packed = source + "-packed";
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string folder in new[] { source, packed })
+            {
+                var notices = new List<string>();
+                var bodies = SscBodyCatalogue.Load(folder, warning: notices.Add);
+                Assert.Equal(2, bodies.Count);
+                verify(bodies, notices);
+            }
+        }
+
+        System.Text.Json.JsonElement Expected(string name) => native.RootElement.GetProperty("rows").EnumerateArray()
+            .Single(row => row.GetProperty("case").GetString() == name).GetProperty("results");
+
+        string Window(string name)
+        {
+            var bounds = input.RootElement.EnumerateArray().Single(row => row.GetProperty("name").GetString() == name)
+                .GetProperty("operations")[0].GetProperty("orbit").GetProperty("boundsSeconds");
+            return FormattableString.Invariant($"Beginning {2451545 + bounds[0].GetDouble() / 86400:R} Ending {2451545 + bounds[1].GetDouble() / 86400:R}");
+        }
+    }
+
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
     public void SscCoverageCapacityAndShortWindowsMatchNativeInitialization()
     {
         string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
@@ -1262,16 +1356,21 @@ public sealed class OrderedSpiceCatalogueTests
                     SpiceRotation { Frame "PREFIX_FRAME" }
                     FixedRotation { MeridianAngle 10 }
                 }
+                "Canonical pointing" "Sol" {
+                    FixedPosition [ 4 0 0 ]
+                    BodyFrame { EquatorJ2000 {} }
+                    SpiceRotation { Frame "J2000" BaseFrame "J2000" }
+                }
                 """);
             string packed = Path.Combine(scratch.FullName, "packed");
-            Assert.Equal(3, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Assert.Equal(4, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
             string[] cases = ["builtin-frame-init-without-pck", "rotation-base-not-tested-at-init", "unknown-rotation-frame"];
             var epoch = JulianInstant.FromTdbSeconds(0);
             foreach (string folder in new[] { source, packed })
             {
                 var warnings = new List<string>();
                 var bodies = SscBodyCatalogue.Load(folder, warning: warnings.Add);
-                Assert.Equal(cases.Length, bodies.Count);
+                Assert.Equal(cases.Length + 1, bodies.Count);
                 Assert.Contains("Unknown SSC SPICE frame PREFIX_FRAME", Assert.Single(warnings));
                 for (int index = 0; index < cases.Length; index++)
                 {
@@ -1279,10 +1378,21 @@ public sealed class OrderedSpiceCatalogueTests
                         .Single(row => row.GetProperty("case").GetString() == cases[index])
                         .GetProperty("results")[0].GetProperty("ok").GetBoolean();
                     var sample = bodies[index].SampleRotation!(epoch);
-                    // The selected SPICE models lack data to sample here. Only the rejected
-                    // model selects the authored fixed rotation and produces a transform.
+                    // Missing transform data retains the selected model. Rejection selects the fixed rotation.
                     Assert.Equal(expected, sample is null);
                 }
+
+                var canonical = reference.RootElement.GetProperty("rows").EnumerateArray()
+                    .Single(row => row.GetProperty("case").GetString() == "canonical-rotation-baseline")
+                    .GetProperty("results");
+                Assert.True(canonical[0].GetProperty("ok").GetBoolean());
+                var query = canonical[1];
+                var queryEpoch = JulianInstant.FromJulianDate(query.GetProperty("jd").GetDouble(), TimeScale.Tdb);
+                var quaternion = query.GetProperty("values").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+                var orientation = bodies[^1].SampleRotation!(queryEpoch)!.Value.ToWorld;
+                Assert.InRange((orientation.X - ToEquatorial(new(1, 0, 0), quaternion)).Length, 0, 2e-9);
+                Assert.InRange((orientation.Y - ToEquatorial(new(0, 1, 0), quaternion)).Length, 0, 2e-9);
+                Assert.InRange((orientation.Z - ToEquatorial(new(0, 0, 1), quaternion)).Length, 0, 2e-9);
             }
         }
         finally
@@ -1383,15 +1493,16 @@ public sealed class OrderedSpiceCatalogueTests
             scratch.Delete(recursive: true);
         }
 
-        static Vector3d ToEquatorial(Vector3d axis, double[] quaternion)
-        {
-            // Undo the reference axis ordering, passive rotation and prime-meridian half-turn.
-            var native = new Vector3d(-axis.X, axis.Z, axis.Y);
-            var imaginary = new Vector3d(-quaternion[1], -quaternion[2], -quaternion[3]);
-            var twiceCross = Vector3d.Cross(imaginary, native) * 2;
-            var rotated = native + twiceCross * quaternion[0] + Vector3d.Cross(imaginary, twiceCross);
-            return new(rotated.X, -rotated.Z, rotated.Y);
-        }
+    }
+
+    private static Vector3d ToEquatorial(Vector3d axis, double[] quaternion)
+    {
+        // Undo the reference axis ordering, passive rotation and prime-meridian half-turn.
+        var native = new Vector3d(-axis.X, axis.Z, axis.Y);
+        var imaginary = new Vector3d(-quaternion[1], -quaternion[2], -quaternion[3]);
+        var twiceCross = Vector3d.Cross(imaginary, native) * 2;
+        var rotated = native + twiceCross * quaternion[0] + Vector3d.Cross(imaginary, twiceCross);
+        return new(rotated.X, -rotated.Z, rotated.Y);
     }
 
     [OrderedSpiceFact]
