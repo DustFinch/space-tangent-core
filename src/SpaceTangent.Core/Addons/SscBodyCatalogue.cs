@@ -252,8 +252,7 @@ public static partial class SscBodyCatalogue
             if (!Path.GetExtension(file).Equals(".xyzv", StringComparison.OrdinalIgnoreCase))
                 throw new NotSupportedException("This SSC body needs position and velocity samples in XYZV.");
             var curve = ReadSampleTable(name, () => SampledStateTrajectory.ReadSsc(file, Icrs));
-            raw = epoch => epoch.CompareTo(curve.Start!.Value) >= 0 && epoch.CompareTo(curve.End!.Value) <= 0 &&
-                curve.TrySample(epoch, out CartesianState state) ? state : null;
+            raw = epoch => curve.TrySample(epoch, out CartesianState state) ? state : null;
         }
         else if (fields.Fields.TryGetValue("EllipticalOrbit", out SscValue? orbit))
         {

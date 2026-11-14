@@ -43,7 +43,17 @@ public sealed class SscBodyCatalogueTests
             Assert.Equal(5, body.RadiusKilometers);
             Assert.Equal(new Vector3d(.8, .8, .8), body.Color);
             Assert.Equal(new Vector3d(8000, 43200, 0), body.Sample(Epoch(2451545.5))!.Value.PositionKilometers);
-            Assert.Null(body.Sample(Epoch(2451547)));
+            Assert.Equal(body.Sample(Epoch(2451545)), body.Sample(Epoch(2451544)));
+            Assert.Equal(body.Sample(Epoch(2451546)), body.Sample(Epoch(2451547)));
+
+            File.WriteAllText(Path.Combine(root.FullName, "04-lifetime.ssc"), """
+                Modify "Demo" "Sol/Earth" { Beginning "2451543" Ending "2451548" }
+                """);
+            body = Assert.Single(SscBodyCatalogue.Load(root.FullName));
+            Assert.Null(body.Sample(Epoch(2451542)));
+            Assert.Equal(body.Sample(Epoch(2451545)), body.Sample(Epoch(2451543)));
+            Assert.Equal(body.Sample(Epoch(2451546)), body.Sample(Epoch(2451548)));
+            Assert.Null(body.Sample(Epoch(2451549)));
         }
         finally
         {
@@ -131,13 +141,15 @@ public sealed class SscBodyCatalogueTests
             Assert.Equal(1, SscBodyCatalogue.BuildPack(folder, packed, _ => { }));
             var restored = Assert.Single(SscBodyCatalogue.Load(packed));
 
-            foreach (double day in new[] { 2454013.5, 2454016.5, 2454030.5 })
+            foreach (double day in new[] { 2454012.5, 2454013.5, 2454016.5, 2454030.5, 2454747.5 })
             {
                 var epoch = Epoch(day);
                 Assert.NotNull(original.Sample(epoch));
                 Assert.Equal(original.Sample(epoch), loose.Sample(epoch));
                 Assert.Equal(original.Sample(epoch), restored.Sample(epoch));
             }
+            Assert.Equal(original.Sample(Epoch(2454013.5)), loose.Sample(Epoch(2454012.5)));
+            Assert.Equal(original.Sample(Epoch(2454746.617361111)), restored.Sample(Epoch(2454747.5)));
             Assert.Null(loose.OrbitApoapsisKilometers);
             Assert.Null(restored.OrbitApoapsisKilometers);
         }
