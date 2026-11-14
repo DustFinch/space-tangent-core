@@ -115,6 +115,41 @@ public sealed class MissionSwarmTests
         };
     }
 
+    [LegacySwarmPackFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalVersionFivePackLoadsAllThreeStandardSwarms()
+    {
+        string root = Environment.GetEnvironmentVariable("SPACETANGENT_LEGACY_SWARM_PACK")!;
+        var diagnostics = new List<string>();
+        var sun = new ObjectId("sol/sun");
+        var earth = new ObjectId("sol/earth");
+        var missions = SampledMissionCatalog.Load("pack.json", root, name => name switch
+        {
+            "Sol" => sun,
+            "Sol/Earth" => earth,
+            _ => null
+        }, diagnostics.Add);
+        Assert.Empty(diagnostics);
+        Assert.Equal(new[] { "Original ASTORB", "Fengyun 1C Debris", "Hilda Family" },
+            missions.Select(mission => mission.Name));
+        Assert.Equal(new[] { sun, earth, sun }, missions.Select(mission => Assert.Single(mission.Arcs).Center));
+        foreach (var mission in missions)
+        {
+            var swarm = Assert.IsType<MissionSwarmStyle>(Assert.Single(mission.Geometry!).Shape.Swarm);
+            Assert.NotEmpty(swarm.Elements.Attributes.ToArray());
+            Assert.False(swarm.ReverseEquatorialAxes);
+        }
+    }
+
+    private sealed class LegacySwarmPackFactAttribute : FactAttribute
+    {
+        public LegacySwarmPackFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_LEGACY_SWARM_PACK")))
+                Skip = "Set the unmodified version-five archive swarm pack.";
+        }
+    }
+
     private sealed class SwarmInstallFactAttribute : FactAttribute
     {
         public SwarmInstallFactAttribute()

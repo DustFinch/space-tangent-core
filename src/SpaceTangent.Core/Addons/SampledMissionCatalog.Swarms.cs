@@ -22,7 +22,7 @@ public static partial class SampledMissionCatalog
             "kepbin" => MissionSwarmFormat.KepBin,
             var name => throw new NotSupportedException($"Unsupported mission swarm format {name}.")
         };
-        if (packed && (!item.TryGetProperty("convention", out var convention) || convention.GetString() != "cosmographia"))
+        if (packed && !UsesStandardAxes(item) && (!item.TryGetProperty("convention", out var convention) || convention.GetString() != "cosmographia"))
             throw new NotSupportedException("The packed swarm has a different orbital convention.");
         string path = LocalAddonFiles.ResolveRelative(root, directory, Text(item, "source"));
         var swarm = AddonDiagnostics.Read(AddonStage.Trajectory, path, () =>
@@ -46,6 +46,9 @@ public static partial class SampledMissionCatalog
                 ReverseEquatorialAxes = packed && item.TryGetProperty("naturalAxes", out var natural) && natural.GetBoolean()
             }
         };
+
+        static bool UsesStandardAxes(JsonElement value) =>
+            !value.TryGetProperty("convention", out var profile) || profile.GetString() == "standard";
 
         double Number(string field, double fallback) =>
             item.TryGetProperty(field, out var number) ? ParticleNumber(number) : fallback;

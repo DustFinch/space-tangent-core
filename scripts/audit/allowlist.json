@@ -96,7 +96,7 @@
   },
   {
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.Swarms.cs",
-    "sha256": "f14f07e30429a1c8d79ef8f807c37cdb3789a323f403e665639ca3a110c2d60f",
+    "sha256": "180a9beecdf6f79a6e786f4033bde7065b01cefd4d7828340281a2852b9a3281",
     "reason": "Exact convention value in the archived native swarm pack schema."
   },
   {
