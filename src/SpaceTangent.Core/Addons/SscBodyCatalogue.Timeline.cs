@@ -62,7 +62,15 @@ public static partial class SscBodyCatalogue
                 (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
             if (state is null && TryFactory<SscScriptOrbit>(item, phase, "ScriptedOrbit", "Timeline", root, resolve,
                 WarnPhase, scripts is null ? null : scripts.CreateOrbit) is { } scriptOrbit)
+            {
                 state = ScriptOrbit(scriptOrbit);
+                if (!phase.Fields.ContainsKey("OrbitFrame") || phase.Object("OrbitFrame").Fields.ContainsKey("EclipticJ2000"))
+                {
+                    var basis = phase.Fields.ContainsKey("OrbitFrame") || center.Equals("Sol", StringComparison.OrdinalIgnoreCase)
+                        ? Ecliptic : Basis3d.Identity;
+                    trajectory = _ => new MissionFrame.Inertial(basis);
+                }
+            }
             double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
             state ??= ReadTimelineState(phase, center, phaseNumber, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
@@ -81,6 +89,9 @@ public static partial class SscBodyCatalogue
             var scriptSpin = absoluteOrSpiceSpin is null
                 ? TryFactory<SscScriptRotation>(item, phase, "ScriptedRotation", "Timeline", root, resolve,
                     WarnPhase, scripts is null ? null : scripts.CreateRotation) : null;
+            if (scriptSpin is not null &&
+                (!phase.Fields.ContainsKey("BodyFrame") || phase.Object("BodyFrame").Fields.ContainsKey("EclipticJ2000")))
+                bodyFrame = _ => new MissionFrame.Inertial(Ecliptic);
             var relativeSpin = absoluteOrSpiceSpin ?? (scriptSpin is null ? null : ScriptRotation(scriptSpin, Basis3d.Identity));
             var spin = relativeSpin ?? ReadTimelineSpin(phase, orbitPeriodSeconds, WarnPhase);
             result.Add((find, radiusKilometers) =>
