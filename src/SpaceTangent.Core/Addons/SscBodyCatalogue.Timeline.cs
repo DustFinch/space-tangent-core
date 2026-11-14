@@ -58,8 +58,9 @@ public static partial class SscBodyCatalogue
             var builtInOrbit = phase.Fields.TryGetValue("CustomOrbit", out var orbitName) ? custom?.Orbit(orbitName.AsText()) : null;
             if (builtInOrbit is not null)
                 trajectory = _ => new MissionFrame.Inertial(Basis3d.Identity);
+            double? orbitPeriodSeconds = null;
             var state = builtInOrbit ?? TrySpiceModel(phase, spice, "SpiceOrbit",
-                (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase), WarnPhase, timeline: true);
+                (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase, out orbitPeriodSeconds), WarnPhase, timeline: true);
             if (state is null && TryFactory<SscScriptOrbit>(item, phase, "ScriptedOrbit", "Timeline", root, resolve,
                 WarnPhase, scripts is null ? null : scripts.CreateOrbit) is { } scriptOrbit)
             {
@@ -71,7 +72,6 @@ public static partial class SscBodyCatalogue
                     trajectory = _ => new MissionFrame.Inertial(basis);
                 }
             }
-            double? orbitPeriodSeconds = null;
             Vector3d? surfaceCoordinates = null;
             state ??= ReadTimelineState(phase, center, phaseNumber, WarnPhase, out orbitPeriodSeconds, out surfaceCoordinates);
             if (surfaceCoordinates.HasValue)

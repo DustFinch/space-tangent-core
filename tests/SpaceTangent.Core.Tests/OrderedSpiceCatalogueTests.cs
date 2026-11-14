@@ -1171,6 +1171,55 @@ public sealed class OrderedSpiceCatalogueTests
 
     [OrderedSpiceFact]
     [Trait("Category", "ExternalData")]
+    public void SpiceOrbitPeriodDrivesSynchronousSpinInLooseAndPackedCatalogues()
+    {
+        string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");
+        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(corpus, "reference.json")));
+        var cases = document.RootElement.GetProperty("rows");
+        double explicitPeriod = Period("explicit-period"), inferredPeriod = Period("default-window");
+        var temp = Directory.CreateTempSubdirectory();
+        try
+        {
+            string source = temp.CreateSubdirectory("source").FullName;
+            File.Copy(Path.Combine(corpus, "linear.bsp"), Path.Combine(source, "linear.bsp"));
+            File.WriteAllText(Path.Combine(source, "spin.ssc"), """
+                "Explicit" "Sol" {
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 Period 4.5 }
+                    UniformRotation { }
+                }
+                "Inferred" "Sol" {
+                    Timeline [ {
+                        SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 }
+                        UniformRotation { }
+                    } ]
+                }
+                """);
+            string packed = Path.Combine(temp.FullName, "packed");
+            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            foreach (string root in new[] { source, packed })
+            {
+                var bodies = SscBodyCatalogue.Load(root);
+                var epoch = JulianInstant.FromTdbSeconds(5);
+                var body = Assert.Single(bodies, item => item.Name == "Explicit");
+                Assert.InRange(Math.Abs(body.SampleRotation!(epoch)!.Value.AngularVelocityRadiansPerSecond!.Value.Length -
+                    Math.Tau / explicitPeriod), 0, 1e-13);
+                var sun = new ObjectId("sun");
+                var id = new ObjectId("inferred");
+                var graph = new WorldGraphBuilder();
+                graph.AddTrajectory(sun, _ => default(CartesianState));
+                graph.AddSampledMission(Assert.Single(bodies, item => item.Name == "Inferred").BindTimeline!(id, _ => sun));
+                Assert.True(graph.Build().Evaluate(epoch).TryOrientation(id, out var frame));
+                Assert.InRange(Math.Abs(frame.AngularVelocityRadiansPerSecond!.Value.Length - Math.Tau / inferredPeriod), 0, 1e-13);
+            }
+        }
+        finally { temp.Delete(recursive: true); }
+
+        double Period(string name) => cases.EnumerateArray().Single(row => row.GetProperty("case").GetString() == name)
+            .GetProperty("results")[0].GetProperty("periodDays").GetDouble() * JulianInstant.SecondsPerDay;
+    }
+
+    [OrderedSpiceFact]
+    [Trait("Category", "ExternalData")]
     public void BoundedCassiniPointingHoldsTheNativeEndpoints()
     {
         string corpus = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("SPACETANGENT_SPICE_GLOBAL")!)!, "spice-init");

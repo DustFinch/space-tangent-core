@@ -136,15 +136,19 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, SpiceResources initial, bool preflight, Action<string> warn)
+    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, SpiceResources initial, bool preflight, Action<string> warn, out double? periodSeconds)
     {
         int target = ResolveOrbitId(orbit.Text("Target"));
         int origin = ResolveOrbitId(orbit.Text("Origin"));
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
         var coverage = SpiceCoverage(orbit);
+        double? authoredPeriod = ReadTimeQuantity(orbit, "Period", 86_400);
         if (target == 0 && origin == 0)
+        {
+            periodSeconds = authoredPeriod;
             return _ => default(CartesianState);
+        }
 
         var initialStates = initial.StatesAtInitialization;
         var intervals = initialStates.SscTargetIntervals(target);
@@ -172,6 +176,10 @@ public static partial class SscBodyCatalogue
         }
 
         var states = resources.States;
+        periodSeconds = authoredPeriod;
+        if (periodSeconds is null or 0 && coverage is { Beginning: { } begin, Ending: { } end })
+            periodSeconds = (end.ToJulianDate() - begin.ToJulianDate()) * JulianInstant.SecondsPerDay;
+
         var j2000ToEcliptic = SpiceReferenceFrames.InertialBasis(SpiceReferenceFrames.Id("ECLIPJ2000"))!.Value.Transpose();
         int reportedFailure = 0;
         return Sample;
