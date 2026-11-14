@@ -136,14 +136,14 @@ public static partial class SscBodyCatalogue
         }
     }
 
-    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, SpiceResources initial, bool preflight, Action<string> warn, out double? periodSeconds)
+    private static Func<JulianInstant, CartesianState?> ReadSpiceOrbit(SscValue.Map orbit, SpiceResources resources, SpiceResources initial, bool preflight, Action<string> warn, double periodUnit, out double? periodSeconds)
     {
         int target = ResolveOrbitId(orbit.Text("Target"));
         int origin = ResolveOrbitId(orbit.Text("Origin"));
         if (Number(orbit.Get("BoundingRadius")) <= 0)
             throw new InvalidDataException("SSC SpiceOrbit requires a positive bounding radius.");
         var coverage = SpiceCoverage(orbit);
-        double? authoredPeriod = ReadTimeQuantity(orbit, "Period", 86_400);
+        double? authoredPeriod = ReadTimeQuantity(orbit, "Period", periodUnit);
         if (target == 0 && origin == 0)
         {
             periodSeconds = authoredPeriod;

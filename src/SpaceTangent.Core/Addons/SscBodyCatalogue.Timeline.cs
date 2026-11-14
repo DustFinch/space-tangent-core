@@ -60,7 +60,9 @@ public static partial class SscBodyCatalogue
                 trajectory = _ => new MissionFrame.Inertial(Basis3d.Identity);
             double? orbitPeriodSeconds = null;
             var state = builtInOrbit ?? TrySpiceModel(phase, spice, "SpiceOrbit",
-                (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase, out orbitPeriodSeconds), WarnPhase, timeline: true);
+                (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(phase, "SpiceOrbit", timeline: true), WarnPhase,
+                    center.Equals("Sol", StringComparison.OrdinalIgnoreCase) || center.Equals("SSB", StringComparison.OrdinalIgnoreCase)
+                        ? 31_557_600 : 86_400, out orbitPeriodSeconds), WarnPhase, timeline: true);
             if (state is null && TryFactory<SscScriptOrbit>(item, phase, "ScriptedOrbit", "Timeline", root, resolve,
                 WarnPhase, scripts is null ? null : scripts.CreateOrbit) is { } scriptOrbit)
             {

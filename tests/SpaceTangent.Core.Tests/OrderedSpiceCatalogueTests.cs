@@ -1184,6 +1184,14 @@ public sealed class OrderedSpiceCatalogueTests
             File.Copy(Path.Combine(corpus, "linear.bsp"), Path.Combine(source, "linear.bsp"));
             File.WriteAllText(Path.Combine(source, "spin.ssc"), """
                 "Explicit" "Sol" {
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 Period <d> 4.5 }
+                    UniformRotation { }
+                }
+                "Planet units" "Sol" {
+                    SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 Period 4.5 }
+                    UniformRotation { }
+                }
+                "Satellite units" "Sol/Earth" {
                     SpiceOrbit { Kernel "linear.bsp" Target "1999999" Origin "0" BoundingRadius 500 Period 4.5 }
                     UniformRotation { }
                 }
@@ -1195,7 +1203,7 @@ public sealed class OrderedSpiceCatalogueTests
                 }
                 """);
             string packed = Path.Combine(temp.FullName, "packed");
-            Assert.Equal(2, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
+            Assert.Equal(4, SscBodyCatalogue.BuildPack(source, packed, _ => { }));
             foreach (string root in new[] { source, packed })
             {
                 var bodies = SscBodyCatalogue.Load(root);
@@ -1203,6 +1211,16 @@ public sealed class OrderedSpiceCatalogueTests
                 var body = Assert.Single(bodies, item => item.Name == "Explicit");
                 Assert.InRange(Math.Abs(body.SampleRotation!(epoch)!.Value.AngularVelocityRadiansPerSecond!.Value.Length -
                     Math.Tau / explicitPeriod), 0, 1e-13);
+                AssertPeriod("Planet units", explicitPeriod * 365.25);
+                AssertPeriod("Satellite units", explicitPeriod);
+
+                void AssertPeriod(string name, double seconds)
+                {
+                    var candidate = Assert.Single(bodies, item => item.Name == name);
+                    Assert.InRange(Math.Abs(candidate.SampleRotation!(epoch)!.Value.AngularVelocityRadiansPerSecond!.Value.Length -
+                        Math.Tau / seconds), 0, 1e-13);
+                }
+
                 var sun = new ObjectId("sun");
                 var id = new ObjectId("inferred");
                 var graph = new WorldGraphBuilder();

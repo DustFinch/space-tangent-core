@@ -238,7 +238,7 @@ public static partial class SscBodyCatalogue
             raw = builtInOrbit;
         }
         else if (TrySpiceModel(fields, spice, "SpiceOrbit",
-            (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(fields, "SpiceOrbit"), Warn, out orbitPeriodSeconds), Warn) is { } spiceSample)
+            (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(fields, "SpiceOrbit"), Warn, starScale ? 31_557_600 : 86_400, out orbitPeriodSeconds), Warn) is { } spiceSample)
             raw = spiceSample;
         else if (usesScriptOrbit &&
             TryFactory<SscScriptOrbit>(item, fields, "ScriptedOrbit", "ScriptedOrbit", root, resolve, Warn, scripts is null ? null : scripts.CreateOrbit) is { } scripted)
