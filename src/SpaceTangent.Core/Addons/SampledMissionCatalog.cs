@@ -271,7 +271,7 @@ public static partial class SampledMissionCatalog
                             body.TryGetProperty("display", out _) && !body.TryGetProperty("replaces", out _) ||
                             body.TryGetProperty("particles", out _) || body.TryGetProperty("cosmographiaNaturalAxes", out _) ||
                             body.TryGetProperty("plane", out _) || body.TryGetProperty("direction", out _) || body.TryGetProperty("swarm", out _) ||
-                            HasPackedSpice(body) || HasCompoundTrajectory(body))
+                            HasPackedSpice(body) || HasCompoundTrajectory(body) || IsArchivedFixedModel(body))
                             Register(body, path, owner, packed: true);
                     return true;
                 }
@@ -414,6 +414,16 @@ public static partial class SampledMissionCatalog
 
     private static bool IsCompound(JsonElement orbit) =>
         Text(orbit, "kind") is "chebyshev" or "combination";
+
+    private static bool IsArchivedFixedModel(JsonElement body) =>
+        body.TryGetProperty("appearance", out var appearance) && appearance.TryGetProperty("model", out _) &&
+        body.TryGetProperty("timeline", out var phases) && phases.GetArrayLength() == 1 &&
+        phases[0].TryGetProperty("orbit", out var orbit) && IsFixedEarthMeanEquator(orbit);
+
+    private static bool IsFixedEarthMeanEquator(JsonElement orbit) =>
+        orbit.TryGetProperty("kind", out var kind) && kind.ValueEquals("fixed") &&
+        orbit.TryGetProperty("frame", out var frame) && frame.TryGetProperty("kind", out var frameKind) &&
+        frameKind.ValueEquals("meanEquator") && frame.TryGetProperty("body", out var body) && body.ValueEquals("Sol/Earth");
 
     private static bool IsTimedComponent(JsonElement item) =>
         item.TryGetProperty("class", out var kind) && kind.ValueEquals("component") && item.TryGetProperty("shown", out _) &&

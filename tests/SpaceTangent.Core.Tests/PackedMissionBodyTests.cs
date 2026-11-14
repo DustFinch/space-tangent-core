@@ -10,6 +10,43 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class PackedMissionBodyTests
 {
+    [ArchivedCmodFact]
+    [Trait("Category", "ExternalData")]
+    public void OriginalCmodPackRestoresItsFixedTrackAndArchivedModel()
+    {
+        string root = Path.Combine(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_MODEL_OWNERS")!, "cmod-ssc");
+        var warnings = new List<string>();
+        var earth = SolarSystemSample.EarthId;
+        var mission = Assert.Single(SampledMissionCatalog.Load("pack.json", root,
+            name => name.Equals("Earth", StringComparison.OrdinalIgnoreCase) ? earth : null, warnings.Add));
+        Assert.Empty(warnings);
+        Assert.Equal("Ship", mission.Name);
+        Assert.Equal(Path.GetFullPath(Path.Combine(root, "models", "ship.glb")), Assert.Single(mission.Geometry!).Shape.MeshPath);
+        var graph = new WorldGraphBuilder();
+        graph.AddTrajectory(earth, _ => new CartesianState(default, default));
+        graph.AddSampledMission(mission);
+        var world = graph.Build();
+        var j2000 = new JulianInstant(2451545, 0, TimeScale.Tdb);
+        Assert.True(world.Evaluate(j2000).TryState(mission.Id, out var first));
+        Assert.Equal(new Vector3d(9000, 0, 0), first.PositionKilometers);
+        var later = world.Evaluate(j2000.AddSeconds(36525 * JulianInstant.SecondsPerDay));
+        Assert.True(later.TryState(mission.Id, out var second));
+        Assert.InRange(second.PositionKilometers.Length, 8999.99999, 9000.00001);
+        Assert.InRange((second.PositionKilometers - first.PositionKilometers).Length, 200, 250);
+        Assert.True(world.Evaluate(j2000).TryOrientation(mission.Id, out var firstAttitude));
+        Assert.True(later.TryOrientation(mission.Id, out var secondAttitude));
+        Assert.Equal(firstAttitude, secondAttitude);
+    }
+
+    private sealed class ArchivedCmodFactAttribute : FactAttribute
+    {
+        public ArchivedCmodFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_ARCHIVED_MODEL_OWNERS")))
+                Skip = "Set the original model archive.";
+        }
+    }
+
     [ArchiveFact]
     [Trait("Category", "ExternalData")]
     public void OriginalPackRestoresItsCentresLocalStatesAttitudesAndModels()

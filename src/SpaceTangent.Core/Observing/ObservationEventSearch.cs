@@ -289,7 +289,7 @@ public static partial class ObservationEventSearch
         return Math.Atan2(Vector3d.Cross(first, second).Length, Vector3d.Dot(first, second));
     }
 
-    private static Vector3d DateEquatorToJ2000(Vector3d vector, JulianInstant epoch)
+    internal static Vector3d DateEquatorToJ2000(Vector3d vector, JulianInstant epoch)
     {
         // Inverse of the IAU 1976 mean equator precession. TDB and TT differ here by milliseconds.
         const double RadiansPerArcsecond = Math.PI / (180 * 3600);

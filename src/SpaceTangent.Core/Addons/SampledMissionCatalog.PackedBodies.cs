@@ -3,6 +3,7 @@ using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Observing;
 using SpaceTangent.Core.Spice;
 using SpaceTangent.Core.World;
 
@@ -230,7 +231,12 @@ public static partial class SampledMissionCatalog
                 ? new(fromLocal.Transform(value.PositionKilometers), fromLocal.Transform(value.VelocityKilometersPerSecond)) : null;
         }
 
-        MissionFrame axesFrame = PackedFrame(orbit.GetProperty("frame"), resolve, owner);
+        MissionFrame axesFrame = IsFixedEarthMeanEquator(orbit)
+            ? new MissionFrame.Rotating(Equatorial, epoch => new(new(
+                ObservationEventSearch.DateEquatorToJ2000(new(1, 0, 0), epoch),
+                ObservationEventSearch.DateEquatorToJ2000(new(0, 1, 0), epoch),
+                ObservationEventSearch.DateEquatorToJ2000(new(0, 0, 1), epoch)), default(Vector3d)))
+            : PackedFrame(orbit.GetProperty("frame"), resolve, owner);
         return new(kind switch
         {
             "fixed" => Constant(Vector(orbit.GetProperty("positionKm"))),
@@ -366,6 +372,12 @@ public static partial class SampledMissionCatalog
             double reference = Date(spin, "epochJdTdb", J2000).ToJulianDate();
             return new MissionFrame.Rotating(parent, epoch => new(Multiply(mean,
                 RotateZ(meridian + (epoch.ToJulianDate() - reference) * JulianInstant.SecondsPerDay * rate)), mean.Z * rate));
+        }
+        if (kind is "fixed" or "uniform" && (kind == "fixed" || !spin.TryGetProperty("periodDays", out _)))
+        {
+            var basis = Multiply(Multiply(RotateZ(Angle(spin, "ascendingNodeDeg")), RotateX(Angle(spin, "inclinationDeg"))),
+                RotateZ(Math.PI + Angle(spin, "meridianDeg")));
+            return new MissionFrame.Rotating(parent, _ => new(basis, default(Vector3d)));
         }
         throw new NotSupportedException($"Unsupported packed mission rotation {kind}.");
     }
