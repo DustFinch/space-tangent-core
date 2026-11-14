@@ -11,7 +11,7 @@ public static partial class SscBodyCatalogue
 
     /// <summary>Builds a relocatable body pack from the same loose SSC documents the body loader reads.</summary>
     public static int BuildPack(string source, string destination, Action<string> warning,
-        CancellationToken cancellation = default, SscCustomModels? custom = null)
+        CancellationToken cancellation = default, SscCustomModels? custom = null, ISscScriptModels? scripts = null)
     {
         ArgumentNullException.ThrowIfNull(warning);
         string root = Path.GetFullPath(source);
@@ -50,27 +50,28 @@ public static partial class SscBodyCatalogue
         foreach (var document in documents)
             resources.TryAdd(Path.GetDirectoryName(document.File)!, new());
         foreach (var definition in definitions)
+        foreach (var (scope, timeline) in ModelScopes(definition.Properties))
         foreach (string field in new[] { "ScriptedOrbit", "ScriptedRotation" })
         {
             cancellation.ThrowIfCancellationRequested();
-            if (!definition.Properties.Fields.ContainsKey(field))
+            if (!scope.Fields.ContainsKey(field))
                 continue;
             try
             {
-                ScriptRequest(definition, field, root, Resolve);
+                ScriptRequest(definition, scope, field, timeline ? "Timeline" : field, root, Resolve);
             }
             catch (FileNotFoundException error)
             {
                 warning($"{definition.Parent}/{definition.Name}: {field} module is missing ({error.FileName}).");
             }
-            catch (InvalidDataException error) when (definition.Properties.Fields.ContainsKey(
+            catch (InvalidDataException error) when (scope.Fields.ContainsKey(
                 field == "ScriptedOrbit" ? "SpiceOrbit" : "SpiceRotation"))
             {
                 warning($"{definition.Parent}/{definition.Name}: {field} resource was not indexed ({error.Message}).");
             }
         }
 
-        var bodies = ReadBodyDefinitions(definitions, declarations, _ => root, null, warning, Resolve, cancellation, [root], [], custom: custom);
+        var bodies = ReadBodyDefinitions(definitions, declarations, _ => root, scripts, warning, Resolve, cancellation, [root], [], custom: custom);
         Directory.CreateDirectory(parent);
         string stage = Path.Combine(parent, ".body-pack-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(stage);
@@ -133,7 +134,7 @@ public static partial class SscBodyCatalogue
                 writer.WriteEndArray();
                 writer.WriteEndObject();
             }
-            int installed = Load(stage, cancellation, custom: custom).Count;
+            int installed = Load(stage, cancellation, scripts: scripts, custom: custom).Count;
             if (installed != bodies.Count)
                 throw new InvalidDataException("The generated pack does not load the same number of bodies as its source.");
             cancellation.ThrowIfCancellationRequested();

@@ -104,9 +104,8 @@ public static partial class SscBodyCatalogue
             : ["SampledOrientation", "PrecessingRotation", "UniformRotation", "FixedRotation"];
         if (keys.Any(properties.Fields.ContainsKey) || field == "SpiceRotation" && HasLegacyRotationPeriod(properties))
             return true;
-        return !timeline && (field == "SpiceOrbit"
-            ? properties.Fields.ContainsKey("ScriptedOrbit")
-            : properties.Fields.ContainsKey("ScriptedRotation") || properties.Fields.ContainsKey("CustomRotation"));
+        return field == "SpiceOrbit" ? properties.Fields.ContainsKey("ScriptedOrbit")
+            : properties.Fields.ContainsKey("ScriptedRotation") || !timeline && properties.Fields.ContainsKey("CustomRotation");
     }
 
     private static T? TrySpiceModel<T>(SscValue.Map fields, SscSpiceInput spice, string name,

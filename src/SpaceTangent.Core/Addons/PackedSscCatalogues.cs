@@ -133,6 +133,7 @@ public static partial class SscBodyCatalogue
     private static (string Kind, string Directory) PackedResourceKind(string field, AddonStage stage) => field switch
     {
         "ScriptedOrbit" or "ScriptedRotation" => ("script", "scripts"),
+        "Timeline" when stage == AddonStage.Catalog => ("script", "scripts"),
         "Mesh" => ("model", "models"),
         "Texture" or "Rings" => ("texture", "textures"),
         "SpiceOrbit" or "SpiceRotation" => ("data", "data"),

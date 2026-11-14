@@ -223,7 +223,7 @@ public static partial class SscBodyCatalogue
         double? orbitApoapsis = null;
         Func<bool, SscExtrasolarConic>? extrasolarOrbit = null;
         var timeline = fields.Fields.TryGetValue("Timeline", out var timelineValue)
-            ? ReadTimeline(item, timelineValue, beginning, ending, resolve, spice, Warn, cancellation, custom) : null;
+            ? ReadTimeline(item, timelineValue, beginning, ending, resolve, spice, Warn, cancellation, custom, scripts, root) : null;
         bool usesScriptOrbit = fields.Fields.ContainsKey("ScriptedOrbit");
         var builtInOrbit = Text("CustomOrbit") is { } orbitName ? custom?.Orbit(orbitName) : null;
         if (timeline is not null)
@@ -237,7 +237,7 @@ public static partial class SscBodyCatalogue
             (block, pool, initial) => ReadSpiceOrbit(block, pool, initial, HasSpiceAlternative(fields, "SpiceOrbit"), Warn), Warn) is { } spiceSample)
             raw = spiceSample;
         else if (usesScriptOrbit &&
-            TryFactory<SscScriptOrbit>("ScriptedOrbit", scripts is null ? null : scripts.CreateOrbit) is { } scripted)
+            TryFactory<SscScriptOrbit>(item, fields, "ScriptedOrbit", "ScriptedOrbit", root, resolve, Warn, scripts is null ? null : scripts.CreateOrbit) is { } scripted)
             raw = ScriptOrbit(scripted);
         else if (ReadLegacySampledOrbit(item, fields, "SampledOrbit", resolve, Warn) is { } legacyCurve)
             raw = epoch => legacyCurve.TrySample(epoch, out var state) ? state : null;
@@ -368,7 +368,7 @@ public static partial class SscBodyCatalogue
         else if (TrySpiceModel(fields, spice, "SpiceRotation", (block, pool, initial) => ReadSpiceRotation(block, pool, initial, spinFrame, HasSpiceAlternative(fields, "SpiceRotation")), Warn) is { } spiceSpin)
             spin = spiceSpin;
         else if (usesScriptRotation &&
-            TryFactory<SscScriptRotation>("ScriptedRotation", scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
+            TryFactory<SscScriptRotation>(item, fields, "ScriptedRotation", "ScriptedRotation", root, resolve, Warn, scripts is null ? null : scripts.CreateRotation) is { } scriptedRotation)
             spin = ScriptRotation(scriptedRotation, spinFrame);
         else if (TryReadSampledSpin(fields, spinFrame, cancellation, Warn,
             name => resolve(item, "SampledOrientation", AddonStage.Trajectory, name, "data", "trajectories")) is { } sampledSpin)
@@ -464,25 +464,6 @@ public static partial class SscBodyCatalogue
             BindTimeline = timeline is null ? null : (id, find, radiusKilometers) =>
                 new(id, item.Name, mesh, radius, Array.AsReadOnly(timeline.Select(phase => phase(find, radiusKilometers)).ToArray()))
         };
-
-        T? TryFactory<T>(string field, Func<SscScriptRequest, T?>? make) where T : class
-        {
-            if (make is not null)
-            {
-                try
-                {
-                    if (make(ScriptRequest(item, field, root(item.DirectoryFor(field)), resolve)) is { } model)
-                        return model;
-                }
-                catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException)
-                {
-                    Warn($"{field} initialization failed. {error.Message}");
-                    return null;
-                }
-            }
-            Warn($"{field} initialization failed: factory unavailable or rejected its model.");
-            return null;
-        }
 
         void Warn(string message) => warning?.Invoke($"{item.Parent}/{item.Name}: {message}");
 
