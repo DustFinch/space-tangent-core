@@ -133,5 +133,10 @@
     "path": "src/SpaceTangent.Core/Addons/SampledMissionCatalog.PackedBodies.cs",
     "sha256": "ffb804ca4da8e491c24ad9ff301b0ccc6e00022cc3613b6da7d34e8752346b9e",
     "reason": "Exact sample convention required by the version eighteen packed trajectory schema."
+  },
+  {
+    "path": "docs/REFERENCE_PROVENANCE.md",
+    "sha256": "de0b104858c7a9ff453a7cd2d23d4e34bd8fe1e301471c548d858b6c2e26f2fa",
+    "reason": "Pinned upstream source attribution for the independent native numeric reference."
   }
 ]

@@ -1,0 +1,12 @@
+{
+  "count": 5000,
+  "floatFormat": "IEEE754 binary32 little-endian",
+  "sha256": "952851017b6e560660d68665e7d6c044185751215f8154a704472c0953fc45e5",
+  "sourceSha256": "c1b92aa530372695dc44055deb046f35dcc926557b2d1d44aaa2eb41feab3499",
+  "nativeLibrarySha256": "d4b8b89eb4847802a2722f3799822a8e06f17d06e29fb51bbf3a9e75e34739ab",
+  "nativeReferenceSha256": "fe7f2ef1165e5897212939c1d7807e3f055a7305d7fafce5aa0e56d84dbad8de",
+  "nativeAttributesSha256": "d9f441b6e772105850d03e849d021cab150056e2f9f6ffaee8a1f58fad76fd1c",
+  "epochFixtureSha256": "360e2969d2b6cf4873009c2dbdce1a6a97bb694aff89067143057589719dd9bb",
+  "upstreamCommit": "171462736a30c06594dfc45ad2daf85d024b20e2",
+  "verification": "Original native attribute buffer reproduced byte for byte before the epoch correction."
+}

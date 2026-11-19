@@ -14,7 +14,7 @@
     <ProjectReference Include="../../src/SpaceTangent.Contracts/SpaceTangent.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <None Update="Fixtures/*-reference.csv;Fixtures/sampled-orbit-legacy.xyz;Fixtures/sampled-orbit-legacy.xyzv"
+    <None Update="Fixtures/*-reference.csv;Fixtures/*-reference.bin;Fixtures/*-reference.json;Fixtures/sampled-orbit-legacy.xyz;Fixtures/sampled-orbit-legacy.xyzv"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

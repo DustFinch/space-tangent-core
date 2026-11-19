@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Runtime.InteropServices;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Text.Json;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
@@ -9,6 +11,15 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class MissionSwarmTests
 {
+    [Fact]
+    public void FrozenDiscoveryOracleHasItsPinnedLengthAndContent()
+    {
+        byte[] bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "astorb-discovery-reference.bin"));
+        using var metadata = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "astorb-discovery-reference.json")));
+        Assert.Equal(metadata.RootElement.GetProperty("count").GetInt32() * 4, bytes.Length);
+        Assert.Equal(metadata.RootElement.GetProperty("sha256").GetString(), Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
+    }
+
     [Fact]
     public void AstorbEpochsStartAtMidnightTerrestrialTime()
     {
@@ -38,6 +49,7 @@ public sealed class MissionSwarmTests
         string root = Environment.GetEnvironmentVariable("SPACETANGENT_SWARM_CORPUS")!;
         using var reference = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "swarm-native-reference.json")));
         byte[] expected = File.ReadAllBytes(Path.Combine(root, "swarm-native-objects.bin"));
+        byte[] discoveryReference = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "astorb-discovery-reference.bin"));
         int count = 0;
         var epochs = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", "astorb-epoch-reference.csv"))
             .Where(line => !line.StartsWith('#')).Select(line => line.Split(','))
@@ -66,14 +78,9 @@ public sealed class MissionSwarmTests
                 float actual = swarm.Attributes[i];
                 if (format == MissionSwarmFormat.Astorb && i % MissionSwarm.FieldsPerObject == 8)
                 {
-                    // Discovery offsets change with the corrected origin. Preserve the native discovery-date convention.
-                    string designation = sourceLines[i / MissionSwarm.FieldsPerObject].Substring(7, 19).Trim();
-                    double discovery = -365.25 * 100 * 86400;
-                    if (designation.Length >= 7 && designation.AsSpan(0, 4).IndexOfAnyExceptInRange('0', '9') < 0 &&
-                        designation[4] == ' ' && designation[5] is >= 'A' and <= 'Z' && designation[6] is >= 'A' and <= 'Z')
-                        discovery = ((int.Parse(designation[..4], System.Globalization.CultureInfo.InvariantCulture) - 2000) * 365.25 +
-                            (designation[5] - 'A') * (365.25 / 24)) * 86400;
-                    Assert.Equal((float)(discovery - expectedEpoch), actual);
+                    // Frozen native addObject output after applying the independent ERFA midnight-TT epochs.
+                    int bits = BinaryPrimitives.ReadInt32LittleEndian(discoveryReference.AsSpan(i / MissionSwarm.FieldsPerObject * 4));
+                    Assert.Equal(bits, BitConverter.SingleToInt32Bits(actual));
                     continue;
                 }
                 if (BitConverter.SingleToInt32Bits(oracle[i]) != BitConverter.SingleToInt32Bits(actual))
