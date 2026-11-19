@@ -113,10 +113,12 @@ public sealed class De440EphemerisTests
             DeltaTModel.MorrisonStephenson2004);
         double degrees = 180 / Math.PI;
 
-        Assert.InRange(moon.SolarAltitudeRadians * degrees, -33.25, -33.19);
-        Assert.InRange(moon.LunarAltitudeRadians * degrees, 27.74, 27.81);
-        Assert.InRange(day.SolarAltitudeRadians * degrees, 16.21, 16.28);
-        Assert.InRange(day.LunarAltitudeRadians * degrees, -15.62, -15.55);
+        // ERFA eraC2t06a (IAU 2006/2000A) with eraGd2gc (WGS 84), the same DE440 vectors and ΔT = 69.184 s give
+        // -33.4811, 28.0481, 16.2551 and -15.5864 degrees. The 0.01-degree margin covers the IAU 2000B nutation.
+        Assert.InRange(moon.SolarAltitudeRadians * degrees, -33.4911, -33.4711);
+        Assert.InRange(moon.LunarAltitudeRadians * degrees, 28.0381, 28.0581);
+        Assert.InRange(day.SolarAltitudeRadians * degrees, 16.2451, 16.2651);
+        Assert.InRange(day.LunarAltitudeRadians * degrees, -15.5964, -15.5764);
         Assert.InRange(moon.RelativeLunarFlux * .12, .10, .16);
     }
 
@@ -124,7 +126,7 @@ public sealed class De440EphemerisTests
     public void MoscowMoonHorizontalCoordinatesMatchAirlessHorizons()
     {
         // JPL Horizons, 301 from coord@399, geodetic 37.6173E, 55.7558N, 0.15 km.
-        // Quantity 4, AIRLESS, 2024-10-17 00:00 UTC. Allow mean-frame and spherical-site approximations.
+        // Quantity 4, AIRLESS, 2024-10-17 00:00 UTC.
         var site = new EarthSite(55.7558, 37.6173, .15);
         var epoch = TimeConversion.FromUtc(new(new(2024, 10, 17)), TimeScale.Tdb);
         var lighting = EarthSurfaceLighting.Sample(Ephemeris.Value.Sample(epoch), site, DeltaTModel.MorrisonStephenson2004);
@@ -140,16 +142,16 @@ public sealed class De440EphemerisTests
     [De440Fact]
     public void CivilTwilightMatchesNavalObservatoryAndHandlesPolarDayAndNight()
     {
-        // USNO Complete Sun and Moon Data for One Day, same sites and dates, tz=0.
-        // Allow for the mean-frame approximation and the steeper sensitivity at high latitudes.
+        // USNO Complete Sun and Moon Data for One Day, same sites and dates, tz=0. USNO rounds to the minute; the
+        // Sun crosses the civil limit at a grazing angle in the Arctic winter, so those times get two minutes.
         const DeltaTModel model = DeltaTModel.MorrisonStephenson2004;
         var moscow = new EarthSite(55.7558, 37.6173, .15);
         var moscowDate = new DateOnly(2024, 10, 17);
         var normal = EarthObserving.Twilight(Ephemeris.Value, moscowDate, moscow, model);
-        CheckTime(normal.CivilLimit.Rising, moscowDate, 3, 27, 6);
-        CheckTime(normal.Horizon.Rising, moscowDate, 4, 5, 6);
-        CheckTime(normal.Horizon.Setting, moscowDate, 14, 24, 6);
-        CheckTime(normal.CivilLimit.Setting, moscowDate, 15, 1, 6);
+        CheckTime(normal.CivilLimit.Rising, moscowDate, 3, 27, 1);
+        CheckTime(normal.Horizon.Rising, moscowDate, 4, 5, 1);
+        CheckTime(normal.Horizon.Setting, moscowDate, 14, 24, 1);
+        CheckTime(normal.CivilLimit.Setting, moscowDate, 15, 1, 1);
 
         var tromso = new EarthSite(69.6492, 18.9553, .01);
         var summer = EarthObserving.Twilight(Ephemeris.Value, new(2024, 6, 21), tromso, model);
@@ -157,8 +159,8 @@ public sealed class De440EphemerisTests
         var winterDate = new DateOnly(2024, 12, 21);
         var winter = EarthObserving.Twilight(Ephemeris.Value, winterDate, tromso, model);
         Assert.True(winter.Horizon.AlwaysBelow);
-        CheckTime(winter.CivilLimit.Rising, winterDate, 8, 32, 10);
-        CheckTime(winter.CivilLimit.Setting, winterDate, 12, 53, 10);
+        CheckTime(winter.CivilLimit.Rising, winterDate, 8, 32, 2);
+        CheckTime(winter.CivilLimit.Setting, winterDate, 12, 53, 2);
 
         Assert.Equal(moscowDate.AddDays(1),
             EarthObserving.LocalMeanDate(TimeConversion.FromUtc(new(moscowDate, 23, 30)), moscow));

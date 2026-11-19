@@ -40,9 +40,9 @@ public static partial class SscBodyCatalogue
             {
                 if (index != 0)
                     throw new InvalidDataException("Only the first SSC Timeline phase may declare Beginning.");
-                start = ReadCatalogueDate(begins.AsText());
+                start = SscSampledCatalog.ReadDate(begins.AsText());
             }
-            var end = phase.Fields.TryGetValue("Ending", out var ends) ? ReadCatalogueDate(ends.AsText()) :
+            var end = phase.Fields.TryGetValue("Ending", out var ends) ? SscSampledCatalog.ReadDate(ends.AsText()) :
                 index == phases.Items.Length - 1 ? ending ?? LatestTimelineEpoch :
                 throw new InvalidDataException("A nonfinal SSC Timeline phase requires Ending.");
             if (end.CompareTo(start) <= 0)
@@ -278,22 +278,5 @@ public static partial class SscBodyCatalogue
 
         static RelativeDirection Direction(SscBodyAxis axis, Func<string, ObjectId> find) =>
             new(find(axis.Observer), find(axis.Target), axis.Quantity);
-    }
-
-    private static JulianInstant ReadCatalogueDate(string text)
-    {
-        var epoch = SscSampledCatalog.ReadDate(text);
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-            return epoch;
-        DateTime date = DateTime.UnixEpoch.AddTicks((long)(epoch.DifferenceNanoseconds(
-            JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb)) / 100));
-        DateOnly day = DateOnly.FromDateTime(date);
-        if (day < LeapSecondTable.FirstDate)
-        {
-            var tt = new JulianInstant(epoch.Day, epoch.NanosecondsOfDay, TimeScale.Tt);
-            return TimeConversion.ApproximateTdbForEarth(tt.AddSeconds(DeltaT.Seconds(tt, DeltaTModel.EspenakMeeus2006)));
-        }
-        var utc = new UtcDateTime(day, date.Hour, date.Minute, date.Second, (int)(date.Ticks % TimeSpan.TicksPerSecond) * 100);
-        return TimeConversion.ApproximateTdbForEarth(TimeConversion.FromUtc(utc, TimeScale.Tt));
     }
 }

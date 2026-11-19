@@ -12,9 +12,17 @@ public readonly record struct EarthSite(double LatitudeDegrees, double Longitude
         double.IsFinite(HeightKilometers) && HeightKilometers >= 0;
 }
 
+/// <summary>
+/// An observer on the Earth. Positions and axes are Earth-centred in the world (ICRF) axes.
+/// <see cref="EarthRotationRadians"/> is the right ascension of the Greenwich meridian in world axes, for
+/// consumers that rotate an Earth model about the world Z axis; <see cref="EarthToWorld"/> is the full rotation.
+/// </summary>
 public readonly record struct SurfaceLighting(Vector3d PositionKilometers, Basis3d EastNorthUp,
     double EarthRotationRadians, Vector3d EarthToSun, Vector3d EarthToMoon, double RelativeLunarFlux)
 {
+    /// <summary>Rotation from Earth-fixed axes (X to Greenwich, Z to the pole) to the world axes.</summary>
+    public Basis3d EarthToWorld { get; init; } = Basis3d.Identity;
+
     public double SolarAltitudeRadians => Altitude(EarthToSun - PositionKilometers);
     public double LunarAltitudeRadians => Altitude(EarthToMoon - PositionKilometers);
 
@@ -25,29 +33,43 @@ public readonly record struct SurfaceLighting(Vector3d PositionKilometers, Basis
 public static class EarthSurfaceLighting
 {
     public const double EarthRadiusKilometers = 6378.1366;
+    public const double EarthFlattening = 1 / 298.257223563;
     public const double MoonRadiusKilometers = 1737.4;
     private const double SolarRadiusKilometers = 695_700;
     private const double MeanLunarDistanceKilometers = 384_400;
 
-    /// <summary>Mean sidereal rotation on a spherical Earth, with ICRF axes used as the mean equator approximation.</summary>
+    /// <summary>
+    /// A geodetic site on the reference ellipsoid, oriented by <see cref="EarthOrientation"/> (precession, nutation and
+    /// the Earth rotation angle from the selected ΔT model). The up axis is the ellipsoid normal.
+    /// </summary>
     public static SurfaceLighting Sample(SolarSystemSample system, EarthSite site, DeltaTModel deltaT)
     {
         if (!site.IsValid())
             throw new ArgumentOutOfRangeException(nameof(site));
 
-        double angle = GreenwichSiderealAngle(system.Epoch, deltaT);
-        double longitude = angle + site.LongitudeDegrees * (Math.PI / 180);
+        Basis3d toWorld = EarthOrientation.TerrestrialToWorld(system.Epoch, deltaT).ToWorld;
+        double longitude = site.LongitudeDegrees * (Math.PI / 180);
         double latitude = site.LatitudeDegrees * (Math.PI / 180);
         var (sinLongitude, cosLongitude) = Math.SinCos(longitude);
         var (sinLatitude, cosLatitude) = Math.SinCos(latitude);
         var east = new Vector3d(-sinLongitude, cosLongitude, 0);
         var north = new Vector3d(-sinLatitude * cosLongitude, -sinLatitude * sinLongitude, cosLatitude);
         var up = new Vector3d(cosLatitude * cosLongitude, cosLatitude * sinLongitude, sinLatitude);
+        double eccentricitySquared = EarthFlattening * (2 - EarthFlattening);
+        double normalRadius = EarthRadiusKilometers / Math.Sqrt(1 - eccentricitySquared * sinLatitude * sinLatitude);
+        var position = new Vector3d((normalRadius + site.HeightKilometers) * cosLatitude * cosLongitude,
+            (normalRadius + site.HeightKilometers) * cosLatitude * sinLongitude,
+            (normalRadius * (1 - eccentricitySquared) + site.HeightKilometers) * sinLatitude);
 
         Vector3d sun = (system.Sun - system.Earth).PositionKilometers;
         Vector3d moon = (system.Moon - system.Earth).PositionKilometers;
-        return new(up * (EarthRadiusKilometers + site.HeightKilometers), new(east, north, up),
-            angle, sun, moon, RelativeLunarFlux(sun, moon));
+        double greenwich = Math.Atan2(toWorld.X.Y, toWorld.X.X);
+        return new(toWorld.Transform(position),
+            new(toWorld.Transform(east), toWorld.Transform(north), toWorld.Transform(up)),
+            greenwich < 0 ? greenwich + Math.Tau : greenwich, sun, moon, RelativeLunarFlux(sun, moon))
+        {
+            EarthToWorld = toWorld
+        };
     }
 
     public static double RelativeLunarFlux(Vector3d earthToSun, Vector3d earthToMoon)
@@ -76,24 +98,5 @@ public static class EarthSurfaceLighting
         double scale = MeanLunarDistanceKilometers / moonDistance *
             AstronomicalUnits.KilometersPerAstronomicalUnit / solarDistance;
         return reflection * visible * scale * scale;
-    }
-
-    internal static double GreenwichSiderealAngle(JulianInstant epoch, DeltaTModel deltaT)
-    {
-        JulianInstant tt = TimeConversion.ApproximateTtForEarth(epoch);
-        double ttDays = (double)tt.DifferenceNanoseconds(new(JulianInstant.J2000Day, 0, TimeScale.Tt)) /
-            JulianInstant.NanosecondsPerDay;
-        double ut1Days = ttDays - DeltaT.Seconds(tt, deltaT) / JulianInstant.SecondsPerDay;
-        return SiderealAngle(ut1Days, ttDays / 36_525);
-    }
-
-    private static double SiderealAngle(double ut1Days, double ttCenturies)
-    {
-        // IAU 2006 GMST, expressed as Earth rotation angle plus the precession in right ascension.
-        double turns = .7790572732640 + 1.00273781191135448 * ut1Days;
-        double t = ttCenturies;
-        double arcseconds = .014506 + t * (4612.156534 + t * (1.3915817 +
-            t * (-.00000044 + t * (-.000029956 - t * .0000000368))));
-        return (turns - Math.Floor(turns)) * Math.Tau + arcseconds * (Math.PI / (180 * 3600));
     }
 }

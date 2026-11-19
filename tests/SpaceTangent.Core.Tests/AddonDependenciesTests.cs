@@ -7,6 +7,25 @@ namespace SpaceTangent.Core.Tests;
 public sealed class AddonDependenciesTests
 {
     [Fact]
+    public void OversizedInputsAreRejectedBeforeReading()
+    {
+        DirectoryInfo root = Directory.CreateTempSubdirectory("space-tangent-limits-");
+        try
+        {
+            string file = Path.Combine(root.FullName, "pack.json");
+            File.WriteAllBytes(file, new byte[1025]);
+            Assert.Throws<InvalidDataException>(() => AddonDependencies.OpenRead(file, 1024));
+            using (var stream = AddonDependencies.OpenRead(file, 1025))
+                Assert.Equal(1025, stream.Length);
+
+            // A surface-location catalogue above its 1 MiB limit fails instead of being read into memory.
+            File.WriteAllBytes(Path.Combine(root.FullName, "earth_locs.ssc"), new byte[1024 * 1024 + 1]);
+            Assert.ThrowsAny<InvalidDataException>(() => SscSurfaceLocations.Load(root.FullName));
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
     public void ContentControlsReuseEvenWhenSizeAndTimestampAgree()
     {
         DirectoryInfo root = Directory.CreateTempSubdirectory("space-tangent-inputs-");

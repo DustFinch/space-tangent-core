@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Ephemerides;
 using SpaceTangent.Core.Time;
 
@@ -23,8 +24,10 @@ public static partial class ObservationEventSearch
     private const double EarthRadius = EarthSurfaceLighting.EarthRadiusKilometers;
     private const double SunRadius = SolarOccultation.SunRadiusKilometers;
     private const double LightKilometersPerSecond = 299_792.458;
-    private const double EarthFlattening = 1 / 298.257223563;
     private const double ResolutionSeconds = .25;
+    // Danjon's rule: the atmosphere enlarges the Earth's shadow as if its radius grew by 1/85; 0.998340 is the
+    // mean radius across the shadow for an oblate Earth. This reproduces the NASA/GSFC lunar eclipse predictions.
+    private const double EarthShadowRadius = EarthRadius * .998340 * (1 + 1d / 85);
     private readonly record struct Peak(double Seconds, double Score);
 
     public static IReadOnlyList<SolarEclipseEvent> FindSolarEclipses(ISolarSystemEphemeris ephemeris, EarthSite site,
@@ -62,10 +65,7 @@ public static partial class ObservationEventSearch
             try { surface = EarthSurfaceLighting.Sample(sample, site, deltaT); }
             catch (ArgumentOutOfRangeException) { return null; }
             Vector3d up = surface.EastNorthUp.Z;
-            double eccentricitySquared = EarthFlattening * (2 - EarthFlattening);
-            double normalRadius = EarthRadius / Math.Sqrt(1 - eccentricitySquared * up.Z * up.Z);
-            var geodetic = up * (normalRadius + site.HeightKilometers) - new Vector3d(0, 0, normalRadius * eccentricitySquared * up.Z);
-            Vector3d eye = sample.Earth.PositionKilometers + DateEquatorToJ2000(geodetic, epoch);
+            Vector3d eye = sample.Earth.PositionKilometers + surface.PositionKilometers;
             Vector3d sun = sample.Sun.PositionKilometers - eye, moon = sample.Moon.PositionKilometers - eye;
             var sunEmission = epoch.AddSeconds(-sun.Length / LightKilometersPerSecond);
             var moonEmission = epoch.AddSeconds(-moon.Length / LightKilometersPerSecond);
@@ -73,7 +73,7 @@ public static partial class ObservationEventSearch
                 return null;
             sun = ephemeris.Sample(sunEmission).Sun.PositionKilometers - eye;
             moon = ephemeris.Sample(moonEmission).Moon.PositionKilometers - eye;
-            double altitude = Math.Asin(Math.Clamp(Vector3d.Dot(DateEquatorToJ2000(up, epoch), sun / sun.Length), -1, 1));
+            double altitude = Math.Asin(Math.Clamp(Vector3d.Dot(up, sun / sun.Length), -1, 1));
             return (sun, moon, Math.Asin(SunRadius / sun.Length), Math.Asin(MoonRadius / moon.Length),
                 Separation(sun, moon), altitude);
         }
@@ -99,22 +99,35 @@ public static partial class ObservationEventSearch
         double? Umbra(double seconds) => Geometry(seconds) is { } value ? value.Umbra + MoonRadius - value.Offset : null;
         double? Total(double seconds) => Geometry(seconds) is { } value ? value.Umbra - MoonRadius - value.Offset : null;
 
+        // The epoch is when an observer at the geocentre sees the Moon. That light left the Moon one light time
+        // earlier; the sunlight that shaped the shadow passed the Earth one more light time before that and left
+        // the Sun about 499 s earlier still.
         (double Offset, double Penumbra, double Umbra)? Geometry(double seconds)
         {
             var epoch = from.AddSeconds(seconds);
             if (!Covers(ephemeris, epoch))
                 return null;
-            var sample = ephemeris.Sample(epoch);
-            Vector3d earthAwayFromSun = (sample.Earth - sample.Sun).PositionKilometers;
+            var now = ephemeris.Sample(epoch);
+            double lightTime = (now.Moon - now.Earth).PositionKilometers.Length / LightKilometersPerSecond;
+            var atMoon = epoch.AddSeconds(-lightTime);
+            var atEarth = atMoon.AddSeconds(-lightTime);
+            if (!Covers(ephemeris, atEarth))
+                return null;
+            var earthSample = ephemeris.Sample(atEarth);
+            Vector3d earth = earthSample.Earth.PositionKilometers;
+            var atSun = atEarth.AddSeconds(-(earthSample.Sun.PositionKilometers - earth).Length / LightKilometersPerSecond);
+            if (!Covers(ephemeris, atSun))
+                return null;
+            Vector3d earthAwayFromSun = earth - ephemeris.Sample(atSun).Sun.PositionKilometers;
             double sunDistance = earthAwayFromSun.Length;
             var axis = earthAwayFromSun / sunDistance;
-            Vector3d earthToMoon = (sample.Moon - sample.Earth).PositionKilometers;
+            Vector3d earthToMoon = ephemeris.Sample(atMoon).Moon.PositionKilometers - earth;
             double along = Vector3d.Dot(earthToMoon, axis);
             if (along <= 0)
                 return null;
             double offset = (earthToMoon - axis * along).Length;
-            return (offset, EarthRadius + along * (SunRadius + EarthRadius) / sunDistance,
-                EarthRadius - along * (SunRadius - EarthRadius) / sunDistance);
+            return (offset, EarthShadowRadius + along * (SunRadius + EarthRadius) / sunDistance,
+                EarthShadowRadius - along * (SunRadius - EarthRadius) / sunDistance);
         }
     }
 
@@ -287,25 +300,5 @@ public static partial class ObservationEventSearch
         first /= first.Length;
         second /= second.Length;
         return Math.Atan2(Vector3d.Cross(first, second).Length, Vector3d.Dot(first, second));
-    }
-
-    internal static Vector3d DateEquatorToJ2000(Vector3d vector, JulianInstant epoch)
-    {
-        // Inverse of the IAU 1976 mean equator precession. TDB and TT differ here by milliseconds.
-        const double RadiansPerArcsecond = Math.PI / (180 * 3600);
-        double centuries = (epoch.ToJulianDate() - JulianInstant.J2000Day) / 36_525;
-        double zeta = centuries * (2306.2181 + centuries * (.30188 + .017998 * centuries)) * RadiansPerArcsecond;
-        double z = centuries * (2306.2181 + centuries * (1.09468 + .018203 * centuries)) * RadiansPerArcsecond;
-        double theta = centuries * (2004.3109 + centuries * (-.42665 - .041833 * centuries)) * RadiansPerArcsecond;
-        var first = RotateZ(vector, -z);
-        var (sin, cos) = Math.SinCos(theta);
-        var tilted = new Vector3d(cos * first.X + sin * first.Z, first.Y, -sin * first.X + cos * first.Z);
-        return RotateZ(tilted, -zeta);
-
-        static Vector3d RotateZ(Vector3d point, double angle)
-        {
-            var (sine, cosine) = Math.SinCos(angle);
-            return new(cosine * point.X - sine * point.Y, sine * point.X + cosine * point.Y, point.Z);
-        }
     }
 }

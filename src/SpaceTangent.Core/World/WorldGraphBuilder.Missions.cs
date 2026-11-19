@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Orbits;
 using SpaceTangent.Core.Ephemerides;
@@ -12,18 +13,17 @@ public sealed partial class WorldGraphBuilder
 {
     private readonly Dictionary<ObjectId, MissionArc[]> _missionArcs = new();
 
-    public void AddMeanEarthRotation()
+    /// <summary>
+    /// Orients the Earth with precession, nutation and the Earth rotation angle (<see cref="EarthOrientation"/>).
+    /// Use the same ΔT model as the observer views.
+    /// </summary>
+    public void AddMeanEarthRotation(DeltaTModel deltaT = DeltaTModel.MorrisonStephenson2004)
     {
-        AddOrientation(SolarSystemSample.EarthId, epoch =>
-        {
-            try
-            {
-                var (sin, cos) = Math.SinCos(EarthSurfaceLighting.GreenwichSiderealAngle(epoch, DeltaTModel.MorrisonStephenson2004));
-                return new(new(new(cos, sin, 0), new(-sin, cos, 0), new(0, 0, 1)),
-                    new Vector3d(0, 0, Math.Tau / 86164.0905));
-            }
-            catch (ArgumentOutOfRangeException) { return null; }
-        });
+        if (deltaT is < DeltaTModel.EspenakMeeus2006 or > DeltaTModel.FixedOffset)
+            throw new ArgumentOutOfRangeException(nameof(deltaT));
+        Add(new(new(SolarSystemSample.EarthId, WorldChannel.Orientation), [], input =>
+            WorldValue.FromOrientation(EarthOrientation.TerrestrialToWorld(input.Epoch, input.DeltaT ?? deltaT))));
+        _defaultDeltaT = deltaT;
     }
 
     public void AddSampledMission(SampledMission mission)

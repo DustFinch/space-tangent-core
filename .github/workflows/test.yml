@@ -1,0 +1,19 @@
+name: Core checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet restore SpaceTangent.Core.sln --locked-mode
+      - run: dotnet build SpaceTangent.Core.sln -c Release --no-restore
+      - run: dotnet test tests/SpaceTangent.Core.Tests -c Release --no-build --logger trx
+# Dataset-dependent tests report skips here; local ExternalData and GPU runs remain separate release checks.

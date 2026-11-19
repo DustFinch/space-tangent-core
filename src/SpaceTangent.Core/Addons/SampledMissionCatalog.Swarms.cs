@@ -12,6 +12,15 @@ public sealed record MissionSwarmStyle(string SourcePath, MissionSwarm Elements,
 
 public static partial class SampledMissionCatalog
 {
+    [ThreadStatic] private static Dictionary<(string Path, MissionSwarmFormat Format), MissionSwarm>? _swarmCache;
+
+    private sealed class SwarmReadScope : IDisposable
+    {
+        private readonly Dictionary<(string, MissionSwarmFormat), MissionSwarm>? _previous = _swarmCache;
+        internal SwarmReadScope() => _swarmCache ??= new();
+        public void Dispose() => _swarmCache = _previous;
+    }
+
     private static MissionShape ReadSwarm(JsonElement item, string root, string directory,
         CancellationToken cancellation, bool packed = false)
     {
@@ -25,11 +34,17 @@ public static partial class SampledMissionCatalog
         if (packed && !UsesStandardAxes(item) && (!item.TryGetProperty("convention", out var convention) || convention.GetString() != "cosmographia"))
             throw new NotSupportedException("The packed swarm has a different orbital convention.");
         string path = LocalAddonFiles.ResolveRelative(root, directory, Text(item, "source"));
-        var swarm = AddonDiagnostics.Read(AddonStage.Trajectory, path, () =>
+        cancellation.ThrowIfCancellationRequested();
+        var swarm = _swarmCache?.GetValueOrDefault((path, format));
+        if (swarm is null)
         {
-            using var file = AddonDependencies.OpenRead(path, MissionSwarm.MaximumInputBytes);
-            return MissionSwarm.Read(file, format, cancellation);
-        });
+            swarm = AddonDiagnostics.Read(AddonStage.Trajectory, path, () =>
+            {
+                using var file = AddonDependencies.OpenRead(path, MissionSwarm.MaximumInputBytes);
+                return MissionSwarm.Read(file, format, cancellation);
+            });
+            _swarmCache?.Add((path, format), swarm);
+        }
         double opacity = Number("opacity", 1);
         double size = Number(packed ? "pointSize" : "particleSize", 3);
         double fade = Number("fadeSize", 50);

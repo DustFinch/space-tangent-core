@@ -12,6 +12,36 @@ public sealed class ObservationEventSearchTests
 {
     private const DeltaTModel DeltaT = DeltaTModel.MorrisonStephenson2004;
 
+    [EventEphemerisTheory]
+    [Trait("Category", "ExternalData")]
+    [InlineData(2021, 11, 19, 9, 4, 6, EclipseClass.Partial, .9742, 361.5, 208.4, 0)]
+    [InlineData(2022, 11, 8, 11, 0, 22, EclipseClass.Total, 1.3589, 353.9, 219.8, 85.0)]
+    [InlineData(2023, 5, 5, 17, 24, 5, EclipseClass.Penumbral, -.0457, 257.5, 0, 0)]
+    public void DifferentLunarEclipseClassesMatchThePublishedCanon(int year, int month, int day,
+        int hour, int minute, int second, EclipseClass kind, double magnitude, double penumbra, double partial, double total)
+    {
+        // NASA's century catalogue gives greatest eclipse in TD, not UTC, and durations rounded to 0.1 min.
+        // https://eclipse.gsfc.nasa.gov/LEcat5/LE2001-2100.html
+        // 30 s covers the mean shadow-radius approximation across three geometries; magnitude tolerance is .005.
+        var date = new DateOnly(year, month, day);
+        var eclipse = Assert.Single(ObservationEventSearch.FindLunarEclipses(Ephemeris(), Utc(date, 0), Utc(date.AddDays(1), 0)));
+        var expectedTt = JulianInstant.FromJulianDate(date.DayNumber + 1721425.5, TimeScale.Tt)
+            .AddSeconds(hour * 3600 + minute * 60 + second);
+        Assert.Equal(kind, eclipse.Class);
+        Assert.InRange(Seconds(TimeConversion.Convert(eclipse.Penumbral.Peak, TimeScale.Tt), expectedTt), -30, 30);
+        Assert.InRange(eclipse.UmbralMagnitude - magnitude, -.005, .005);
+        Duration(eclipse.Penumbral, penumbra);
+        Duration(eclipse.Umbral, partial);
+        Duration(eclipse.Total, total);
+
+        static void Duration(ObservationInterval? interval, double minutes)
+        {
+            if (minutes == 0) { Assert.Null(interval); return; }
+            Assert.NotNull(interval);
+            Assert.InRange(Seconds(interval.Value.Last!.Value, interval.Value.First!.Value) - minutes * 60, -30, 30);
+        }
+    }
+
     [EventEphemerisFact]
     [Trait("Category", "ExternalData")]
     public void April2024SolarAndMarch2025LunarEclipsesMatchPublishedCircumstances()
@@ -40,11 +70,13 @@ public sealed class ObservationEventSearchTests
         var lunarDate = new DateOnly(2025, 3, 14);
         var lunar = Assert.Single(ObservationEventSearch.FindLunarEclipses(ephemeris, Utc(lunarDate, 0), Utc(lunarDate, 12)));
         Assert.Equal(EclipseClass.Total, lunar.Class);
-        Assert.InRange(Seconds(lunar.Penumbral.Peak, Utc(lunarDate, 6, 58, 42)), -90, 90);
-        Assert.InRange(Seconds(lunar.Penumbral.First!.Value, Utc(lunarDate, 3, 57, 24)), -180, 180);
-        Assert.InRange(Seconds(lunar.Umbral!.Value.First!.Value, Utc(lunarDate, 5, 9, 33)), -240, 240);
-        Assert.InRange(Seconds(lunar.Total!.Value.Last!.Value, Utc(lunarDate, 7, 31, 23)), -240, 240);
-        Assert.InRange(lunar.UmbralMagnitude, 1.10, 1.21);
+        // NASA/GSFC: P1 03:57:24, U1 05:09:33, greatest 06:58:42, U3 07:31:23 UT, umbral magnitude 1.1784.
+        // Published times are rounded to the second and use their own ΔT, hence 20 s.
+        Assert.InRange(Seconds(lunar.Penumbral.Peak, Utc(lunarDate, 6, 58, 42)), -20, 20);
+        Assert.InRange(Seconds(lunar.Penumbral.First!.Value, Utc(lunarDate, 3, 57, 24)), -20, 20);
+        Assert.InRange(Seconds(lunar.Umbral!.Value.First!.Value, Utc(lunarDate, 5, 9, 33)), -20, 20);
+        Assert.InRange(Seconds(lunar.Total!.Value.Last!.Value, Utc(lunarDate, 7, 31, 23)), -20, 20);
+        Assert.InRange(lunar.UmbralMagnitude, 1.1784 - .003, 1.1784 + .003);
         Assert.Empty(ObservationEventSearch.FindLunarEclipses(ephemeris, Utc(lunarDate.AddDays(1), 0), Utc(lunarDate.AddDays(2), 0)));
     }
 
@@ -81,19 +113,19 @@ public sealed class ObservationEventSearchTests
         var ephemeris = Ephemeris();
         var passes = ObservationEventSearch.FindSatellitePasses(ephemeris, epoch => iss.SampleInWorld(epoch, DeltaT),
             site, DeltaT, from, to, 10);
-        (int First, int Peak, int Last, double Altitude)[] expected = [
-            (5315, 5503, 5691, 38.96021), (11114, 11286, 11460, 27.37695),
-            (17032, 17048, 17064, 10.07113), (83129, 83279, 83431, 20.13281)
-        ];
+        // Independently generated in TEME/terrestrial axes by python-sgp4 and ERFA; the original tolerances remain.
+        var expected = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", "iss-pass-reference.csv"))
+            .Where(line => !line.StartsWith('#')).Select(line => line.Split(',')
+                .Select(value => double.Parse(value, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).ToArray();
         Assert.Equal(expected.Length, passes.Count);
         for (int index = 0; index < expected.Length; index++)
         {
             var pass = passes[index];
             var oracle = expected[index];
-            Assert.InRange(Seconds(pass.AboveHorizon.First!.Value, from) - oracle.First, -1.2, 1.2);
-            Assert.InRange(Seconds(pass.AboveHorizon.Peak, from) - oracle.Peak, -1.2, 1.2);
-            Assert.InRange(Seconds(pass.AboveHorizon.Last!.Value, from) - oracle.Last, -1.2, 1.2);
-            Assert.InRange(pass.PeakAltitudeDegrees - oracle.Altitude, -.001, .001);
+            Assert.InRange(Seconds(pass.AboveHorizon.First!.Value, from) - oracle[0], -1.2, 1.2);
+            Assert.InRange(Seconds(pass.AboveHorizon.Peak, from) - oracle[1], -1.2, 1.2);
+            Assert.InRange(Seconds(pass.AboveHorizon.Last!.Value, from) - oracle[2], -1.2, 1.2);
+            Assert.InRange(pass.PeakAltitudeDegrees - oracle[3], -.001, .001);
         }
         Assert.Empty(ObservationEventSearch.FindSatellitePasses(ephemeris, epoch => iss.SampleInWorld(epoch, DeltaT),
             site, DeltaT, Utc(new(2024, 10, 27), 0), Utc(new(2024, 10, 28), 0), 10));
@@ -122,6 +154,15 @@ public sealed class ObservationEventSearchTests
     private class EventEphemerisFactAttribute : FactAttribute
     {
         public EventEphemerisFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")))
+                Skip = "Set the pinned DE440 data path.";
+        }
+    }
+
+    private sealed class EventEphemerisTheoryAttribute : TheoryAttribute
+    {
+        public EventEphemerisTheoryAttribute()
         {
             if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_DE440")))
                 Skip = "Set the pinned DE440 data path.";

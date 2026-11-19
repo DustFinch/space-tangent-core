@@ -9,6 +9,28 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class MissionSwarmTests
 {
+    [Fact]
+    public void AstorbEpochsStartAtMidnightTerrestrialTime()
+    {
+        // An ASTORB record dated 2000-01-01 refers to 0h TT, half a day before J2000 (JD 2451545.0 TT).
+        var line = new char[200];
+        Array.Fill(line, ' ');
+        void Put(int offset, string value) => value.CopyTo(0, line, offset, value.Length);
+        Put(0, "     1");
+        Put(7, "Ceres");
+        Put(106, "20000101");
+        Put(115, "  10.00000");
+        Put(126, "  80.00000");
+        Put(137, "  70.00000");
+        Put(148, " 10.00000");
+        Put(158, "0.07600000");
+        Put(169, "   2.7660000");
+        using var stream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(new string(line).TrimEnd() + "\n"));
+        var swarm = MissionSwarm.Read(stream, MissionSwarmFormat.Astorb);
+        Assert.Equal(1, swarm.Count);
+        Assert.InRange(swarm.EpochSeconds, -43_200.01, -43_199.99);
+    }
+
     [SwarmCorpusFact]
     [Trait("Category", "ExternalData")]
     public void ArchivedSwarmAttributesMatchTheIndependentNativeOracle()
@@ -17,6 +39,9 @@ public sealed class MissionSwarmTests
         using var reference = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "swarm-native-reference.json")));
         byte[] expected = File.ReadAllBytes(Path.Combine(root, "swarm-native-objects.bin"));
         int count = 0;
+        var epochs = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", "astorb-epoch-reference.csv"))
+            .Where(line => !line.StartsWith('#')).Select(line => line.Split(','))
+            .ToDictionary(fields => fields[0], fields => double.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture));
         foreach (var catalogue in reference.RootElement.GetProperty("catalogues").EnumerateArray())
         {
             var format = Enum.Parse<MissionSwarmFormat>(catalogue.GetProperty("format").GetString()!, ignoreCase: true);
@@ -24,7 +49,14 @@ public sealed class MissionSwarmTests
             using var stream = File.OpenRead(Path.Combine(root, file));
             var swarm = MissionSwarm.Read(stream, format);
             Assert.Equal(catalogue.GetProperty("count").GetInt32(), swarm.Count);
-            Assert.Equal(catalogue.GetProperty("epochSeconds").GetDouble(), swarm.EpochSeconds);
+            var sourceLines = format == MissionSwarmFormat.Astorb
+                ? File.ReadLines(Path.Combine(root, file)).Where(line => line.Length > 0).ToArray() : [];
+            double expectedEpoch = format == MissionSwarmFormat.Astorb ? epochs[sourceLines[0].Substring(106, 8)]
+                : catalogue.GetProperty("epochSeconds").GetDouble();
+            if (format == MissionSwarmFormat.Astorb)
+                Assert.InRange(swarm.EpochSeconds - expectedEpoch, -.001, .001); // Compact TDB-TT series versus ERFA.
+            else
+                Assert.Equal(expectedEpoch, swarm.EpochSeconds);
             Assert.Equal(catalogue.GetProperty("bound").GetSingle(), swarm.BoundingRadiusKilometers);
             var oracle = MemoryMarshal.Cast<byte, float>(expected.AsSpan(catalogue.GetProperty("offsetBytes").GetInt32(),
                 catalogue.GetProperty("attributesBytes").GetInt32()));
@@ -32,6 +64,18 @@ public sealed class MissionSwarmTests
             for (int i = 0; i < oracle.Length; i++)
             {
                 float actual = swarm.Attributes[i];
+                if (format == MissionSwarmFormat.Astorb && i % MissionSwarm.FieldsPerObject == 8)
+                {
+                    // Discovery offsets change with the corrected origin. Preserve the native discovery-date convention.
+                    string designation = sourceLines[i / MissionSwarm.FieldsPerObject].Substring(7, 19).Trim();
+                    double discovery = -365.25 * 100 * 86400;
+                    if (designation.Length >= 7 && designation.AsSpan(0, 4).IndexOfAnyExceptInRange('0', '9') < 0 &&
+                        designation[4] == ' ' && designation[5] is >= 'A' and <= 'Z' && designation[6] is >= 'A' and <= 'Z')
+                        discovery = ((int.Parse(designation[..4], System.Globalization.CultureInfo.InvariantCulture) - 2000) * 365.25 +
+                            (designation[5] - 'A') * (365.25 / 24)) * 86400;
+                    Assert.Equal((float)(discovery - expectedEpoch), actual);
+                    continue;
+                }
                 if (BitConverter.SingleToInt32Bits(oracle[i]) != BitConverter.SingleToInt32Bits(actual))
                     Assert.Fail($"{file}, object {i / MissionSwarm.FieldsPerObject}, field {i % MissionSwarm.FieldsPerObject}: {oracle[i]:R} != {actual:R}");
             }

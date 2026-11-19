@@ -5,6 +5,7 @@ using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
 using SpaceTangent.Core.Orbits;
 using SpaceTangent.Core.Spice;
+using SpaceTangent.Core.Time;
 
 namespace SpaceTangent.Core.World;
 
@@ -12,6 +13,7 @@ public sealed partial class WorldGraphBuilder
 {
     private readonly Dictionary<WorldKey, WorldRule> _rules = new();
     private ISolarSystemEphemeris? _solar;
+    private DeltaTModel _defaultDeltaT = DeltaTModel.MorrisonStephenson2004;
 
     public void AddSolarSystem(De440Ephemeris ephemeris) => AddSolarSystem((ISolarSystemEphemeris)ephemeris);
 
@@ -138,7 +140,8 @@ public sealed partial class WorldGraphBuilder
     public void AddLocalTleSatellite(LocalTleSatellite satellite)
     {
         ArgumentNullException.ThrowIfNull(satellite);
-        AddTrajectory(satellite.Id, epoch => satellite.SampleInWorld(epoch), SolarSystemSample.EarthId);
+        AddTrajectoryCore(satellite.Id, input => satellite.SampleInWorld(input.Epoch,
+            input.DeltaT ?? DeltaTModel.MorrisonStephenson2004), SolarSystemSample.EarthId, null);
     }
 
     public void AddScienceSatellite(ScienceSatellite satellite) => AddScienceSatellite(satellite, null);
@@ -150,11 +153,9 @@ public sealed partial class WorldGraphBuilder
             throw new ArgumentException("Updated elements must use the same satellite ID.", nameof(updatedElements));
         bool preferUpdate = updatedElements?.Epoch.CompareTo(satellite.Epoch) > 0;
         AddTrajectoryCore(satellite.Id, input => preferUpdate
-            ? updatedElements!.SampleInWorld(input.Epoch) ?? SampleArchive(input)
-            : SampleArchive(input) ?? updatedElements?.SampleInWorld(input.Epoch), SolarSystemSample.EarthId, null);
-
-        CartesianState? SampleArchive(EvaluationInput input) => input.History is { } history
-            ? history.Sample(satellite, input.Epoch) : satellite.TryOrbit(input.Epoch);
+            ? updatedElements!.SampleInWorld(input.Epoch, input.DeltaT ?? DeltaTModel.MorrisonStephenson2004) ?? satellite.TryOrbit(input.Epoch)
+            : satellite.TryOrbit(input.Epoch) ?? updatedElements?.SampleInWorld(input.Epoch,
+                input.DeltaT ?? DeltaTModel.MorrisonStephenson2004), SolarSystemSample.EarthId, null);
         if (satellite.FixedBodyAxes is { } fixedAxes)
             AddOrientation(satellite.Id, _ => new(SampledMissionCatalog.Multiply(fixedAxes, satellite.InstrumentToFrame), default(Vector3d)));
         else
@@ -318,7 +319,7 @@ public sealed partial class WorldGraphBuilder
         if (sorted.Count != _rules.Count)
             throw new InvalidOperationException("World dependency cycle among " +
                 string.Join(", ", dependencies.Where(pair => pair.Value > 0).Select(pair => Describe(pair.Key))) + ".");
-        return new([.. sorted], _solar, new Dictionary<ObjectId, MissionArc[]>(_missionArcs));
+        return new([.. sorted], _solar, new Dictionary<ObjectId, MissionArc[]>(_missionArcs), _defaultDeltaT);
     }
 
     private void Add(WorldRule rule)

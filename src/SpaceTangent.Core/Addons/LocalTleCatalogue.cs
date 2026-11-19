@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 using System.Text;
 using SpaceTangent.Contracts;
+using SpaceTangent.Core.Coordinates;
 using SpaceTangent.Core.Observing;
 using SpaceTangent.Core.Orbits;
 using SpaceTangent.Core.Time;
@@ -9,7 +10,6 @@ namespace SpaceTangent.Core.Addons;
 
 public sealed class LocalTleSatellite
 {
-    private static readonly JulianInstant UtcStart = TimeConversion.FromUtc(new(LeapSecondTable.FirstDate), TimeScale.Tdb);
     private readonly Sgp4Orbit _orbit;
 
     internal LocalTleSatellite(string name, TwoLineElements elements, string[] aliases)
@@ -28,23 +28,16 @@ public sealed class LocalTleSatellite
     /// <summary>Returns the Earth-centered state in TEME.</summary>
     public CartesianState? Sample(JulianInstant epoch) => _orbit.TrySample(epoch, out var state) ? state : null;
 
-    /// <summary>Rotates the inertial components through the reference Earth axes used by the simulator.</summary>
+    /// <summary>
+    /// Rotates the TEME state into the world axes through the Earth-fixed frame (<see cref="EarthOrientation.TemeToWorld(JulianInstant, DeltaTModel)"/>),
+    /// with the same ΔT model as the Earth and the observer.
+    /// </summary>
     public CartesianState? SampleInWorld(JulianInstant epoch, DeltaTModel model = DeltaTModel.MorrisonStephenson2004)
     {
-        if (epoch.CompareTo(UtcStart) < 0 || Sample(epoch) is not { } state)
+        if (Sample(epoch) is not { } state)
             return null;
-        UtcDateTime utc = TimeConversion.ToUtc(epoch);
-        double days = utc.Date.DayNumber + (1_721_425.5 - JulianInstant.J2000Day) +
-            utc.NanosecondsSinceMidnight / (double)JulianInstant.NanosecondsPerDay;
-        double centuries = days / 36_525;
-        double temeSidereal = 67310.54841 + (876600 * 3600.0 + 8640184.812866) * centuries +
-            centuries * centuries * (.093104 - 6.2e-6 * centuries);
-        double angle = EarthSurfaceLighting.GreenwichSiderealAngle(epoch, model) -
-            (temeSidereal % JulianInstant.SecondsPerDay) * (Math.Tau / JulianInstant.SecondsPerDay);
-        (double sin, double cos) = Math.SinCos(angle);
-        return new(Rotate(state.PositionKilometers), Rotate(state.VelocityKilometersPerSecond));
-
-        Vector3d Rotate(Vector3d value) => new(cos * value.X - sin * value.Y, sin * value.X + cos * value.Y, value.Z);
+        Basis3d teme = EarthOrientation.TemeToWorld(epoch, model);
+        return new(teme.Transform(state.PositionKilometers), teme.Transform(state.VelocityKilometersPerSecond));
     }
 }
 

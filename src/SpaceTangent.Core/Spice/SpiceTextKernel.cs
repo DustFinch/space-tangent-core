@@ -10,7 +10,7 @@ internal sealed class SpiceTextKernel
 {
     private static readonly Regex DataSections = new(@"^[ \t]*\\begindata[ \t]*\r?\n(.*?)(?:^[ \t]*\\begintext\b|\z)",
         RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
-    private static readonly Regex Assignments = new(@"^[ \t]*([A-Za-z0-9_/-]+)[ \t]*(\+=|=)[ \t]*(\([^)]*\)|[^\r\n]+)",
+    private static readonly Regex Assignments = new(@"^[ \t]*([A-Za-z0-9_/-]+)[ \t]*(\+=|=)[ \t]*(\((?:'(?:[^']|'')*'|[^')])*\)|'(?:[^']|'')*'|[^\r\n]+)",
         RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     private static readonly Regex Values = new(@"'(?:[^']|'')*'|[^\s(),]+",
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);

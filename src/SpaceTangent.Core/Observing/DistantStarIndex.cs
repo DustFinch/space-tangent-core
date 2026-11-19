@@ -171,9 +171,17 @@ public sealed class DistantStarIndex : IDisposable
             return null;
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_lookups.TryGetValue(number, out var known))
                 return known;
-            var star = FindNumber(number);
+        }
+        // LoadLeaf protects each read. Do not block all queries/cache hits during a full catalogue scan.
+        var star = FindNumber(number);
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_lookups.TryGetValue(number, out var concurrent))
+                return concurrent;
             if (_lookups.Count >= 512)
                 _lookups.Clear();
             _lookups[number] = star;

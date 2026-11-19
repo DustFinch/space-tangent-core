@@ -1445,7 +1445,7 @@ public sealed class OrderedSpiceCatalogueTests
                         Assert.Equal(default(Vector3d), orientation.AngularVelocityRadiansPerSecond);
                 }
             }
-            // The same physical bounds can be expressed as calendar UTC or a numeric TDB day.
+            // The same bounds can be expressed as a TDB calendar label or a numeric TDB day.
             string path = Path.Combine(source, "cassini.ssc");
             string declaration = File.ReadAllText(path);
             File.WriteAllText(path, declaration.Replace("Beginning 2453187.55 Ending 2453187.6",
@@ -1480,12 +1480,13 @@ public sealed class OrderedSpiceCatalogueTests
                 Assert.NotEqual(numeric.SampleRotation!(epoch), fallback.SampleRotation!(epoch));
             }
 
+            // Calendar strings carry TDB labels, like numeric Julian dates.
             static string Calendar(double day)
             {
-                var utc = TimeConversion.ToUtc(JulianInstant.FromJulianDate(day, TimeScale.Tdb));
-                var time = utc.Date.ToDateTime(new TimeOnly(utc.Hour, utc.Minute, utc.Second))
-                    .AddTicks((utc.Nanosecond + 50) / 100);
-                return time.ToString("yyyy MM dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture);
+                var epoch = JulianInstant.FromJulianDate(day, TimeScale.Tdb);
+                long ticks = (long)(epoch.DifferenceNanoseconds(JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb)) / 100);
+                return DateTime.UnixEpoch.AddTicks(ticks)
+                    .ToString("yyyy MM dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
         finally

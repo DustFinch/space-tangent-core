@@ -99,11 +99,15 @@ public sealed class AddonDependencies
         return directories;
     }
 
-    /// <summary>Records the content of the same file handle used by the parser.</summary>
+    /// <summary>
+    /// Opens a file of at most <paramref name="maximumBytes"/> and records the content of the same handle used by the
+    /// parser. A larger file is rejected with <see cref="InvalidDataException"/> before any of it is read.
+    /// </summary>
     public static FileStream OpenRead(string path, long maximumBytes) => OpenRead(path, maximumBytes, FileShare.Read);
 
     internal static FileStream OpenRead(string path, long maximumBytes, FileShare sharing)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
         FileStream file;
         try
         {
@@ -114,16 +118,14 @@ public sealed class AddonDependencies
             Note(Observation.Contents, path, null);
             throw;
         }
-        if (_recording is not { } recorder)
-            return file;
         try
         {
-            // Parsers check their own limits before consuming the file.
-            if (file.Length <= maximumBytes)
-            {
-                Note(Observation.Contents, file.Name, LengthPrefix(file) + Hash(file, recorder.Cancellation));
-                file.Position = 0;
-            }
+            if (file.Length > maximumBytes)
+                throw new InvalidDataException($"{Path.GetFileName(path)} exceeds its limit of {maximumBytes} bytes.");
+            if (_recording is not { } recorder)
+                return file;
+            Note(Observation.Contents, file.Name, LengthPrefix(file) + Hash(file, recorder.Cancellation));
+            file.Position = 0;
             return file;
         }
         catch

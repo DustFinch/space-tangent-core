@@ -233,10 +233,7 @@ public static partial class SampledMissionCatalog
         }
 
         MissionFrame axesFrame = IsFixedEarthMeanEquator(orbit)
-            ? new MissionFrame.Rotating(Equatorial, epoch => new(new(
-                ObservationEventSearch.DateEquatorToJ2000(new(1, 0, 0), epoch),
-                ObservationEventSearch.DateEquatorToJ2000(new(0, 1, 0), epoch),
-                ObservationEventSearch.DateEquatorToJ2000(new(0, 0, 1), epoch)), default(Vector3d)))
+            ? new MissionFrame.Rotating(Equatorial, epoch => new(EarthOrientation.MeanEquatorOfDateToWorld(epoch), default(Vector3d)))
             : PackedFrame(orbit.GetProperty("frame"), resolve, owner);
         return new(kind switch
         {

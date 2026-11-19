@@ -1,0 +1,5 @@
+# Pinned tools for the reference generators in this directory (python -m pip install -r requirements.txt).
+numpy==2.5.5
+pyerfa==2.0.1.5
+sgp4==2.27
+spiceypy==8.4.0

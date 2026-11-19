@@ -2,8 +2,7 @@
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Addons;
 using SpaceTangent.Core.Ephemerides;
-using SpaceTangent.Core.Orbits;
-using System.Runtime.CompilerServices;
+using SpaceTangent.Core.Time;
 
 namespace SpaceTangent.Core.World;
 
@@ -24,12 +23,12 @@ internal sealed record WorldRule(WorldKey Key, WorldKey[] Dependencies, Func<Eva
 
 internal readonly record struct EvaluationInput(JulianInstant Epoch, SolarSystemSample? Solar,
     IReadOnlyDictionary<WorldKey, int> Indices, WorldValue[] Values, WorldGraph Graph,
-    WorldEvaluation? History, int RuleIndex = 0)
+    DeltaTModel? DeltaT = null, int RuleIndex = 0)
 {
     internal CartesianState State(ObjectId id) => Values[Indices[new(id, WorldChannel.State)]].State;
     internal WorldValue Read(WorldKey key) => Values[Indices[key]];
     internal WorldValue ReadIfPresent(WorldKey key) => Indices.TryGetValue(key, out int index) ? Values[index] : default;
-    internal EvaluationInput At(JulianInstant epoch) => Graph.EvaluatePrefix(epoch, RuleIndex);
+    internal EvaluationInput At(JulianInstant epoch) => Graph.EvaluatePrefix(epoch, RuleIndex, DeltaT);
 }
 
 public sealed class WorldSnapshot
@@ -38,6 +37,7 @@ public sealed class WorldSnapshot
     internal WorldSnapshot(EvaluationInput input) => _input = input;
 
     public JulianInstant Epoch => _input.Epoch;
+    public DeltaTModel? DeltaT => _input.DeltaT;
     public SolarSystemSample? SolarSystem => _input.Solar;
 
     /// <summary>Evaluates the centre and axes of the mission arc selected at a possibly different TDB epoch.</summary>
@@ -93,17 +93,6 @@ public sealed class WorldSnapshot
     }
 }
 
-/// <summary>Owns the sequential orbital state of one observer. Use a separate instance for each view.</summary>
-public sealed class WorldEvaluation
-{
-    private readonly ConditionalWeakTable<ScienceSatellite, OrbitHistory> _orbits = new();
-
-    private sealed record OrbitHistory(Sgp4Orbit.Evaluation? Stream);
-
-    internal CartesianState? Sample(ScienceSatellite satellite, JulianInstant epoch) =>
-        satellite.TryOrbit(epoch, _orbits.GetValue(satellite, static item => new(item.CreateOrbitalHistory())).Stream);
-}
-
 /// <summary>Evaluates translations and orientations once in dependency order at a common TDB epoch.</summary>
 public sealed class WorldGraph
 {
@@ -111,12 +100,14 @@ public sealed class WorldGraph
     private readonly Dictionary<WorldKey, int> _indices = new();
     private readonly Node[] _nodes;
     private readonly ISolarSystemEphemeris? _solar;
+    private readonly DeltaTModel _defaultDeltaT;
     private readonly IReadOnlyDictionary<ObjectId, MissionArc[]> _missions;
 
     internal WorldGraph(WorldRule[] orderedRules, ISolarSystemEphemeris? solar,
-        IReadOnlyDictionary<ObjectId, MissionArc[]> missions)
+        IReadOnlyDictionary<ObjectId, MissionArc[]> missions, DeltaTModel defaultDeltaT)
     {
         _solar = solar;
+        _defaultDeltaT = defaultDeltaT;
         _missions = missions;
         _nodes = new Node[orderedRules.Length];
         for (int index = 0; index < orderedRules.Length; index++)
@@ -127,14 +118,21 @@ public sealed class WorldGraph
         }
     }
 
-    public WorldSnapshot Evaluate(JulianInstant tdb) => Evaluate(tdb, null);
+    public WorldSnapshot Evaluate(JulianInstant tdb) => EvaluateCore(tdb, null);
 
-    /// <summary>Evaluates a view while retaining the query history of compatible archived trajectories.</summary>
-    public WorldSnapshot Evaluate(JulianInstant tdb, WorldEvaluation? history)
+    /// <summary>Evaluates all Earth-dependent nodes with the observer's model, without mutating this graph.</summary>
+    public WorldSnapshot Evaluate(JulianInstant tdb, DeltaTModel deltaT)
+    {
+        if (!Enum.IsDefined(deltaT))
+            throw new ArgumentOutOfRangeException(nameof(deltaT));
+        return EvaluateCore(tdb, deltaT);
+    }
+
+    private WorldSnapshot EvaluateCore(JulianInstant tdb, DeltaTModel? deltaT)
     {
         if (tdb.Scale != TimeScale.Tdb)
             throw new ArgumentException("World graph evaluation requires TDB.", nameof(tdb));
-        return new(EvaluatePrefix(tdb, _nodes.Length, history));
+        return new(EvaluatePrefix(tdb, _nodes.Length, deltaT));
     }
 
     internal bool TryMissionArc(ObjectId owner, JulianInstant selection,
@@ -144,13 +142,13 @@ public sealed class WorldGraph
         return arc is not null;
     }
 
-    internal EvaluationInput EvaluatePrefix(JulianInstant tdb, int count, WorldEvaluation? history = null)
+    internal EvaluationInput EvaluatePrefix(JulianInstant tdb, int count, DeltaTModel? deltaT = null)
     {
         SolarSystemSample? solar = _solar is { } ephemeris && tdb.CompareTo(ephemeris.Start) >= 0 &&
             tdb.CompareTo(ephemeris.End) <= 0 ? ephemeris.Sample(tdb) : null;
 
         var values = new WorldValue[count];
-        var input = new EvaluationInput(tdb, solar, _indices, values, this, history);
+        var input = new EvaluationInput(tdb, solar, _indices, values, this, deltaT ?? _defaultDeltaT);
         for (int index = 0; index < count; index++)
         {
             Node node = _nodes[index];

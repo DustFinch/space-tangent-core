@@ -29,7 +29,8 @@ public sealed class ObserverEphemeridesTests
         var chosen = Assert.IsType<ObserverEphemerisRow>(report.BestDarkSample);
         var transit = Assert.IsType<ObserverEphemerisRow>(report.UpperCulmination);
         Assert.InRange(chosen.SunAltitudeDegrees!.Value, -90, -12);
-        Assert.InRange(transit.Target!.Value.AltitudeDegrees, 17.52, 17.54);
+        // ERFA eraC2t06a gives 17.5028 degrees for this J2000 direction: precession lowers it by 0.026 degrees since 2000.
+        Assert.InRange(transit.Target!.Value.AltitudeDegrees, 17.49, 17.515);
         Assert.InRange(transit.Target.Value.AzimuthDegrees!.Value, 179.9, 180.1);
         Assert.True(transit.Target.Value.AltitudeDegrees >= chosen.Target!.Value.AltitudeDegrees);
         Assert.Equal(NightVisibility.NoDarkness, ObserverEphemerides.Night(ephemeris, new(2024, 6, 21),

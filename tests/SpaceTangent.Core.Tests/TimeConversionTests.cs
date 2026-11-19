@@ -99,15 +99,15 @@ public sealed class TimeConversionTests
     }
 
     [Fact]
-    public void TdbCoverageUsesTheExactTdbAxisAtBothBoundaries()
+    public void TdbConversionRoundTripsAcrossTheHistoricalCalendar()
     {
-        var start = new JulianInstant(2_415_020, 43_200_000_000_000, TimeScale.Tdb);
-        var end = new JulianInstant(2_488_069, 43_200_000_000_000, TimeScale.Tdb);
-
-        foreach (var tdb in new[] { start, end.AddNanoseconds(-1) })
-            Assert.Equal(tdb, TimeConversion.Convert(TimeConversion.Convert(tdb, TimeScale.Tt), TimeScale.Tdb));
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => TimeConversion.Convert(start.AddNanoseconds(-1), TimeScale.Tt));
-        Assert.Throws<ArgumentOutOfRangeException>(() => TimeConversion.Convert(end, TimeScale.Tt));
+        // The periodic TDB - TT model has no range limit; years 1 and 4000 bracket the historical ephemeris.
+        foreach (long day in new long[] { 1_721_426, 2_415_020, 2_488_069, 3_182_394 })
+        {
+            var tdb = new JulianInstant(day, 43_200_000_000_000, TimeScale.Tdb);
+            var tt = TimeConversion.Convert(tdb, TimeScale.Tt);
+            Assert.InRange(Math.Abs((double)tt.DifferenceNanoseconds(new JulianInstant(day, 43_200_000_000_000, TimeScale.Tt))), 0, 1.7e6);
+            Assert.Equal(tdb, TimeConversion.Convert(tt, TimeScale.Tdb));
+        }
     }
 }

@@ -34,6 +34,36 @@ public sealed class SscBodyCatalogueTests
     }
 
     [Fact]
+    public void CalendarLifetimesAreTdbLabelsLikeNumericJulianDates()
+    {
+        // 2004-07-01 02:48:00 TDB is JD 2453187.6166666667; both spellings must give the same lifetime.
+        var root = Directory.CreateTempSubdirectory("st-ssc-dates-");
+        try
+        {
+            string calendar = root.CreateSubdirectory("calendar").FullName, numeric = root.CreateSubdirectory("numeric").FullName;
+            const string body = """
+                "Probe" "Sol/Earth" {
+                    Beginning BEGIN
+                    Ending "2004 07 02 00:00:00"
+                    FixedPosition { Rectangular [ 7000 0 0 ] }
+                }
+                """;
+            File.WriteAllText(Path.Combine(calendar, "probe.ssc"), body.Replace("BEGIN", "\"2004 07 01 02:48:00\""));
+            File.WriteAllText(Path.Combine(numeric, "probe.ssc"), body.Replace("BEGIN", "2453187.6166666666667"));
+            var start = new JulianInstant(2_453_187, 43_200_000_000_000 + 10_080_000_000_000, TimeScale.Tdb);
+            foreach (string folder in new[] { calendar, numeric })
+            {
+                var probe = Assert.Single(SscBodyCatalogue.Load(folder));
+                Assert.Null(probe.Sample(start.AddSeconds(-.001)));
+                Assert.NotNull(probe.Sample(start.AddSeconds(.001)));
+                Assert.NotNull(probe.Sample(new JulianInstant(2_453_188, 43_199_999_000_000, TimeScale.Tdb)));
+                Assert.Null(probe.Sample(new JulianInstant(2_453_188, 43_200_001_000_000, TimeScale.Tdb)));
+            }
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
     public void OrderedPatchesKeepAndReplaceTheEffectiveFields()
     {
         DirectoryInfo root = Directory.CreateTempSubdirectory("st-ssc-");
@@ -302,18 +332,12 @@ public sealed class SscBodyCatalogueTests
             return body;
         }
 
+        // SSC calendar strings are TDB labels; the Mir end, 06:00:28.184 TDB, is its 05:59:24 UTC reentry.
         static JulianInstant At(string value)
         {
             var civil = DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).UtcDateTime;
-            var day = DateOnly.FromDateTime(civil);
-            if (day < new DateOnly(1972, 1, 1))
-            {
-                var terrestrial = JulianInstant.FromJulianDate(2440587.5, TimeScale.Tt)
-                    .AddSeconds(new DateTimeOffset(civil).ToUnixTimeSeconds());
-                return TimeConversion.Convert(terrestrial.AddSeconds(DeltaT.Seconds(terrestrial, DeltaTModel.EspenakMeeus2006)), TimeScale.Tdb);
-            }
-            var utc = new UtcDateTime(day, civil.Hour, civil.Minute, civil.Second, (int)(civil.Ticks % TimeSpan.TicksPerSecond) * 100);
-            return TimeConversion.FromUtc(utc, TimeScale.Tdb);
+            return JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb)
+                .AddNanoseconds((Int128)(civil.Ticks - DateTime.UnixEpoch.Ticks) * 100);
         }
     }
 

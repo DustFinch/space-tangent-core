@@ -137,7 +137,8 @@ public sealed class MissionSwarm
             m += 12;
         }
         int correction = y > 1582 || y == 1582 && (m > 10 || m == 10 && day >= 15) ? 2 - y / 100 + y / 400 : 0;
-        double jd = (int)(365.25 * (y + 4716)) + (int)(30.6001 * (m + 1)) + day + correction - 1524;
+        // ASTORB epochs are 0h TT; the Meeus day number needs -1524.5 for midnight (-1524 gives noon).
+        double jd = (int)(365.25 * (y + 4716)) + (int)(30.6001 * (m + 1)) + day + correction - 1524.5;
         double taiJd = ((jd - J2000) * SecondsPerDay - 32.184) / SecondsPerDay + J2000;
         double tt = (taiJd - J2000) * SecondsPerDay + 32.184;
         double phase = 6.239996 + 1.99096871e-7 * tt;

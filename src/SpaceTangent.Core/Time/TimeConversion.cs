@@ -3,14 +3,15 @@ using SpaceTangent.Contracts;
 
 namespace SpaceTangent.Core.Time;
 
-/// <summary>Post-1972 UTC, exact TAI/TT offset and the NAIF periodic TT/TDB model.</summary>
+/// <summary>
+/// Post-1972 UTC, exact TAI/TT offset and the NAIF periodic TT/TDB model. The periodic model omits secular and
+/// planetary terms of a few microseconds per century, so it serves every epoch of the supported calendar.
+/// </summary>
 public static class TimeConversion
 {
     internal const long TtMinusTai = 32_184_000_000;
     private const long GregorianEpochDay = 1_721_425;
     private const long HalfDay = JulianInstant.NanosecondsPerDay / 2;
-    private static readonly JulianInstant TdbStart = new(2_415_020, HalfDay, TimeScale.Tdb);
-    private static readonly JulianInstant TdbEnd = new(2_488_069, HalfDay, TimeScale.Tdb);
 
     public static JulianInstant Convert(JulianInstant epoch, TimeScale target)
     {
@@ -60,21 +61,12 @@ public static class TimeConversion
         new(GregorianEpochDay + date.DayNumber,
             HalfDay + LeapSecondTable.TaiMinusUtc(date) * JulianInstant.NanosecondsPerSecond, TimeScale.Tai);
 
-    private static JulianInstant FromTdb(JulianInstant tdb)
-    {
-        ValidateTdb(tdb);
-        return ApproximateTtForEarth(tdb);
-    }
+    private static JulianInstant FromTdb(JulianInstant tdb) => ApproximateTtForEarth(tdb);
 
     internal static JulianInstant ApproximateTtForEarth(JulianInstant epoch) => epoch.Scale == TimeScale.Tdb
         ? Relabel(epoch.AddNanoseconds(-PeriodicCorrection(epoch)), TimeScale.Tt) : Convert(epoch, TimeScale.Tt);
 
-    private static JulianInstant ToTdb(JulianInstant tt)
-    {
-        JulianInstant tdb = ApproximateTdbForEarth(tt);
-        ValidateTdb(tdb);
-        return tdb;
-    }
+    private static JulianInstant ToTdb(JulianInstant tt) => ApproximateTdbForEarth(tt);
 
     internal static JulianInstant ApproximateTdbForEarth(JulianInstant tt)
     {
@@ -95,10 +87,4 @@ public static class TimeConversion
 
     private static JulianInstant Relabel(JulianInstant instant, TimeScale scale) =>
         new(instant.Day, instant.NanosecondsOfDay, scale);
-
-    private static void ValidateTdb(JulianInstant tdb)
-    {
-        if (tdb.CompareTo(TdbStart) < 0 || tdb.CompareTo(TdbEnd) >= 0)
-            throw new ArgumentOutOfRangeException(nameof(tdb), "Periodic TDB conversion is supported on [1900, 2100).");
-    }
 }

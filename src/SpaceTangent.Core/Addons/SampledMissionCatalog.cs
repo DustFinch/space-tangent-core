@@ -89,6 +89,7 @@ public static partial class SampledMissionCatalog
     {
         ArgumentNullException.ThrowIfNull(catalogPaths);
         ArgumentNullException.ThrowIfNull(resolveBody);
+        using var swarmReads = new SwarmReadScope();
         string root = Path.GetFullPath(assetRoot);
         var annotations = new List<MissionAnnotation>();
         var viewpointItems = new List<(JsonElement Item, bool Packed)>();
