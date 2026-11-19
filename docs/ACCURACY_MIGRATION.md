@@ -15,6 +15,9 @@ The orbit and Earth-frame models have changed. Rebuild consumers together with t
   `EarthRotationRadians` remains a compatibility projection, not a replacement for that basis.
 - SSC calendar values are TDB labels, like numeric Julian dates. UTC-labelled application inputs still require
   an explicit conversion. ASTORB calendar epochs are midnight TT, correcting a former half-day offset.
+- Calendar strings follow the historical calendar: Julian before 1582 October 15 and Gregorian
+  from that day on (`HistoricalDate`). .NET `DateTime` and `DateOnly` are proleptic Gregorian and label
+  1054 July 4 (Julian) as July 10, so they must not be used for earlier dates.
 - The precession fixture covers years 1–4000. This does not establish the accuracy of all ephemerides or ΔT
   over that interval, or extend the validity interval of an installed planetary kernel.
 

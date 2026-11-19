@@ -3,6 +3,7 @@ using System.Globalization;
 using SpaceTangent.Contracts;
 using SpaceTangent.Core.Ephemerides;
 using SpaceTangent.Core.Orbits;
+using SpaceTangent.Core.Time;
 using SpaceTangent.Core.World;
 
 namespace SpaceTangent.Core.Addons;
@@ -77,8 +78,11 @@ public sealed class SscSampledSpacecraft
 
 public static class SscSampledCatalog
 {
-    private static readonly string[] DateFormats = ["yyyy M d H:mm:ss.FFFFFFF", "yyyy M d H:mm:ss", "yyyy M d H:mm", "yyyy M d"];
-    private static readonly JulianInstant UnixEpoch = JulianInstant.FromJulianDate(2440587.5, TimeScale.Tdb);
+    // Hours with one or two digits, as the former DateTime pattern "H:mm:ss" accepted.
+    private static readonly string[] TimeFormats =
+    [
+        @"h\:mm\:ss\.FFFFFFF", @"hh\:mm\:ss\.FFFFFFF", @"h\:mm\:ss", @"hh\:mm\:ss", @"h\:mm", @"hh\:mm"
+    ];
 
     public static SscSampledSpacecraft Load(string catalogPath, string assetRoot, string objectPath,
         CancellationToken cancellation = default)
@@ -206,10 +210,27 @@ public static class SscSampledCatalog
     {
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double day) && double.IsFinite(day))
             return JulianInstant.FromJulianDate(day, TimeScale.Tdb);
-        if (!DateTime.TryParseExact(value, DateFormats, CultureInfo.InvariantCulture,
-                DateTimeStyles.AllowWhiteSpaces, out var date))
-            throw new InvalidDataException($"Invalid SSC phase date {value}.");
-        return UnixEpoch.AddNanoseconds((Int128)(date.Ticks - DateTime.UnixEpoch.Ticks) * 100);
+    // Calendar strings are "year month day [H:mm[:ss[.fffffff]]]" in TDB. The date is Julian before
+        // 1582 October 15 and Gregorian afterwards.
+        string[] parts = value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length is 3 or 4 &&
+            int.TryParse(parts[0], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int year) &&
+            int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int month) &&
+            int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out int dayOfMonth) &&
+            HistoricalDate.IsValid(year, month, dayOfMonth))
+        {
+            TimeSpan time = TimeSpan.Zero;
+            if (parts.Length == 3 || TimeSpan.TryParseExact(parts[3], TimeFormats, CultureInfo.InvariantCulture, out time) &&
+                time >= TimeSpan.Zero && time < TimeSpan.FromDays(1))
+            {
+                try
+                {
+                    return new HistoricalDate(year, month, dayOfMonth).ToInstant(time.Ticks * 100, TimeScale.Tdb);
+                }
+                catch (ArgumentOutOfRangeException) { }
+            }
+        }
+        throw new InvalidDataException($"Invalid SSC phase date {value}.");
     }
 
     internal static string FindAsset(AddonStage stage, string root, string directory, string relative, params string[] fallbacks) =>

@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: Data checks
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DE440_SHA256: 29915576d0a6555766b99485ac3056ee415e86df4fce282611c31afb329ad062
+  NAIF0012_SHA256: 678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          dotnet-version: 8.0.x
+
+      # The public JPL file is pinned by SHA-256, so the data-backed tests run without private archives.
+      - name: Restore DE440 from cache
+        id: de440
+        uses: actions/cache@v4
+        with:
+          path: .ci/de440.440
+          key: de440-${{ env.DE440_SHA256 }}
+
+      - name: Download DE440
+        if: steps.de440.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .ci
+          curl --fail --location --output .ci/de440.440 \
+            https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440
+
+      - name: Verify DE440
+        run: echo "${DE440_SHA256}  .ci/de440.440" | sha256sum --check
+
+      - run: dotnet restore SpaceTangent.Core.sln --locked-mode
+      - run: dotnet build SpaceTangent.Core.sln --no-restore -c Release
+
+      # test.yml runs the suite without data; this job adds the DE440-backed tests.
+      - name: Test with DE440
+        env:
+          SPACETANGENT_DE440: ${{ github.workspace }}/.ci/de440.440
+        run: dotnet test SpaceTangent.Core.sln --no-build -c Release --logger "console;verbosity=normal"
+
+  reference-fixtures:
+    # The committed SGP4 and Earth orientation fixtures must be reproducible from the pinned public tools.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install -r tools/reference/requirements.txt
+
+      - name: Download the NAIF leap-second kernel
+        run: |
+          mkdir -p .ci
+          curl --fail --location --output .ci/naif0012.tls \
+            https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls
+          echo "${NAIF0012_SHA256}  .ci/naif0012.tls" | sha256sum --check
+
+      - name: Regenerate fixtures
+        run: |
+          python -I tools/reference/generate_sgp4_verification.py .ci/naif0012.tls .ci/sgp4.csv
+          python -I tools/reference/generate_earth_orientation.py .ci/earth.csv
+
+      - name: Compare fixture values and metadata
+        run: |
+          python -m unittest discover -s tools/reference -p 'test_*.py'
+          python -I tools/reference/compare_fixtures.py sgp4 tests/SpaceTangent.Core.Tests/Fixtures/sgp4-verification-reference.csv .ci/sgp4.csv
+          python -I tools/reference/compare_fixtures.py earth tests/SpaceTangent.Core.Tests/Fixtures/earth-orientation-reference.csv .ci/earth.csv

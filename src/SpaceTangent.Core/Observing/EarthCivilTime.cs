@@ -30,6 +30,21 @@ public static class EarthCivilTime
         return (DateOnly.FromDayNumber((int)day), new TimeOnly(nanos / 100));
     }
 
+    /// <summary>The modeled UT1 of an instant as a historical calendar date (Julian before 1582 October 15).</summary>
+    public static (HistoricalDate Date, TimeOnly Time)? ModeledHistoricalUt1(JulianInstant epoch, DeltaTModel model) =>
+        ModeledUt1(epoch, model) is { } modeled ? (HistoricalDate.FromGregorian(modeled.Date), modeled.Time) : null;
+
+    /// <summary>The TDB instant of a modeled UT1 date and time, the inverse of <see cref="ModeledHistoricalUt1"/>.</summary>
+    public static JulianInstant FromModeledUt1(HistoricalDate date, long nanosecondsSinceMidnight, DeltaTModel model)
+    {
+        // As in ModelMidnight, the UT1 reading is stored on the uniform grid and moved by ΔT until it is consistent.
+        JulianInstant nominal = date.ToInstant(nanosecondsSinceMidnight, TimeScale.Tt);
+        JulianInstant estimate = nominal;
+        for (int i = 0; i < 3; i++)
+            estimate = nominal.AddSeconds(DeltaT.Seconds(estimate, model));
+        return TimeConversion.ApproximateTdbForEarth(estimate);
+    }
+
     internal static JulianInstant ModelMidnight(DateOnly date, double longitudeDegrees, DeltaTModel model)
     {
         // Store the numerical UT1 day in a uniform grid for the iteration. The returned instant is TDB.
