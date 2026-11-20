@@ -32,7 +32,8 @@ public readonly record struct ObserverSiteClock(string? Name, string? TimeZone, 
         }
     }
 
-    internal JulianInstant At(DateOnly date, TimeOnly time, EarthSite site, DeltaTModel model, bool tdb = true)
+    /// <summary>Maps a local civil date and time to the simulation clock, including zone transitions and modeled UT1.</summary>
+    public JulianInstant At(DateOnly date, TimeOnly time, EarthSite site, DeltaTModel model, bool tdb = true)
     {
         double hours = HasOffset ? FallbackHours(site) : site.LongitudeDegrees / 15;
         DateTime local = date.ToDateTime(time);
