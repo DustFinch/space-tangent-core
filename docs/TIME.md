@@ -11,3 +11,9 @@ The tests check civil timestamps against ERFA two-part Julian date reference cas
 Delta T estimates TT minus UT1. The Earth-rotation model blends published atomic offsets over 60 days around leap transitions and anchors the selected historical model at the coverage boundaries. It is an approximation. UTC conversion still applies the exact leap seconds. The selectable extrapolations are Espenak–Meeus, Morrison–Stephenson and a fixed offset.
 
 [Espenak–Meeus polynomials](https://eclipse.gsfc.nasa.gov/SEcat5/deltatpoly.html) · [Morrison–Stephenson 2004](https://doi.org/10.1177/002182860403500305)
+
+## Other civil calendars
+
+`CalendarSystems` converts a civil Julian Day Number into Julian, Hebrew (Nisan-based months), tabular civil Islamic and Maya long-count/tzolkin/haab dates, or the ISO week of its proleptic Gregorian label. Choose the civil day using UTC or the selected modeled UT1 first; a TDB day boundary is not a local civil midnight. These are day labels, not religious sunset or observational crescent calculations.
+
+The Islamic civil epoch is Friday, 16 July 622 Julian (JDN 1948440). The framework Hijri calendar's default Thursday epoch is one day earlier; comparisons explicitly account for that distinction. Maya uses the GMT correlation JDN 584283. Hebrew dates before year 1 and ISO dates outside the framework Gregorian range are unavailable. Other results use the supported historical day-number interval.
