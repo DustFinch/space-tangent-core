@@ -99,12 +99,12 @@ public sealed class MeteorCatalogue
         return result;
     }
 
-    public MeteorPeak? NextPeak(ISolarSystemEphemeris ephemeris, JulianInstant from)
+    public MeteorPeak? NextPeak(ISolarSystemEphemeris ephemeris, JulianInstant from, bool includeOutbursts = false)
     {
         if (from.CompareTo(ephemeris.Start) < 0 || from.CompareTo(ephemeris.End) >= 0)
             return null;
         var now = SolarLongitude(ephemeris.Sample(from));
-        var candidate = Showers.Where(shower => !shower.Daytime && shower.AnnualZhr >= 10)
+        var candidate = Showers.Where(shower => !shower.Daytime && (shower.AnnualZhr >= 10 || includeOutbursts && shower.MaximumZhr >= 100))
             .MinBy(shower => Wrap(shower.PeakLongitude - now));
         if (candidate is null)
             return null;
