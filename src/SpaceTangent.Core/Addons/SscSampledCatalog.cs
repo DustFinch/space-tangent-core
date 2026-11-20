@@ -210,7 +210,7 @@ public static class SscSampledCatalog
     {
         if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double day) && double.IsFinite(day))
             return JulianInstant.FromJulianDate(day, TimeScale.Tdb);
-    // Calendar strings are "year month day [H:mm[:ss[.fffffff]]]" in TDB. The date is Julian before
+        // Calendar strings are "year month day [H:mm[:ss[.fffffff]]]" in TDB. The date is Julian before
         // 1582 October 15 and Gregorian afterwards.
         string[] parts = value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length is 3 or 4 &&
