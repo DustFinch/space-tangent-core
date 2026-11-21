@@ -33,6 +33,7 @@ public readonly record struct BodySurfaceFrame(CartesianState Observer, Basis3d 
     {
         if (!site.IsValid() || !center.PositionKilometers.IsFinite || !center.VelocityKilometersPerSecond.IsFinite ||
             !(equatorialRadiusKilometers > 0) || !(polarRadiusKilometers > 0) ||
+            site.HeightKilometers <= -Math.Min(equatorialRadiusKilometers, polarRadiusKilometers) ||
             !double.IsFinite(equatorialRadiusKilometers + polarRadiusKilometers))
             throw new ArgumentOutOfRangeException(nameof(site));
         var (sl, cl) = Math.SinCos(site.LongitudeDegrees * Math.PI / 180);

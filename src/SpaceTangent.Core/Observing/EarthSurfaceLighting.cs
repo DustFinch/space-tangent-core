@@ -9,7 +9,7 @@ namespace SpaceTangent.Core.Observing;
 public readonly record struct EarthSite(double LatitudeDegrees, double LongitudeDegrees, double HeightKilometers)
 {
     public bool IsValid() => LatitudeDegrees is >= -90 and <= 90 && LongitudeDegrees is >= -180 and <= 180 &&
-        double.IsFinite(HeightKilometers) && HeightKilometers >= 0;
+        double.IsFinite(HeightKilometers) && HeightKilometers >= -12;
 }
 
 /// <summary>

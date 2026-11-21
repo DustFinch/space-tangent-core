@@ -85,6 +85,42 @@ public sealed class SolarSystemEventTests
         Assert.NotNull(gap.Last);
     }
 
+    [Theory]
+    [InlineData(1050, true)]
+    [InlineData(1099.9, true)]
+    [InlineData(1101, false)]
+    public void AReceiverCanMeetTheConeBeforeAnApexShortOfItsCentre(double depth, bool intersects)
+    {
+        var from = JulianInstant.FromJulianDate(2451545, TimeScale.Tdb);
+        // The umbral apex is exactly 1000 km behind the 10 km occulter.
+        double sunDistance = (SolarOccultation.SunRadiusKilometers - 10) * 100;
+        var events = ObservationEventSearch.FindShadowTransits(epoch =>
+            (new(-sunDistance, 0, 0), new(depth, Seconds(epoch, from) - 900, 0), default),
+            100, 10, from, from.AddSeconds(1800));
+        if (!intersects) { Assert.Empty(events); return; }
+        var transit = Assert.Single(events);
+        double half = Math.Sqrt(100 * 100 - (depth - 1000) * (depth - 1000));
+        Assert.InRange(Math.Abs(Seconds(transit.Peak, from) - 900), 0, 1);
+        Assert.InRange(Math.Abs(Seconds(transit.First!.Value, from) - (900 - half)), 0, 1);
+        Assert.InRange(Math.Abs(Seconds(transit.Last!.Value, from) - (900 + half)), 0, 1);
+    }
+
+    [Fact]
+    public void BelowDatumSitesKeepFiniteLightingRefractionAndRejectTheBodyCentre()
+    {
+        var site = new EarthSite(31.5, 35.5, -.43);
+        Assert.True(site.IsValid());
+        Assert.False((site with { HeightKilometers = -12.001 }).IsValid());
+        var system = new CircularMoon().Sample(new CircularMoon().Start);
+        var light = EarthSurfaceLighting.Sample(system, site, DeltaTModel.FixedOffset);
+        Assert.True(double.IsFinite(light.SolarAltitudeRadians));
+        var air = new GroundSkyConditions(3);
+        Assert.InRange(air.PressureAt(site), 1013, 1100);
+        Assert.InRange(air.ApparentAltitude(0, site), .4, .8);
+        Assert.Throws<ArgumentOutOfRangeException>(() => BodySurfaceFrame.OnEllipsoid(default,
+            new(Basis3d.Identity, null), site with { HeightKilometers = -2 }, 2, 2));
+    }
+
     private sealed class CircularMoon : ISolarSystemEphemeris
     {
         public JulianInstant Start { get; } = JulianInstant.FromJulianDate(2451545, TimeScale.Tdb);

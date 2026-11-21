@@ -22,16 +22,25 @@ public static partial class ObservationEventSearch
         double? Score(double seconds)
         {
             if (positions(from.AddSeconds(seconds)) is not { } at) return null;
-            var sun = at.Sun - at.Receiver;
-            var moon = at.Occluder - at.Receiver;
-            double distance = sun.Length;
-            if (!sun.IsFinite || !moon.IsFinite || distance <= SolarOccultation.SunRadiusKilometers) return null;
-            double depth = Vector3d.Dot(moon, sun / distance);
-            if (depth <= 0 || depth >= distance) return -receiverRadiusKilometers - moon.Length;
-            double shadow = occluderRadiusKilometers - depth * (SolarOccultation.SunRadiusKilometers - occluderRadiusKilometers) / (distance - depth);
-            if (shadow <= 0) return -receiverRadiusKilometers;
-            double lateral = (moon - sun * (depth / distance)).Length;
-            return receiverRadiusKilometers + shadow - lateral;
+            var source = at.Occluder - at.Sun;
+            var receiver = at.Receiver - at.Occluder;
+            double distance = source.Length;
+            if (!source.IsFinite || !receiver.IsFinite || distance <= SolarOccultation.SunRadiusKilometers + occluderRadiusKilometers) return null;
+            var axis = source / distance;
+            double depth = Vector3d.Dot(receiver, axis);
+            if (depth <= 0) return -receiverRadiusKilometers - receiver.Length;
+            double lateral = (receiver - axis * depth).Length;
+            double sine = (SolarOccultation.SunRadiusKilometers - occluderRadiusKilometers) / distance;
+            double cosine = Math.Sqrt(1 - sine * sine);
+            double slope = sine / cosine, baseRadius = occluderRadiusKilometers / cosine;
+            // Distance to the solid umbral cone in its axial section. Clamp the side projection to the apex:
+            // a hybrid eclipse can touch the receiver before an apex that lies short of its centre.
+            double projected = Math.Max(0, (depth - slope * (lateral - baseRadius)) / (1 + slope * slope));
+            if (slope > 0) projected = Math.Min(projected, baseRadius / slope);
+            double dx = depth - projected, dy = lateral - (baseRadius - slope * projected);
+            double separation = Math.Sqrt(dx * dx + dy * dy);
+            bool inside = lateral <= baseRadius - slope * depth;
+            return receiverRadiusKilometers + (inside ? separation : -separation);
         }
     }
 }

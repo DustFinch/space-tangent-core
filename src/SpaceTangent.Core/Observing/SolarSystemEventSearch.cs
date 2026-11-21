@@ -8,7 +8,8 @@ public enum SolarSystemEventKind { NewMoon, FirstQuarter, FullMoon, LastQuarter,
 public sealed record SolarSystemEvent(JulianInstant Epoch, SolarSystemEventKind Kind, ObjectId Target,
     ObjectId? Other = null, double Degrees = 0, string? Name = null);
 
-/// <summary>Geocentric almanac events, refined to one minute with first-order light time and the adopted seasonal model.</summary>
+/// <summary>Geocentric almanac events with first-order light time/annual aberration and the adopted seasonal model.
+/// Numerical roots are refined to one second; this is not a bound on the physical model's accuracy.</summary>
 public static class SolarSystemEventSearch
 {
     private const double Day = JulianInstant.SecondsPerDay, Rad = Math.PI / 180, LightSpeed = 299_792.458;
@@ -36,7 +37,8 @@ public static class SolarSystemEventSearch
             throw new ArgumentOutOfRangeException(nameof(from));
         if (to.CompareTo(ephemeris.End) > 0) to = ephemeris.End;
         double duration = (double)to.DifferenceNanoseconds(from) / JulianInstant.NanosecondsPerSecond;
-        if (duration > 366 * Day) throw new ArgumentOutOfRangeException(nameof(to));
+        // A civil leap year can exceed 366 TDB days by a leap second and periodic scale corrections.
+        if (duration > 367 * Day) throw new ArgumentOutOfRangeException(nameof(to));
         if (duration <= 0) return [];
         var result = new List<SolarSystemEvent>();
         var cache = new Dictionary<double, SolarSystemSample>();
@@ -66,7 +68,7 @@ public static class SolarSystemEventSearch
         {
             double alpha = star.Hours * Math.PI / 12, delta = star.Declination * Rad;
             var direction = new Vector3d(Math.Cos(delta) * Math.Cos(alpha), Math.Cos(delta) * Math.Sin(alpha), Math.Sin(delta));
-            Extremes(t => Separation(Toward(moon, t), direction), Day / 4, false, (t, apart) =>
+            Extremes(t => Separation(Toward(moon, t), Aberrated(direction, t)), Day / 4, false, (t, apart) =>
             {
                 if (apart < 5) Add(t, SolarSystemEventKind.LunarApproach, moon, star.Id, apart, star.Name);
             });
@@ -95,14 +97,22 @@ public static class SolarSystemEventSearch
             var geometric = eye.RelativeState(target, SolarSystemSample.EarthId).PositionKilometers;
             double delay = geometric.Length / LightSpeed;
             // At a coverage edge use the available geometric state, never query outside the installed ephemeris.
-            return seconds - delay < -beforeStart ? geometric :
+            var ray = seconds - delay < -beforeStart ? geometric :
                 Sample(seconds - delay).RelativeState(target, SolarSystemSample.BarycenterId).PositionKilometers - eye.Earth.PositionKilometers;
+            return Aberrated(ray, seconds);
+        }
+        Vector3d Aberrated(Vector3d ray, double seconds)
+        {
+            if (!(ray.Length > 0)) return ray;
+            var direction = ray / ray.Length;
+            var beta = Sample(seconds).Earth.VelocityKilometersPerSecond / LightSpeed;
+            return (direction + beta - direction * Vector3d.Dot(direction, beta)) * ray.Length;
         }
         double SunOfDate(double seconds)
         {
             double centuries = (from.AddSeconds(seconds).ToJulianDate() - 2451545) / 36525;
             double node = (125.04452 - 1934.136261 * centuries) * Rad;
-            return Longitude(Toward(sun, seconds)) + 1.396971 * centuries - 17.20 / 3600 * Math.Sin(node) - 20.4898 / 3600;
+            return Longitude(Toward(sun, seconds)) + 1.396971 * centuries - 17.20 / 3600 * Math.Sin(node);
         }
         void Add(double seconds, SolarSystemEventKind kind, ObjectId target, ObjectId? other = null, double degrees = 0, string? name = null)
         {
@@ -136,11 +146,14 @@ public static class SolarSystemEventSearch
         {
             step = Math.Min(step, duration / 2);
             double Value(double t) { double x = angle(t); return maximum ? -x : x; }
-            double left = 0, middle = step, a = Value(0), b = Value(step);
-            while (middle < duration)
+            // Bracket extrema beyond both query edges when data exists, then filter to the requested interval.
+            double left = -Math.Min(step, beforeStart);
+            double end = duration + Math.Min(step, (double)ephemeris.End.DifferenceNanoseconds(to) / JulianInstant.NanosecondsPerSecond);
+            double middle = Math.Min(left + step, end), a = Value(left), b = Value(middle);
+            while (middle < end)
             {
                 cancellation.ThrowIfCancellationRequested();
-                double right = Math.Min(middle + step, duration), c = Value(right);
+                double right = Math.Min(middle + step, end), c = Value(right);
                 if (double.IsFinite(b) && b < a && b <= c)
                 {
                     double low = left, high = right;
@@ -150,7 +163,7 @@ public static class SolarSystemEventSearch
                         if (Value(one) < Value(two)) high = two; else low = one;
                     }
                     double best = (low + high) / 2;
-                    if (best > 0 && best < duration) found(best, angle(best));
+                    if (best >= 0 && best <= duration) found(best, angle(best));
                 }
                 left = middle; middle = right; a = b; b = c;
             }
