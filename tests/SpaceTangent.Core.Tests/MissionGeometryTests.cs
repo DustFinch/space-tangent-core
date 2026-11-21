@@ -10,11 +10,13 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class MissionGeometryTests
 {
+    private static string? ReferenceRoot => Environment.GetEnvironmentVariable("SPACETANGENT_MISSION_ORACLES") ??
+        Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT");
     [NativeGeometryFact]
     [Trait("Category", "ExternalData")]
     public void OriginalTimeSwitchIntervalsMatchTheNativeRenderer()
     {
-        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")!;
+        string archive = ReferenceRoot!;
         using var oracle = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(archive, "time-switch-reference.json")));
         var folder = Directory.CreateTempSubdirectory();
         try
@@ -45,7 +47,7 @@ public sealed class MissionGeometryTests
     [Trait("Category", "ExternalData")]
     public void OriginalAsteroidHidesItsGeometryBeforeChangingTheTrajectoryCenter()
     {
-        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")!;
+        string archive = ReferenceRoot!;
         var folder = Directory.CreateTempSubdirectory();
         try
         {
@@ -88,7 +90,7 @@ public sealed class MissionGeometryTests
     [Trait("Category", "ExternalData")]
     public void TimeSwitchBoundsIncludeEveryNativeChildEvenWhenItsIntervalIsUnreachable()
     {
-        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")!;
+        string archive = ReferenceRoot!;
         using var oracle = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(archive, "geometry-bounds-reference.json")));
         var folder = Directory.CreateTempSubdirectory("st-bounds-");
         try
@@ -148,7 +150,7 @@ public sealed class MissionGeometryTests
             bounds.Resolve(_ => (4, 3)));
     }
 
-    [PackedGeometryFact]
+    [PackedGeometryFact(needsScaleArchive: true)]
     [Trait("Category", "ExternalData")]
     public void OriginalMeshScalePackMatchesSourceMeshOptions()
     {
@@ -180,10 +182,13 @@ public sealed class MissionGeometryTests
 
     private sealed class PackedGeometryFactAttribute : FactAttribute
     {
-        public PackedGeometryFactAttribute()
+        public PackedGeometryFactAttribute(bool needsScaleArchive = false)
         {
             if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_TIMED_BOUNDS_PACK")))
                 Skip = "Set the original v5 geometry pack.";
+            if (needsScaleArchive && Environment.GetEnvironmentVariable("SPACETANGENT_TIMED_BOUNDS_PACK") is { } root &&
+                !Directory.Exists(Path.GetFullPath(Path.Combine(root, "..", "..", "..", "export-stage21", "addons-original", "mesh-science"))))
+                Skip = "Restore the separate mesh-scale archive beside the retained geometry packs.";
         }
     }
 
@@ -191,7 +196,7 @@ public sealed class MissionGeometryTests
     {
         public NativeGeometryFactAttribute()
         {
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")))
+            if (string.IsNullOrWhiteSpace(ReferenceRoot))
                 Skip = "Set the native geometry oracle and original catalogue directory.";
         }
     }

@@ -25,7 +25,11 @@ public sealed class HistoricalObserverTests
         Assert.InRange(civil.Time, new TimeOnly(11, 20), new TimeOnly(11, 40));
         Assert.Equal(civil.Date, EarthObserving.LocalMeanDate(epoch, site, model));
         Assert.Throws<ArgumentOutOfRangeException>(() => TimeConversion.ToUtc(epoch));
-        Assert.Throws<ArgumentOutOfRangeException>(() => TimeConversion.Convert(epoch, TimeScale.Tt));
+        var tt = TimeConversion.Convert(epoch, TimeScale.Tt);
+        Assert.Equal(TimeScale.Tt, tt.Scale);
+        Assert.InRange(Math.Abs((double)tt.DifferenceNanoseconds(
+            new JulianInstant(epoch.Day, epoch.NanosecondsOfDay, TimeScale.Tt))), 0, 2_000_000);
+        Assert.InRange(Math.Abs((double)TimeConversion.Convert(tt, TimeScale.Tdb).DifferenceNanoseconds(epoch)), 0, 100);
 
         var twilight = EarthObserving.Twilight(ephemeris, civil.Date, site, model);
         var rising = Assert.IsType<JulianInstant>(twilight.Horizon.Rising);

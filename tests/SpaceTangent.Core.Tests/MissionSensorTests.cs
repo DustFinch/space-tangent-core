@@ -10,11 +10,13 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class MissionSensorTests
 {
+    private static string? ReferenceRoot => Environment.GetEnvironmentVariable("SPACETANGENT_MISSION_ORACLES") ??
+        Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT");
     [NativeSensorFact]
     [Trait("Category", "ExternalData")]
     public void NativeSensorFieldsAndRangeLimitsMatchIndependentReference()
     {
-        string archive = Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")!;
+        string archive = ReferenceRoot!;
         using var oracle = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(archive, "sensor-reference.json")));
         var reference = oracle.RootElement;
         double angleTolerance = reference.GetProperty("tolerance").GetProperty("direction").GetDouble();
@@ -236,7 +238,7 @@ public sealed class MissionSensorTests
     {
         public NativeSensorFactAttribute()
         {
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_CHEBYSHEV_ROOT")))
+            if (string.IsNullOrWhiteSpace(ReferenceRoot))
                 Skip = "Set the directory with the independent sensor reference.";
         }
     }

@@ -130,7 +130,7 @@ public sealed class OrderedSpiceCatalogueTests
         }
     }
 
-    [OrderedSpiceFact]
+    [OrderedSpiceFact(needsFixedFrames: true)]
     [Trait("Category", "ExternalData")]
     public void LaterKernelOnlyCatalogueCompletesTheOriginalCassiniInstrumentFrames()
     {
@@ -1749,11 +1749,14 @@ public sealed class OrderedSpiceCatalogueTests
 
     private sealed class OrderedSpiceFactAttribute : FactAttribute
     {
-        public OrderedSpiceFactAttribute()
+        public OrderedSpiceFactAttribute(bool needsFixedFrames = false)
         {
-            if (new[] { "SPACETANGENT_SPICE_GLOBAL", "SPACETANGENT_CASSINI_JSON_ROOT", "SPACETANGENT_SPK_ARCHIVE", "SPACETANGENT_SPK_ORACLE" }
+            if (new[] { "SPACETANGENT_SPICE_GLOBAL", "SPACETANGENT_CASSINI_JSON_ROOT", "SPACETANGENT_SPK_ARCHIVE" }
                 .Any(key => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key))))
                 Skip = "Set the archived SPICE pool and original Cassini kernel roots.";
+            if (needsFixedFrames && !File.Exists(Path.Combine(
+                Environment.GetEnvironmentVariable("SPACETANGENT_SPK_ORACLE") ?? "", "fixed-frames.tf")))
+                Skip = "Set SPACETANGENT_SPK_ORACLE to the fixed-frames fixture directory.";
         }
     }
 }
