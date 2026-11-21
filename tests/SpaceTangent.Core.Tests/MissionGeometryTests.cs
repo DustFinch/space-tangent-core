@@ -160,6 +160,7 @@ public sealed class MissionGeometryTests
         string packed = Path.Combine(archive, "addons-packed", "mesh-science");
         ObjectId? Resolve(string name) => name switch
         {
+            "Sol" or "Sun" => SolarSystemSample.SunId,
             "Earth" => SolarSystemSample.EarthId,
             "SORCE" => new ObjectId("norad/27880"),
             "Jason-1" => new ObjectId("norad/26997"),
