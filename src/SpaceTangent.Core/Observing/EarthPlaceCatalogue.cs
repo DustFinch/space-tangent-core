@@ -11,7 +11,7 @@ public sealed record EarthPlace(ObjectId Id, string Name, string EnglishName, st
     double PopulationThousands, double LatitudeDegrees, double LongitudeDegrees, double AltitudeMeters,
     int? Bortle, string TimeZone, double? FixedOffsetHours = null)
 {
-    public EarthSite ObserverSite => new(LatitudeDegrees, LongitudeDegrees, Math.Max(0, AltitudeMeters / 1000));
+    public EarthSite ObserverSite => new(LatitudeDegrees, LongitudeDegrees, AltitudeMeters / 1000);
 
     public double OffsetHours(DateTimeOffset instant)
     {
@@ -154,7 +154,7 @@ public sealed class EarthPlaceCatalogue
         bool parsedLongitude = Number(row[start + 1], out longitude);
         bool parsedAltitude = Number(row[start + 2], out altitude);
         return parsedLatitude && parsedLongitude && parsedAltitude &&
-            latitude is >= -90 and <= 90 && longitude is >= -180 and <= 180 && altitude is >= -100_000 and <= 100_000;
+            latitude is >= -90 and <= 90 && longitude is >= -180 and <= 180 && altitude is >= -12_000 and <= 100_000;
     }
 
     private static ObjectId Id(string source, string key)

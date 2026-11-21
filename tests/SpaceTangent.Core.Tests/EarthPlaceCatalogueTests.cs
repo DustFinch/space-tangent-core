@@ -44,7 +44,7 @@ public sealed class EarthPlaceCatalogueTests
             var second = Assert.Single(loaded.Places);
             Assert.Equal(first.Id, second.Id);
             Assert.Equal(-20, second.AltitudeMeters);
-            Assert.Equal(0, second.ObserverSite.HeightKilometers);
+            Assert.Equal(-.02, second.ObserverSite.HeightKilometers);
             Assert.Equal(11.5, second.OffsetHours(DateTimeOffset.UnixEpoch));
             Assert.Equal(second, loaded.Nearest(-12, -179.99, .03));
             Assert.Null(loaded.Nearest(-12, -179.99, .001));
@@ -73,6 +73,16 @@ public sealed class EarthPlaceCatalogueTests
             Assert.Equal("Europe/Moscow", site.TimeZone);
         }
         finally { folder.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void SavedBelowDatumSitesKeepTheirHeightAndRejectExcessiveDepth()
+    {
+        var places = EarthPlaceCatalogue.ParseSavedText("Dead Sea\t31.5\t35.5\t-430\t2\n" +
+            "Too deep\t0\t0\t-12001\t0\n" + "Limit\t0\t0\t-12000\t0\n");
+        Assert.Equal(2, places.Count);
+        Assert.Equal(-.43, places.Single(place => place.Name == "Dead Sea").ObserverSite.HeightKilometers);
+        Assert.All(places, place => Assert.True(place.ObserverSite.IsValid()));
     }
 
     private sealed class OriginalPlacesFactAttribute : FactAttribute
