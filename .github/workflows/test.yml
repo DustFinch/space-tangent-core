@@ -36,4 +36,46 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet restore tests/SpaceTangent.Native.Tests --locked-mode
       - run: dotnet test tests/SpaceTangent.Native.Tests -c Release --no-restore --logger trx
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        id: native-data
+        with:
+          path: .ci/de440.440
+          key: native-de440-29915576d0a6555766b99485ac3056ee415e86df4fce282611c31afb329ad062
+      - name: Prepare pinned native reference input
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .ci -Force | Out-Null
+          if ('${{ steps.native-data.outputs.cache-hit }}' -ne 'true') {
+            curl.exe --fail --location --output .ci/de440.440 https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440
+            if ($LASTEXITCODE -ne 0) { throw 'DE440 download failed.' }
+          }
+          if ((Get-FileHash .ci/de440.440 -Algorithm SHA256).Hash.ToLowerInvariant() -ne '29915576d0a6555766b99485ac3056ee415e86df4fce282611c31afb329ad062') {
+            throw 'DE440 checksum mismatch.'
+          }
+      - run: dotnet publish src/SpaceTangent.Native --no-restore -c Release -o .ci/native
+      - run: dotnet tool restore
+      - name: Verify NativeAOT binding and collect managed ABI line coverage
+        shell: pwsh
+        env:
+          SPACETANGENT_DE440: ${{ github.workspace }}/.ci/de440.440
+          ST_NATIVE_DLL: ${{ github.workspace }}/.ci/native/SpaceTangentNative.dll
+        run: |
+          dotnet tool run coverlet -- tests/SpaceTangent.Native.Tests/bin/Release/net8.0/SpaceTangent.Native.Tests.dll `
+            --target dotnet --targetargs 'vstest tests/SpaceTangent.Native.Tests/bin/Release/net8.0/SpaceTangent.Native.Tests.dll /ResultsDirectory:.ci/native-coverage /Logger:trx' `
+            --include '[SpaceTangentNative]*' '[SpaceTangent.UnityBinding]*' --exclude-by-file '**/obj/**' `
+            --format cobertura --output .ci/native-coverage/coverage.xml
+          if ($LASTEXITCODE -ne 0) { throw 'Native ABI acceptance failed.' }
+          python scripts/testing/coverage_report.py .ci/native-coverage/coverage.xml `
+            --require SpaceTangent.Native --require SpaceTangent.UnityBinding `
+            --minimum SpaceTangent.UnityBinding=95 --output .ci/native-coverage/summary.json
+          if ($LASTEXITCODE -ne 0) { throw 'Native managed coverage incomplete.' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-managed-coverage
+          path: .ci/native-coverage
+          if-no-files-found: error
 # Dataset-dependent tests report skips here; local ExternalData and GPU runs remain separate release checks.

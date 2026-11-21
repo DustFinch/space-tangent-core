@@ -7,8 +7,12 @@
     <PublishAot>true</PublishAot>
     <NativeLib>Shared</NativeLib>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <RuntimeFrameworkVersion>8.0.33</RuntimeFrameworkVersion>
   </PropertyGroup>
   <ItemGroup>
+    <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler">
+      <ILCompilerPackVersion Condition="'%(TargetFramework)' == 'net8.0'">8.0.33</ILCompilerPackVersion>
+    </KnownILCompilerPack>
     <ProjectReference Include="../SpaceTangent.Core/SpaceTangent.Core.csproj" />
   </ItemGroup>
 </Project>

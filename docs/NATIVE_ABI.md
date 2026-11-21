@@ -17,6 +17,8 @@ The C regression in `tests/native/smoke.c` builds with `cl /std:c17 /Iinclude te
 
 For Unity, put `SpaceTangentNative.dll` under `Assets/Plugins/x86_64` and copy `bindings/unity/SpaceTangentEphemeris.cs` into `Assets`. The editor probe belongs in `Assets/Editor`. Set `SPACETANGENT_DE440` and call `SpaceTangent.Unity.SpaceTangentNativeSmoke.Run` using the editor's `-executeMethod` option.
 
+The optional `bindings/unity/SpaceTangent.UnityBinding.csproj` builds that same wrapper as a .NET Standard 2.1 library without UnityEngine or editor sources. It makes the C# binding measurable independently; Unity can continue importing the single source file. Set `ST_NATIVE_DLL` to an absolute published NativeAOT DLL and `SPACETANGENT_DE440` to the pinned model when running `SpaceTangent.Native.Tests` to check real P/Invoke state values, failure statuses and SafeHandle disposal. These checks supplement the in-editor smoke, rather than claiming coverage of the editor itself. The NativeAOT runtime/compiler are pinned to the patched 8.0.33 toolchain.
+
 For Unreal, copy `bindings/unreal` to a writable project directory. Set `SPACETANGENT_NATIVE_DLL` and `SPACETANGENT_DE440` to absolute paths. The example uses the editor's Python Script Plugin to load the C ABI and compare all six state values with CSPICE from inside the editor process.
 
 ```powershell

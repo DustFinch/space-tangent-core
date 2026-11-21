@@ -21,14 +21,14 @@ def collect(paths):
             module = {"SpaceTangentNative": "SpaceTangent.Native"}.get(package.attrib["name"], package.attrib["name"])
             if not module.startswith("SpaceTangent.") or module.endswith(".Tests"):
                 continue
-            marker = module + "/"
+            marker = "bindings/unity/" if module == "SpaceTangent.UnityBinding" else module + "/"
             for item in package.findall("./classes/class"):
                 source = item.attrib["filename"].replace("\\", "/")
                 candidates = [source] + [(prefix + "/" + source).replace("\\", "/") for prefix in sources]
                 source = next((value for value in candidates if marker in value), "")
                 if not source:
                     raise ValueError(f"Source mapping unavailable for {module}: {item.attrib['filename']}")
-                source = marker + source.split(marker, 1)[1]
+                source = module + "/" + source.split(marker, 1)[1]
                 parts = source.split("/")
                 if any(part in {"obj", "bin", ".godot", "tests"} for part in parts) or source.endswith(".g.cs"):
                     continue

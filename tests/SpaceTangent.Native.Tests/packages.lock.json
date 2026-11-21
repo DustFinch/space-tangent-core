@@ -110,6 +110,9 @@
           "SpaceTangent.Contracts": "[1.0.0, )"
         }
       },
+      "spacetangent.unitybinding": {
+        "type": "Project"
+      },
       "SpaceTangentNative": {
         "type": "Project",
         "dependencies": {

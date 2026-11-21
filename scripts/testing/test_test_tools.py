@@ -87,6 +87,16 @@ class DataProfileTests(unittest.TestCase):
 
 
 class CoverageReportTests(unittest.TestCase):
+    def test_linked_unity_binding_keeps_its_own_denominator(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "binding.xml"
+            path.write_text('''<coverage><packages><package name="SpaceTangent.UnityBinding"><classes>
+                <class filename="bindings/unity/SpaceTangentEphemeris.cs"><lines>
+                <line number="35" hits="1"/></lines></class></classes></package></packages></coverage>''', encoding="utf-8")
+            result = coverage_report.summarize(coverage_report.collect([path]), ["SpaceTangent.UnityBinding"])
+            self.assertEqual("SpaceTangent.UnityBinding/SpaceTangentEphemeris.cs", result["files"][0]["file"])
+            self.assertEqual(1, result["modules"]["SpaceTangent.UnityBinding"]["executable"])
+
     def test_minimum_applies_to_each_named_module_instead_of_the_total(self):
         result = {"modules": {"SpaceTangent.Contracts": {"percent": 100.}, "SpaceTangent.Core": {"percent": 90.}}}
         coverage_report.enforce_minimum(result, ["SpaceTangent.Contracts=95", "SpaceTangent.Core=90"])
