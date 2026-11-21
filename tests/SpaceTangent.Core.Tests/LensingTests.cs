@@ -66,12 +66,11 @@ public sealed class LensingTests
         }
     }
 
-    [LensFact]
+    [LensCatalogueFact]
     [Trait("Category", "ExternalData")]
     public void BuiltInCatalogueRetainsTheOriginalElevenMeasuredObjects()
     {
-        string path = Environment.GetEnvironmentVariable("SPACETANGENT_LENS_ORACLE")!;
-        using var text = File.OpenText(Path.Combine(Path.GetDirectoryName(path)!, "p3-original-blackholes.txt"));
+        using var text = File.OpenText(CataloguePath!);
         var archived = BlackHoleCatalogue.Read(text);
         var current = BlackHoleCatalogue.Default;
         Assert.Equal(11, archived.Entries.Count);
@@ -98,6 +97,19 @@ public sealed class LensingTests
     private static Vector3d Read(JsonElement xyz) => new(xyz[0].GetDouble(), xyz[1].GetDouble(), xyz[2].GetDouble());
     private static void Near(double expected, double actual, double tolerance) =>
         Assert.InRange(Math.Abs(expected - actual), 0, tolerance * Math.Max(1, Math.Abs(expected)));
+
+    private static string? CataloguePath => Environment.GetEnvironmentVariable("SPACETANGENT_LENS_CATALOGUE") ??
+        (Environment.GetEnvironmentVariable("SPACETANGENT_LENS_ORACLE") is { } file
+            ? Path.Combine(Path.GetDirectoryName(file)!, "p3-original-blackholes.txt") : null);
+
+    private sealed class LensCatalogueFactAttribute : FactAttribute
+    {
+        public LensCatalogueFactAttribute()
+        {
+            if (!File.Exists(CataloguePath))
+                Skip = "Set the retained black-hole catalogue independently of the missing ray-trace oracle.";
+        }
+    }
 
     private sealed class LensFactAttribute : FactAttribute
     {

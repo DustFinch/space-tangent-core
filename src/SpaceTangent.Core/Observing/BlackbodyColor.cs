@@ -21,7 +21,7 @@ public static class BlackbodyColor
     /// <summary>CIE XYZ of a blackbody at kelvin, in W sr^-1 m^-2 per unit of the matching functions (relative).</summary>
     public static (double X, double Y, double Z) Tristimulus(double kelvin)
     {
-        if (!(kelvin > 0)) throw new ArgumentOutOfRangeException(nameof(kelvin));
+        if (!(kelvin > 0) || !double.IsFinite(kelvin)) throw new ArgumentOutOfRangeException(nameof(kelvin));
         const double h = 6.62607015e-34, c = 299792458.0, k = 1.380649e-23;
         double x = 0, y = 0, z = 0;
         for (int nm = 380; nm <= 780; nm++)
