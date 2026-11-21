@@ -13,6 +13,8 @@ Use the exact TDB day and nanosecond offset. Position and velocity are geometric
 
 The C regression in `tests/native/smoke.c` builds with `cl /std:c17 /Iinclude tests\native\smoke.c` in a Win64 Visual C++ command prompt. Pass it the absolute DLL and DE440 paths.
 
+`dotnet test tests/SpaceTangent.Native.Tests` invokes the same attributed C entry points through unmanaged function pointers in the managed build. It checks status codes, UTF-8 paths, output clearing, handles and the pinned CSPICE Moon state when `SPACETANGENT_DE440` is set. This permits IL line instrumentation of `SpaceTangentNative`; it does not measure optimized NativeAOT machine-code coverage or replace the C/editor smoke checks. The report tool maps this ABI assembly name to the `SpaceTangent.Native` source project explicitly.
+
 For Unity, put `SpaceTangentNative.dll` under `Assets/Plugins/x86_64` and copy `bindings/unity/SpaceTangentEphemeris.cs` into `Assets`. The editor probe belongs in `Assets/Editor`. Set `SPACETANGENT_DE440` and call `SpaceTangent.Unity.SpaceTangentNativeSmoke.Run` using the editor's `-executeMethod` option.
 
 For Unreal, copy `bindings/unreal` to a writable project directory. Set `SPACETANGENT_NATIVE_DLL` and `SPACETANGENT_DE440` to absolute paths. The example uses the editor's Python Script Plugin to load the C ABI and compare all six state values with CSPICE from inside the editor process.

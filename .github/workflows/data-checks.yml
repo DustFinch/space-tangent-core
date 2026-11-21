@@ -50,6 +50,29 @@ jobs:
           SPACETANGENT_DE440: ${{ github.workspace }}/.ci/de440.440
         run: dotnet test SpaceTangent.Core.sln --no-build -c Release --logger "console;verbosity=normal"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: dotnet tool restore
+      - name: Collect public-data line coverage
+        env:
+          SPACETANGENT_DE440: ${{ github.workspace }}/.ci/de440.440
+        run: |
+          mkdir -p .ci/coverage
+          dotnet tool run coverlet -- tests/SpaceTangent.Core.Tests/bin/Release/net8.0/SpaceTangent.Core.Tests.dll \
+            --target dotnet --targetargs 'vstest tests/SpaceTangent.Core.Tests/bin/Release/net8.0/SpaceTangent.Core.Tests.dll /ResultsDirectory:.ci/coverage /Logger:trx' \
+            --include '[SpaceTangent.Core]*' '[SpaceTangent.Contracts]*' --exclude-by-file '**/obj/**' \
+            --format cobertura --output .ci/coverage/coverage.xml
+          python scripts/testing/coverage_report.py .ci/coverage/coverage.xml \
+            --require SpaceTangent.Core --require SpaceTangent.Contracts \
+            --minimum SpaceTangent.Contracts=95 --output .ci/coverage/summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-core-coverage
+          path: .ci/coverage
+          if-no-files-found: error
+
   reference-fixtures:
     # The committed SGP4 and Earth orientation fixtures must be reproducible from the pinned public tools.
     runs-on: ubuntu-latest

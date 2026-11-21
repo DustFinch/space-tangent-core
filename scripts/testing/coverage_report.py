@@ -16,7 +16,9 @@ def collect(paths):
             raise ValueError(f"Not a Cobertura report: {path}")
         sources = [item.text or "" for item in root.findall("./sources/source")]
         for package in root.findall("./packages/package"):
-            module = package.attrib["name"]
+            # The native shared library's ABI filename deliberately has no dot.
+            # Its source directory and report identity still use the project name.
+            module = {"SpaceTangentNative": "SpaceTangent.Native"}.get(package.attrib["name"], package.attrib["name"])
             if not module.startswith("SpaceTangent.") or module.endswith(".Tests"):
                 continue
             marker = module + "/"
@@ -61,14 +63,31 @@ def summarize(modules, required=()):
             "files": sorted(files, key=lambda x: len(x["uncovered_lines"]), reverse=True)}
 
 
+def enforce_minimum(result, thresholds):
+    seen = set()
+    for value in thresholds:
+        name, separator, number = value.partition("=")
+        if not separator or name in seen:
+            raise ValueError("Coverage minimum must be a unique MODULE=PERCENT pair.")
+        minimum = float(number)
+        if not math.isfinite(minimum) or not 0 <= minimum <= 100:
+            raise ValueError("Coverage minimum must be finite and between 0 and 100.")
+        seen.add(name)
+        actual = result["modules"].get(name)
+        if actual is None or actual["percent"] < minimum:
+            raise ValueError(f"Coverage minimum not met: {name} requires {minimum:g}%.")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reports", nargs="+")
     parser.add_argument("--require", action="append", default=[])
+    parser.add_argument("--minimum", action="append", default=[], metavar="MODULE=PERCENT")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     try:
         result = summarize(collect(args.reports), args.require)
+        enforce_minimum(result, args.minimum)
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

@@ -18,4 +18,22 @@ jobs:
       - run: dotnet restore SpaceTangent.Core.sln --locked-mode
       - run: dotnet build SpaceTangent.Core.sln -c Release --no-restore
       - run: dotnet test tests/SpaceTangent.Core.Tests -c Release --no-build --logger trx
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test corpus, coverage reporting and pack CLI
+        env:
+          ST_PACK_TOOL_DLL: ${{ github.workspace }}/tools/SpaceTangent.PackTool/bin/Release/net8.0/SpaceTangent.PackTool.dll
+        run: python -m unittest discover -s scripts/testing -p 'test_*.py'
+
+  native-contracts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          dotnet-version: '8.0.x'
+      - run: dotnet restore tests/SpaceTangent.Native.Tests --locked-mode
+      - run: dotnet test tests/SpaceTangent.Native.Tests -c Release --no-restore --logger trx
 # Dataset-dependent tests report skips here; local ExternalData and GPU runs remain separate release checks.

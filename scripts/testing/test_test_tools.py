@@ -12,7 +12,7 @@ class DataProfileTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
-        self.root = Path(self.scratch.name)
+        self.root = Path(self.scratch.name).resolve()
         self.input = self.root / "source"
         self.input.mkdir()
         (self.input / "data.bin").write_bytes(b"original")
@@ -87,6 +87,32 @@ class DataProfileTests(unittest.TestCase):
 
 
 class CoverageReportTests(unittest.TestCase):
+    def test_minimum_applies_to_each_named_module_instead_of_the_total(self):
+        result = {"modules": {"SpaceTangent.Contracts": {"percent": 100.}, "SpaceTangent.Core": {"percent": 90.}}}
+        coverage_report.enforce_minimum(result, ["SpaceTangent.Contracts=95", "SpaceTangent.Core=90"])
+        with self.assertRaisesRegex(ValueError, "SpaceTangent.Core"):
+            coverage_report.enforce_minimum(result, ["SpaceTangent.Core=95"])
+        with self.assertRaises(ValueError):
+            coverage_report.enforce_minimum(result, ["SpaceTangent.Native=1"])
+
+    def test_invalid_or_duplicate_minimum_cannot_disable_the_gate(self):
+        for value in ["x", "x=nan", "x=inf", "x=-1", "x=101", "x=not-a-number"]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                coverage_report.enforce_minimum({"modules": {}}, [value])
+        with self.assertRaises(ValueError):
+            coverage_report.enforce_minimum({"modules": {"x": {"percent": 100}}}, ["x=95", "x=0"])
+
+    def test_native_abi_filename_maps_to_its_real_source_project(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "native.xml"
+            path.write_text('''<coverage><packages><package name="SpaceTangentNative"><classes>
+                <class filename="src/SpaceTangent.Native/EphemerisExports.cs"><lines>
+                <line number="35" hits="1"/><line number="90" hits="0"/>
+                </lines></class></classes></package></packages></coverage>''', encoding="utf-8")
+            result = coverage_report.summarize(coverage_report.collect([path]), ["SpaceTangent.Native"])
+            self.assertEqual(50., result["modules"]["SpaceTangent.Native"]["percent"])
+            self.assertEqual([90], result["files"][0]["uncovered_lines"])
+
     def test_required_module_cannot_be_hidden_by_a_high_total(self):
         modules = {"SpaceTangent.Core": {"SpaceTangent.Core/A.cs": {1: True}}}
         with self.assertRaisesRegex(ValueError, "SpaceTangent.Godot"):
