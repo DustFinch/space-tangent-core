@@ -20,6 +20,8 @@ The retained CK corpus can be prepared with `tools/reference/recover_ck_corpus.p
 
 `tools/reference/extract_spk_target.py SOURCE TARGET OUTPUT --sha256 ORIGINAL_SHA256` copies the original segments for one target with CSPICE `spksub`. It does not fit or resample a trajectory. Use it to prepare a bounded scientific input when a complete upstream kernel exceeds the application's file-size limit. Its provenance records original/output hashes, coverage and exact native state comparisons at segment boundaries and midpoints. Keep the original source URL and distribution terms with the data profile.
 
+Supply both `--start-jd` and `--end-jd` to restrict coverage to a finite increasing TDB Julian-date interval. Only overlapping target segments are copied, with endpoints clipped by CSPICE; trajectory data are not fitted again. Both requested dates and the actual selected segment coverage are recorded. Missing bodies, disjoint windows and invalid dates fail instead of producing an empty successful corpus. The reference-tool tests use a separately authored linear native SPK to verify target selection, coverage, state preservation and refusal paths.
+
 Geometry and sensor references can use `SPACETANGENT_MISSION_ORACLES` independently of the Saturn series input `SPACETANGENT_CHEBYSHEV_ROOT`. The latter remains a compatibility fallback. Separate dependency guards report unavailable fixed-frame and mesh-scale archives without suppressing unrelated retained cases.
 
 ## Collect and combine coverage

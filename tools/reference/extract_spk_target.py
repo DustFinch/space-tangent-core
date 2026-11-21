@@ -6,6 +6,7 @@ The original file checksum is required. No trajectory is fitted or resampled.
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import spiceypy as spice
 
@@ -24,7 +25,16 @@ def main():
     parser.add_argument("target", type=int)
     parser.add_argument("output", type=Path)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--start-jd", type=float, help="Optional inclusive coverage start, as a TDB Julian date.")
+    parser.add_argument("--end-jd", type=float, help="Optional inclusive coverage end, as a TDB Julian date.")
     args = parser.parse_args()
+    if (args.start_jd is None) != (args.end_jd is None):
+        raise ValueError("Supply both coverage endpoints.")
+    window = None
+    if args.start_jd is not None:
+        if not (math.isfinite(args.start_jd) and math.isfinite(args.end_jd) and args.start_jd < args.end_jd):
+            raise ValueError("Coverage endpoints must be finite and increasing.")
+        window = [(value - 2451545.0) * 86400 for value in (args.start_jd, args.end_jd)]
     if args.source.resolve() == args.output.resolve() or args.output.exists():
         raise ValueError("Choose a new output path separate from the original kernel.")
     if digest(args.source) != args.sha256.lower():
@@ -37,9 +47,13 @@ def main():
             descriptor = spice.dafgs()
             times, ids = spice.dafus(descriptor, 2, 6)
             if ids[0] == args.target:
-                segments.append((descriptor[:5].copy(), times.copy(), ids.copy(), spice.dafgn()))
+                selected = times.copy()
+                if window is not None:
+                    selected[0], selected[1] = max(times[0], window[0]), min(times[1], window[1])
+                if selected[0] < selected[1]:
+                    segments.append((descriptor[:5].copy(), selected, ids.copy(), spice.dafgn()))
         if not segments:
-            raise ValueError("The requested body has no segments in this kernel.")
+            raise ValueError("The requested body has no segments in the selected coverage.")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         destination = spice.spkopn(str(args.output), "TARGET SEGMENT COPY", 0)
         try:
@@ -69,6 +83,7 @@ def main():
         "sourceSha256": args.sha256.lower(), "outputSha256": digest(args.output), "target": args.target,
         "operation": "CSPICE spksub: original segments, no fit/resampling", "toolkit": spice.tkvrsn("TOOLKIT"),
         "spiceypy": spice.__version__, "segmentCount": len(segments), "identicalReferenceStates": len(queries),
+        "requestedTdbJulianDates": None if window is None else [args.start_jd, args.end_jd],
         "coverageSeconds": [times.tolist() for _, times, _, _ in segments]}, indent=2) + "\n", encoding="utf-8")
     print(f"Copied {len(segments)} segments; {len(queries)} CSPICE states match exactly; {args.output.stat().st_size} bytes.")
 
