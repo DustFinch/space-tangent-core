@@ -37,3 +37,5 @@ The report merges a source line with logical OR across runs and classes. It excl
 The Godot runner and its explicit tracker flush are documented in the simulator's `docs/TEST_COVERAGE.md`. Headless and rendered input-smoke reports can be combined; hitting renderer C# lines does not establish image correctness.
 
 Check the verification tools themselves with `python -m unittest discover -s scripts/testing -p 'test_*.py'`.
+
+`tools/reference/generate_equinoctial_spk.py NEW_DIRECTORY` uses the pinned CSPICE writer and geometric state reader to produce the small committed type-17 fixture: three orbits, 24 epochs, nonzero apsidal/nodal rates and both coverage endpoints. Its JSON records toolkit version, kernel SHA and states. The C# suite compares the managed reader with those independent native values; reference CI regenerates the same witnesses. Synthetic polynomial fixtures also check analytic CHEBPOLY values and derivatives, endpoint holding and invalid inputs. These new cases do not stand in for a missing historical multi-type SPK archive.
