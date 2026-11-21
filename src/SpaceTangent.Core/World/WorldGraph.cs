@@ -118,6 +118,28 @@ public sealed class WorldGraph
         }
     }
 
+    /// <summary>Creates a graph without the supplied objects and every rule transitively depending on them.
+    /// Removed samplers are never invoked, including through mission frames and prefix evaluations.</summary>
+    public WorldGraph WithoutObjects(IEnumerable<ObjectId> excluded)
+    {
+        ArgumentNullException.ThrowIfNull(excluded);
+        var roots = excluded.ToHashSet();
+        if (roots.Count == 0) return this;
+        var removed = new bool[_nodes.Length];
+        var rules = new List<WorldRule>();
+        for (int i = 0; i < _nodes.Length; i++)
+        {
+            var node = _nodes[i];
+            removed[i] = node.Rule.Key.Channel != WorldChannel.ReferenceFrame && roots.Contains(node.Rule.Key.Id) ||
+                node.Dependencies.Any(dependency => removed[dependency]);
+            if (!removed[i]) rules.Add(node.Rule);
+        }
+        var kept = rules.Select(rule => rule.Key).ToHashSet();
+        var missions = _missions.Where(pair => kept.Contains(new(pair.Key, WorldChannel.State)) &&
+            kept.Contains(new(pair.Key, WorldChannel.Orientation))).ToDictionary(pair => pair.Key, pair => pair.Value);
+        return new(rules.ToArray(), _solar, missions, _defaultDeltaT);
+    }
+
     public WorldSnapshot Evaluate(JulianInstant tdb) => EvaluateCore(tdb, null);
 
     /// <summary>Evaluates all Earth-dependent nodes with the observer's model, without mutating this graph.</summary>

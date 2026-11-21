@@ -10,6 +10,38 @@ namespace SpaceTangent.Core.Tests;
 public sealed class SscBodyCatalogueTests
 {
     [Fact]
+    public void ObservingMetadataDistinguishesDeclaredFramesAndConservativeScriptFallbacks()
+    {
+        var root = Directory.CreateTempSubdirectory("st-observing-metadata-");
+        try
+        {
+            File.WriteAllText(Path.Combine(root.FullName, "bodies.ssc"), """
+                "Plain" "Sol" { Radius 600 EllipticalOrbit { Period 1000 SemiMajorAxis 2.8 } }
+                "Fixed" "Sol" { Radius 600 FixedRotation {} EllipticalOrbit { Period 1000 SemiMajorAxis 2.8 } }
+                "Fallback" "Sol" { Radius 600 ScriptedOrbit { Function "unused" }
+                    UniformRotation { Period 10 } EllipticalOrbit { Period 1000 SemiMajorAxis 2.8 } }
+                "PhaseFallback" "Sol" { Radius 600 Timeline [{
+                    Ending 2460000 ScriptedRotation { Function "unused" }
+                    UniformRotation { Period 10 } EllipticalOrbit { Period 1000 SemiMajorAxis 2.8 }
+                }] }
+                "MixedFrames" "Sol" { Radius 600 Timeline [
+                    { Ending 2460000 FixedRotation {} EllipticalOrbit { Period 1000 SemiMajorAxis 2.8 } }
+                    { Ending 2470000 EllipticalOrbit { Period 1000 SemiMajorAxis 2.8 } }
+                ] }
+                """);
+            var bodies = SscBodyCatalogue.Load(root.FullName).ToDictionary(body => body.Name);
+            Assert.False(bodies["Plain"].HasExplicitOrientation);
+            Assert.False(bodies["Plain"].UsesScriptedModels);
+            Assert.True(bodies["Fixed"].HasExplicitOrientation);
+            Assert.True(bodies["Fallback"].UsesScriptedModels);
+            Assert.True(bodies["PhaseFallback"].UsesScriptedModels);
+            Assert.True(bodies["PhaseFallback"].HasExplicitOrientation);
+            Assert.False(bodies["MixedFrames"].HasExplicitOrientation);
+        }
+        finally { root.Delete(true); }
+    }
+
+    [Fact]
     public void RectangularFixedPositionSurvivesSourceAndPack()
     {
         var root = Directory.CreateTempSubdirectory("st-ssc-rectangular-");

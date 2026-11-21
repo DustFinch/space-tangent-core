@@ -43,6 +43,23 @@ public sealed class ObserverDaySearchTests
         Assert.Throws<ArgumentException>(() => ObserverDaySearch.Find(Sample, Start, Start));
     }
 
+    [Fact]
+    public void RetainsEveryCrossingAcrossSeveralRotationsInOneWindow()
+    {
+        var day = ObserverDaySearch.Find(at => new(at,
+            20 * Math.Sin((Offset(at) - 900) * Math.Tau / 21600), null, null), Start, Start.AddSeconds(86400));
+        Assert.False(day.StartsAbove);
+        Assert.True(day.CompleteCoverage);
+        Assert.Equal(8, day.Crossings.Count);
+        for (int i = 0; i < day.Crossings.Count; i++)
+        {
+            Assert.Equal(i % 2 == 0, day.Crossings[i].Rising);
+            Assert.InRange(Math.Abs(Offset(day.Crossings[i].Epoch) - (900 + i * 10800)), 0, 1);
+        }
+        Assert.Equal(day.Crossings[0].Epoch, day.Rise);
+        Assert.Equal(day.Crossings[1].Epoch, day.Set);
+    }
+
     private static double Offset(JulianInstant? at) => at is { } epoch
         ? (double)epoch.DifferenceNanoseconds(Start) / JulianInstant.NanosecondsPerSecond : double.NaN;
 }

@@ -21,3 +21,11 @@ Reference sources
 - [NASA GSFC April 2024 solar eclipse](https://eclipse.gsfc.nasa.gov/SEhistory/SEplot/SE2024Apr08T.pdf)
 - [NASA GSFC March 2025 lunar eclipse](https://eclipse.gsfc.nasa.gov/LEplot/LEplot2001/LE2025Mar14T.pdf)
 - [NASA JPL NAIF conjunction calculation](https://naif.jpl.nasa.gov/naif/wgc_easy_usage_example.pdf)
+
+## Captured observing graphs
+
+`WorldGraph.WithoutObjects` removes specified object rules and all transitively dependent rules. Retained rules keep their dependency order, mission metadata and prefix-evaluation semantics; removed samplers are never invoked. Consumers can exclude unsafe catalogue factories without discarding independent SSC trajectories and frames.
+
+Parsed SSC definitions expose `UsesScriptedModels` conservatively whenever their declaration contains a scripted orbit/rotation, including timeline phases and fallback declarations. `HasExplicitOrientation` distinguishes a declared body frame/rotation from an importer rendering default; timeline metadata requires every phase to declare its attitude. Programmatic definitions with callbacks must be marked by their owner before use by a background consumer.
+
+`ObserverDay.Crossings` reports all covered rising/setting contacts in time order. Consumers can form below-threshold intervals clipped to either edge, including multiple rotations or an entirely dark window; the existing first Rise/Set fields keep their meaning.

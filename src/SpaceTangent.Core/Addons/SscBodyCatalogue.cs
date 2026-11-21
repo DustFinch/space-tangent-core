@@ -31,6 +31,10 @@ public sealed record SscBodyDefinition(string Names, string Parent, string Cente
     public string? MeshRoot { get; init; }
     public Func<bool, SscExtrasolarConic>? BindExtrasolarOrbit { get; init; }
     public SscTimelineBinder? BindTimeline { get; init; }
+    /// <summary>Conservative marker for declarations containing any Lua orbit/rotation factory, including phases.</summary>
+    public bool UsesScriptedModels { get; init; }
+    /// <summary>An explicit fixed/body-frame declaration, including fully declared timeline attitudes.</summary>
+    public bool HasExplicitOrientation { get; init; }
 
     public string Name => Names.Split(':')[0];
 }
@@ -199,6 +203,17 @@ public static partial class SscBodyCatalogue
 
     private static string[] TextureNames(string name) => name.EndsWith(".*", StringComparison.Ordinal)
         ? [name[..^1] + "png", name[..^1] + "jpg", name[..^1] + "dds"] : [name];
+
+    private static bool ContainsScript(SscValue value) => value switch
+    {
+        SscValue.Map map => map.Fields.Any(pair => pair.Key is "ScriptedOrbit" or "ScriptedRotation" || ContainsScript(pair.Value)),
+        SscValue.List list => list.Items.Any(ContainsScript),
+        _ => false
+    };
+
+    private static bool DeclaresOrientation(SscValue.Map map) => map.Fields.Keys.Any(key => key is
+        "BodyFrame" or "FixedRotation" or "UniformRotation" or "PrecessingRotation" or "RotationPeriod" or
+        "CustomRotation" or "SpiceRotation" or "SampledOrientation" or "ScriptedRotation");
 
     private static SscBodyDefinition? ReadBody(SscDefinition item, Func<string, string> root, ISscScriptModels? scripts,
         Action<string>? warning, SscResource resolve, SscSpiceInput spice, CancellationToken cancellation, SscCustomModels? custom)
@@ -464,6 +479,9 @@ public static partial class SscBodyCatalogue
             mesh, meshCenter, meshRotation, orientation, Sample)
         {
             SampleRotation = spin, EllipsoidRadiiKilometers = radii, SurfaceMap = surfaceMap,
+            UsesScriptedModels = ContainsScript(fields),
+            HasExplicitOrientation = timeline is null ? DeclaresOrientation(fields) :
+                fields.Fields["Timeline"] is SscValue.List phases && phases.Items.All(value => value is SscValue.Map phase && DeclaresOrientation(phase)),
             Rings = rings, GeometricAlbedo = albedo, BindExtrasolarOrbit = extrasolarOrbit,
             OrbitApoapsisKilometers = orbitApoapsis is { } distance && double.IsFinite(distance) ? distance : null,
             MeshRoot = mesh is null ? null : root(item.DirectoryFor("Mesh")),

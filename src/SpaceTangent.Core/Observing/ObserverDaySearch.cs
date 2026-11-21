@@ -7,8 +7,14 @@ public readonly record struct ObserverChartSample(JulianInstant Epoch, double? A
     double? AzimuthDegrees, double? SunAltitudeDegrees, double? MoonAltitudeDegrees = null,
     double? MoonSeparationDegrees = null, double? ElongationDegrees = null, double? Magnitude = null);
 
+public readonly record struct ObserverHorizonCrossing(JulianInstant Epoch, bool Rising);
+
 public sealed record ObserverDay(IReadOnlyList<ObserverChartSample> Samples, JulianInstant? Rise,
-    JulianInstant? Set, ObserverChartSample? Maximum, bool? StartsAbove, bool CompleteCoverage);
+    JulianInstant? Set, ObserverChartSample? Maximum, bool? StartsAbove, bool CompleteCoverage)
+{
+    /// <summary>All covered threshold crossings in time order, including repeated rotations within the window.</summary>
+    public IReadOnlyList<ObserverHorizonCrossing> Crossings { get; init; } = [];
+}
 
 /// <summary>Daily horizon crossings and altitude maximum from an immutable caller-supplied observer.</summary>
 public static class ObserverDaySearch
@@ -29,6 +35,7 @@ public static class ObserverDaySearch
         ObserverChartSample? maximum = null;
         double maximumAt = 0;
         JulianInstant? rise = null, set = null;
+        var crossings = new List<ObserverHorizonCrossing>();
         var previous = At(0);
         double previousOffset = 0;
         bool? startsAbove = previous.AltitudeDegrees is { } first ? first >= horizonAltitudeDegrees : null;
@@ -43,6 +50,7 @@ public static class ObserverDaySearch
             {
                 bool rising = b >= horizonAltitudeDegrees;
                 var contact = Refine(previousOffset, offset, rising);
+                if (contact is { } epoch) crossings.Add(new(epoch, rising));
                 if (rising) rise ??= contact; else set ??= contact;
             }
             previous = current;
@@ -66,7 +74,7 @@ public static class ObserverDaySearch
         // slightly from an integral second, and must not create a nearly duplicate last point.
         int intervals = Math.Max(1, (int)Math.Round(seconds / 900));
         for (int i = 0; i <= intervals; i++) rows.Add(At(seconds * i / intervals));
-        return new(rows.AsReadOnly(), rise, set, maximum, startsAbove, complete);
+        return new(rows.AsReadOnly(), rise, set, maximum, startsAbove, complete) { Crossings = crossings.AsReadOnly() };
 
         ObserverChartSample At(double offset)
         {

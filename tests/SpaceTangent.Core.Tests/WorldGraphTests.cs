@@ -15,6 +15,48 @@ public sealed class WorldGraphTests
     private static readonly JulianInstant Epoch = new(2_451_545, 0, TimeScale.Tdb);
 
     [Fact]
+    public void ExcludingAnObjectPrunesTransitiveStatesAndOrientationsWithoutInvokingIt()
+    {
+        var builder = new WorldGraphBuilder();
+        ObjectId script = new("unsafe"), child = new("child"), grandchild = new("grandchild");
+        int calls = 0;
+        builder.AddTrajectory(Center, _ => new CartesianState(new(1, 0, 0), default));
+        builder.AddTrajectory(script, _ => { calls++; throw new InvalidOperationException("No background callbacks"); });
+        builder.AddTrajectory(child, _ => default(CartesianState), script);
+        builder.AddTrajectory(grandchild, _ => default(CartesianState), child);
+        builder.AddTrajectory(Vehicle, _ => new CartesianState(new(2, 0, 0), default), Center);
+        builder.AddTwoVectorOrientation(Vehicle, FrameAxis.X, new(Center, script, DirectionQuantity.Position),
+            FrameAxis.Y, new(Center, child, DirectionQuantity.Position));
+        ObjectId mission = new("safe-mission"), unsafeMission = new("unsafe-mission");
+        var inertial = new MissionFrame.Inertial(Basis3d.Identity);
+        builder.AddSampledMission(new(mission, "safe", null, 1,
+            [new(Epoch.AddSeconds(-10), Epoch.AddSeconds(10), Center,
+                _ => new CartesianState(new(5, 0, 0), default), inertial, inertial)]));
+        builder.AddSampledMission(new(unsafeMission, "unsafe", null, 1,
+            [new(Epoch.AddSeconds(-10), Epoch.AddSeconds(10), script,
+                _ => default(CartesianState), inertial, inertial)]));
+        var original = builder.Build();
+        Assert.Same(original, original.WithoutObjects([]));
+        var filtered = original.WithoutObjects([script]);
+        var snapshot = filtered.Evaluate(Epoch);
+        Assert.False(snapshot.TryState(script, out _));
+        Assert.False(snapshot.TryState(child, out _));
+        Assert.False(snapshot.TryState(grandchild, out _));
+        Assert.False(snapshot.TryOrientation(Vehicle, out _));
+        Assert.True(snapshot.TryState(Vehicle, out var safe));
+        Assert.Equal(new Vector3d(3, 0, 0), safe.PositionKilometers);
+        Assert.False(snapshot.TryState(unsafeMission, out _));
+        Assert.False(snapshot.TryMissionReferenceFrame(unsafeMission, true, Epoch, out _, out _));
+        Assert.True(snapshot.TryState(mission, out var missionState));
+        Assert.Equal(new Vector3d(6, 0, 0), missionState.PositionKilometers);
+        Assert.True(snapshot.TryMissionReferenceFrame(mission, true, Epoch, out var origin, out _));
+        Assert.Equal(new Vector3d(1, 0, 0), origin.PositionKilometers);
+        Assert.Equal(0, calls);
+        Assert.Throws<InvalidOperationException>(() => original.Evaluate(Epoch));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public void RotatingTrajectoryUsesParentOrientationAndVelocityBeforeComposition()
     {
         var graph = new WorldGraphBuilder();
