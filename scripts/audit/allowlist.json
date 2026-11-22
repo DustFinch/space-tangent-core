@@ -143,5 +143,10 @@
     "path": "tests/SpaceTangent.Core.Tests/PackedScienceBoundaryTests.cs",
     "sha256": "a872448fbd0ed5bf871747c9ccde9cf23dcb58f8f848b2bb64d207046fdd1668",
     "reason": "Exact upstream packed trajectory convention selects bounded orbit continuation in the compatibility contract."
+  },
+  {
+    "path": "tests/SpaceTangent.Core.Tests/PackedTimelineContractTests.cs",
+    "sha256": "ce4c0061d2835a7ed87b64160540c90f4aeeac72e41ffd954ef68164df22e46b",
+    "reason": "Exact archived local-frame convention tested against an independently calculated rotating-parent witness."
   }
 ]

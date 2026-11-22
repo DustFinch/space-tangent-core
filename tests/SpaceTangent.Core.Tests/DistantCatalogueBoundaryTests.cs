@@ -126,6 +126,44 @@ public sealed class DistantCatalogueBoundaryTests
     }
 
     [Fact]
+    public void NegativeLookupCacheIsBoundedAndCanReloadAnEvictedIdentifier()
+    {
+        using var index = DistantStarIndex.Open(new MemoryStream(Fixture()));
+        var original = new ObjectId("hip/999");
+        Assert.Null(index.Find(original));
+        for (int number = 1000; number < 5096; number++) Assert.Null(index.Find(new("hip/" + number)));
+        int before = index.LeavesRead;
+        Assert.Null(index.Find(original));
+        Assert.Equal(before + 2, index.LeavesRead);
+        Assert.Null(index.Find(original));
+        Assert.Equal(before + 2, index.LeavesRead);
+    }
+
+    [Fact]
+    public void ConcurrentLookupsPublishOneStableEntry()
+    {
+        using var index = DistantStarIndex.Open(new MemoryStream(Fixture()));
+        var found = new StellarEntry?[256];
+        Parallel.For(0, found.Length, i => found[i] = index.Find(new("hip/10")));
+        Assert.NotNull(found[0]);
+        Assert.All(found, entry => Assert.Same(found[0], entry));
+    }
+
+    [Fact]
+    public void FailedFileOpenDoesNotLeakTheCatalogueHandle()
+    {
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, new byte[20]);
+            Assert.Throws<InvalidDataException>(() => DistantStarIndex.Load(path));
+            using var exclusive = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            Assert.Equal(20, exclusive.Length);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void OpenRequiresReadableSeekableInputAndAPositiveBudget()
     {
         Assert.Throws<ArgumentNullException>(() => DistantStarIndex.Open(null!));

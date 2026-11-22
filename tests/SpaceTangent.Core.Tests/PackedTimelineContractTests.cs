@@ -23,12 +23,51 @@ public sealed class PackedTimelineContractTests : IDisposable
         ["lifetime"] = new JsonObject { ["beginningJdTdb"] = 2451545, ["endingJdTdb"] = 2451548 }
     };
 
-    private IReadOnlyList<SampledMission> Load(JsonObject body, JsonObject? child = null)
+    private IReadOnlyList<SampledMission> Load(JsonObject body, JsonObject? child = null, List<string>? warnings = null)
     {
         var bodies = new JsonArray(body); if (child is not null) bodies.Add(child);
         File.WriteAllText(Path.Combine(_root.FullName, "pack.json"), new JsonObject { ["formatVersion"] = 19, ["bodies"] = bodies }.ToJsonString());
         return SampledMissionCatalog.Load("pack.json", _root.FullName,
-            name => name is "Earth" or "Sol/Earth" ? SolarSystemSample.EarthId : null);
+            name => name is "Earth" or "Sol/Earth" ? SolarSystemSample.EarthId : null,
+            warnings is null ? null : warnings.Add);
+    }
+
+    [Fact]
+    public void FollowAttitudeCarriesTheParentPoseButReportsOnlyItsDeclaredLocalRate()
+    {
+        var body = Body();
+        body["rotation"] = new JsonObject { ["kind"] = "follow", ["body"] = "Sol/Earth", ["turn"] = new JsonArray(1, 0, 0, 0),
+            ["localRotation"] = new JsonObject { ["kind"] = "cosmographiaUniform", ["periodDays"] = 2,
+                ["epochJdTdb"] = 2451545, ["frame"] = new JsonObject { ["kind"] = "eclipticJ2000" } } };
+        var mission = Assert.Single(Load(body));
+        var graph = new WorldGraphBuilder(); graph.AddTrajectory(SolarSystemSample.EarthId, _ => default(CartesianState));
+        graph.AddOrientation(SolarSystemSample.EarthId, epoch =>
+        {
+            double seconds = (double)epoch.DifferenceNanoseconds(new(2451545, 0, TimeScale.Tdb)) / JulianInstant.NanosecondsPerSecond;
+            double angle = .01 * seconds;
+            return new(new(new(Math.Cos(angle), Math.Sin(angle), 0), new(-Math.Sin(angle), Math.Cos(angle), 0), new(0, 0, 1)), new(0, 0, .01));
+        });
+        graph.AddSampledMission(mission); var world = graph.Build();
+        double ownRate = Math.Tau / (2 * 86400);
+        foreach (double seconds in new[] { 0d, 50, 100 })
+        {
+            var epoch = new JulianInstant(2451545, 0, TimeScale.Tdb).AddSeconds(seconds);
+            Assert.True(world.Evaluate(epoch).TryOrientation(mission.Id, out var orientation));
+            double angle = .01 * seconds + Math.PI + ownRate * seconds;
+            Assert.InRange((orientation.ToWorld.X - new Vector3d(Math.Cos(angle), Math.Sin(angle), 0)).Length, 0, 2e-9);
+            Assert.InRange((orientation.AngularVelocityRadiansPerSecond!.Value - new Vector3d(0, 0, ownRate)).Length, 0, 1e-12);
+        }
+    }
+
+    [Fact]
+    public void FollowLocalRotationRejectsAnAdditionalCompetingBodyFrame()
+    {
+        var body = Body(); body["bodyFrame"] = Axes();
+        body["rotation"] = new JsonObject { ["kind"] = "follow", ["body"] = "Sol/Earth", ["turn"] = new JsonArray(1, 0, 0, 0),
+            ["localRotation"] = Spin() };
+        var warnings = new List<string>();
+        Assert.Empty(Load(body, warnings: warnings));
+        Assert.Contains(warnings, warning => warning.Contains("inertial local axes", StringComparison.Ordinal));
     }
 
     [Fact]
