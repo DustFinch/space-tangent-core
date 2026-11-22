@@ -128,5 +128,37 @@ public sealed class SscInputBoundaryTests : IDisposable
         if (fault != "exists") Assert.False(Directory.Exists(target));
     }
 
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void MissingOptionalFactoryAndUnindexedSscAreReportedAndStagingIsTransactional(bool cancel)
+    {
+        string source = _root.CreateSubdirectory("source").FullName;
+        File.WriteAllText(Path.Combine(source, "body.ssc"), """
+            "Witness" "Sol/Earth" { FixedPosition [1 2 3] ScriptedOrbit { Module "absent" Function "make" } }
+            """);
+        string ignored = Directory.CreateDirectory(Path.Combine(source, "unindexed")).FullName;
+        File.WriteAllText(Path.Combine(ignored, "ignored.ssc"), "\"Ignored\" \"Sol\" { FixedPosition [1 0 0] }");
+        string target = Path.Combine(_root.FullName, "packed"); var warnings = new List<string>();
+        using var cancellation = new CancellationTokenSource();
+        void Warn(string text)
+        {
+            warnings.Add(text);
+            if (cancel && text.Contains("was omitted", StringComparison.Ordinal)) cancellation.Cancel();
+        }
+        if (cancel)
+        {
+            Assert.Throws<OperationCanceledException>(() => SscBodyCatalogue.BuildPack(source, target, Warn, cancellation.Token));
+            Assert.False(Directory.Exists(target));
+        }
+        else
+        {
+            Assert.Equal(1, SscBodyCatalogue.BuildPack(source, target, Warn));
+            Assert.Equal("Witness", Assert.Single(SscBodyCatalogue.Load(target)).Name);
+        }
+        Assert.Contains(warnings, text => text.Contains("module is missing", StringComparison.Ordinal));
+        Assert.Contains(warnings, text => text.Contains("was omitted", StringComparison.Ordinal));
+        Assert.Empty(Directory.GetDirectories(_root.FullName, ".body-pack-*"));
+    }
+
     public void Dispose() => _root.Delete(recursive: true);
 }

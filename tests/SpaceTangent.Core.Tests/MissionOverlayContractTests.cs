@@ -91,5 +91,35 @@ public sealed class MissionOverlayContractTests : IDisposable
         Assert.Empty(Assert.Single(Load(new JsonObject { ["type"] = "TimeSwitched", ["sequence"] = new JsonArray() })).Geometry!);
     }
 
+    [Theory]
+    [InlineData(1d)] [InlineData(2.125)]
+    public void GeometryAxesRetainTheirPhysicalScaleAndKind(double scale)
+    {
+        var track = Assert.Single(Load(new JsonObject { ["type"] = "Axes", ["scale"] = scale }));
+        var style = Assert.Single(track.Geometry!).Shape.Axes!;
+        Assert.Equal(MissionAxesKind.Geometry, style.Kind); Assert.Equal((double)(float)scale, style.ScaleKilometers);
+        Assert.True(style.Visible);
+    }
+
+    [Theory]
+    [InlineData("Axes", "{\"scale\":1e100}")]
+    [InlineData("Globe", "{\"radii\":[1,0,1]}")]
+    [InlineData("Globe", "{\"radii\":[1,1,-1]}")]
+    public void InvalidGeometryCannotPublishFiniteRenderBounds(string kind, string properties)
+    {
+        var geometry = JsonNode.Parse(properties)!.AsObject(); geometry["type"] = kind;
+        Assert.Throws<InvalidDataException>(() => Load(geometry));
+    }
+
+    [Fact]
+    public void UnsupportedGlobeMapRetainsItsPhysicalShapeWithADiagnostic()
+    {
+        var warnings = new List<string>();
+        var track = Assert.Single(Load(new JsonObject { ["type"] = "Globe", ["radii"] = new JsonArray(3, 2, 1),
+            ["baseMap"] = new JsonObject { ["type"] = "UnlistedMap" } }, warnings));
+        Assert.Equal(new Vector3d(3, 2, 1), Assert.Single(track.Geometry!).Shape.EllipsoidRadiiKilometers);
+        Assert.Contains(warnings, text => text.Contains("no local tile reader", StringComparison.Ordinal));
+    }
+
     public void Dispose() => _root.Delete(recursive: true);
 }

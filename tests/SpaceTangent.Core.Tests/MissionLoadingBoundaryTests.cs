@@ -120,5 +120,43 @@ public sealed class MissionLoadingBoundaryTests : IDisposable
         Assert.Contains("Unsupported witness", Assert.Single(warnings));
     }
 
+    [Theory]
+    [InlineData("bad-q-extension")]
+    [InlineData("uniform-zero")]
+    [InlineData("short-quaternion")]
+    [InlineData("zero-quaternion")]
+    [InlineData("overflow-quaternion")]
+    public void InvalidAttitudeInputsCannotPublishAMission(string fault)
+    {
+        File.WriteAllText(Path.Combine(_root.FullName, "bad.xyz"), "not a Q file");
+        var item = Item();
+        item["rotationModel"] = fault switch
+        {
+            "bad-q-extension" => new JsonObject { ["type"] = "Interpolated", ["source"] = "bad.xyz" },
+            "uniform-zero" => new JsonObject { ["type"] = "Uniform", ["period"] = 0 },
+            _ => new JsonObject { ["type"] = "Fixed", ["quaternion"] = fault == "short-quaternion" ? new JsonArray(1, 0, 0) :
+                fault == "zero-quaternion" ? new JsonArray(0, 0, 0, 0) : new JsonArray(1e200, 0, 0, 0) }
+        };
+        Assert.Throws<InvalidDataException>(() => Load(item));
+    }
+
+    [Theory]
+    [InlineData(true)] [InlineData(false)]
+    public void SpiceAttitudeAcceptsBothDeclaredFrameNameFields(bool explicitFrame)
+    {
+        var item = Item(); item["rotationModel"] = new JsonObject { ["type"] = "Spice", [explicitFrame ? "frame" : "name"] = "J2000" };
+        Assert.IsType<MissionFrame.Spice>(Assert.Single(Assert.Single(Load(item)).Arcs).BodyFrame);
+    }
+
+    [Theory]
+    [InlineData("Unlisted")]
+    [InlineData("Interpolated")]
+    public void UnsupportedAttitudeConventionsAreExplicitFailures(string type)
+    {
+        File.WriteAllText(Path.Combine(_root.FullName, "witness.q"), "");
+        var item = Item(); item["rotationModel"] = new JsonObject { ["type"] = type, ["source"] = "witness.q", ["compatibility"] = "unlisted" };
+        Assert.Throws<NotSupportedException>(() => Load(item));
+    }
+
     public void Dispose() => _root.Delete(recursive: true);
 }
