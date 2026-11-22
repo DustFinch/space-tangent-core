@@ -316,7 +316,7 @@ public sealed class SscTimelineTests
         public void Dispose() => _root.Delete(recursive: true);
     }
 
-    [GalileoFact]
+    [GalileoFact(mountOnly: true)]
     [Trait("Category", "ExternalData")]
     public void StandaloneProbeMountUsesTheOriginalGalileoBodyFrame()
     {
@@ -386,8 +386,14 @@ public sealed class SscTimelineTests
 
     private sealed class GalileoFactAttribute : FactAttribute
     {
-        public GalileoFactAttribute()
+        public GalileoFactAttribute(bool mountOnly = false)
         {
+            if (mountOnly)
+            {
+                if (!Directory.Exists(Environment.GetEnvironmentVariable("SPACETANGENT_STANDARD_SPACECRAFT")))
+                    Skip = "Set the original Galileo SSC directory for the probe mount.";
+                return;
+            }
             if (new[] { "SPACETANGENT_STANDARD_SPACECRAFT", "SPACETANGENT_GALILEO_REFERENCE", "SPACETANGENT_DE440" }
                 .Any(key => string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key))))
                 Skip = "Set the original Galileo catalogue, independent state reference and DE440 paths.";

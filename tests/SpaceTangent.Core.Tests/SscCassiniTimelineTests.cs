@@ -101,7 +101,7 @@ public sealed class SscCassiniTimelineTests
         };
     }
 
-    [CassiniFact]
+    [CassiniFact(landingOnly: true)]
     [Trait("Category", "ExternalData")]
     public void OriginalHuygensLandingCoordinatesBindOutsideATimeline()
     {
@@ -160,8 +160,15 @@ public sealed class SscCassiniTimelineTests
 
     private sealed class CassiniFactAttribute : FactAttribute
     {
-        public CassiniFactAttribute()
+        public CassiniFactAttribute(bool landingOnly = false)
         {
+            if (landingOnly)
+            {
+                if (!File.Exists(Path.Combine(Data("SPACETANGENT_SSC_WORLD_ROOT") ?? "", "ssc", "cassini.ssc")) ||
+                    !File.Exists(Data("SPACETANGENT_SATURN_PCK")))
+                    Skip = "Set the original Cassini landing-site SSC and Saturn PCK paths.";
+                return;
+            }
             if (new[] { "SPACETANGENT_GENERIC_CASSINI_SSC", "SPACETANGENT_SSC_WORLD_ROOT",
                 "SPACETANGENT_SATURN_PCK", "SPACETANGENT_DE440", "SPACETANGENT_SAT083" }
                 .Any(name => string.IsNullOrWhiteSpace(Data(name))))
