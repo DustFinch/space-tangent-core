@@ -138,5 +138,10 @@
     "path": "docs/REFERENCE_PROVENANCE.md",
     "sha256": "de0b104858c7a9ff453a7cd2d23d4e34bd8fe1e301471c548d858b6c2e26f2fa",
     "reason": "Pinned upstream source attribution for the independent native numeric reference."
+  },
+  {
+    "path": "tests/SpaceTangent.Core.Tests/PackedScienceBoundaryTests.cs",
+    "sha256": "a872448fbd0ed5bf871747c9ccde9cf23dcb58f8f848b2bb64d207046fdd1668",
+    "reason": "Exact upstream packed trajectory convention selects bounded orbit continuation in the compatibility contract."
   }
 ]
