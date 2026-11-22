@@ -1,0 +1,11 @@
+{
+  "method": "New independent NAIF conics and axis-angle witnesses; not recovered historical output. Parameters transcribed from the published authored definitions; no managed product code invoked.",
+  "toolkit": "CSPICE_N0067",
+  "spiceypy": "8.4.0",
+  "numpy": "2.5.5",
+  "generatorNormalizedSha256": "582cd5d6b6dca9664743207fac96a52531109b68da41a4385a64b063531e457a",
+  "files": {
+    "demo-worlds-reference.json": "40b5f433a90658534d6b7b793e396bb12871119d44b1916dbf9a53c39af6fe0d",
+    "catalogue-moons-reference.json": "0f6dc6e1ba965b5dcf1ea9190071fd5dc86940af372d62f54f4ae3eaa7083bfa"
+  }
+}

@@ -8,12 +8,15 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class DemoWorldTests
 {
-    [ArchiveFact]
+    [Fact]
     [Trait("Category", "ExternalData")]
     public void TheAuthoredSystemsMatchArchivedStatesAndOrientations()
     {
         var graph = Graph();
-        string path = Environment.GetEnvironmentVariable("SPACETANGENT_DEMO_WORLD_ORACLE")!;
+        // The committed replacement is independently generated with CSPICE;
+        // it is explicitly not represented as recovered historical output.
+        string path = Environment.GetEnvironmentVariable("SPACETANGENT_DEMO_WORLD_ORACLE") ??
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "demo-worlds-reference.json");
         using var reference = JsonDocument.Parse(File.ReadAllText(path));
         var ids = DemoWorlds.Bodies.ToDictionary(body => body.Name, body => body.Id, StringComparer.Ordinal);
         Assert.Equal(45, reference.RootElement.GetArrayLength());
@@ -72,12 +75,4 @@ public sealed class DemoWorldTests
         return builder.Build();
     }
 
-    private sealed class ArchiveFactAttribute : FactAttribute
-    {
-        public ArchiveFactAttribute()
-        {
-            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_DEMO_WORLD_ORACLE")))
-                Skip = "Set the archived demonstration-system states.";
-        }
-    }
 }

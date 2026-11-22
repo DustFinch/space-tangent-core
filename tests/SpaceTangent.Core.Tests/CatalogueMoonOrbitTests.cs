@@ -8,11 +8,13 @@ namespace SpaceTangent.Core.Tests;
 
 public sealed class CatalogueMoonOrbitTests
 {
-    [CatalogueMoonFact]
+    [Fact]
     [Trait("Category", "ExternalData")]
     public void FiveOriginalMoonConicsMatchArchivedHighPrecisionLocalStates()
     {
-        string oracle = Environment.GetEnvironmentVariable("SPACETANGENT_CATALOGUE_MOON_ORACLE")!;
+        // This new native oracle preserves the original assertion count and tolerances.
+        string oracle = Environment.GetEnvironmentVariable("SPACETANGENT_CATALOGUE_MOON_ORACLE") ??
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "catalogue-moons-reference.json");
         using var reference = JsonDocument.Parse(File.ReadAllBytes(oracle));
         var ids = new Dictionary<string, int>(StringComparer.Ordinal)
         {
@@ -39,12 +41,4 @@ public sealed class CatalogueMoonOrbitTests
         Assert.Equal(270, count);
     }
 
-    private sealed class CatalogueMoonFactAttribute : FactAttribute
-    {
-        public CatalogueMoonFactAttribute()
-        {
-            if (Environment.GetEnvironmentVariable("SPACETANGENT_CATALOGUE_MOON_ORACLE") is null)
-                Skip = "Set the path to the original local moon orbit oracle.";
-        }
-    }
 }
