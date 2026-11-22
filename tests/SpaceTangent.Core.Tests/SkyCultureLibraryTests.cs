@@ -37,6 +37,34 @@ public sealed class SkyCultureLibraryTests
         Assert.Null(library.Find("../../western"));
     }
 
+    [RecoveredSkyCulturesFact]
+    [Trait("Category", "ExternalData")]
+    public void RecoveredCultureAtlasPreservesEveryAvailableArtworkAnchor()
+    {
+        var library = SkyCultureLibrary.Load(Environment.GetEnvironmentVariable("SPACETANGENT_RECOVERED_SKY_CULTURES")!);
+        Assert.Equal(33, library.Cultures.Count);
+        var artwork = library.Cultures.SelectMany(culture => culture.Figures)
+            .Where(figure => figure.Artwork is not null).Select(figure => figure.Artwork!).ToArray();
+        Assert.Equal(299, artwork.Length);
+        Vector3d first = new(1, 0, 0), second = new(0, 1, 0), third = new(0, 0, 1);
+        foreach (var art in artwork)
+        {
+            Assert.True(File.Exists(art.ImagePath), art.ImagePath);
+            Assert.Equal(first, art.Direction(art.First.X, art.First.Y, first, second, third));
+            Assert.Equal(second, art.Direction(art.Second.X, art.Second.Y, first, second, third));
+            Assert.Equal(third, art.Direction(art.Third.X, art.Third.Y, first, second, third));
+        }
+    }
+
+    private sealed class RecoveredSkyCulturesFactAttribute : FactAttribute
+    {
+        public RecoveredSkyCulturesFactAttribute()
+        {
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SPACETANGENT_RECOVERED_SKY_CULTURES")))
+                Skip = "Set the recovered, source-pinned sky culture library directory.";
+        }
+    }
+
     private sealed class SkyCulturesFactAttribute : FactAttribute
     {
         public SkyCulturesFactAttribute()

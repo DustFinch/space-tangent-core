@@ -2,6 +2,8 @@
 
 SpaceTangent Core is an engine-independent C# library for evaluating astronomical positions, velocities, orbits, and reference frames. It powers the [SpaceTangent desktop simulator](https://github.com/DustFinch/space-tangent) and targets .NET 8.
 
+The [supported-contract matrix](docs/COMPATIBILITY.md) describes format subsets, scientific evidence and native/engine integration limits. [Pinned data and coverage](docs/TEST_DATA_AND_COVERAGE.md) explains how to reproduce optional checks without treating skipped historical cases as verified compatibility.
+
 ## Quick start
 
 Install Git and the .NET SDK specified in [`global.json`](global.json). The commands below use PowerShell and build the library from source.

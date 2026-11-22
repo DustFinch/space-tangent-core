@@ -2,6 +2,10 @@
 
 The ordinary unit suite works without optional archives and reports its missing-data cases as skips. A full local data profile records the selected files so that a changed, incomplete or missing corpus fails before tests start. Keep profiles and assets outside the repositories: profiles contain local paths and capturing a file does not grant redistribution rights or authenticate its provenance.
 
+The [supported-contract matrix](COMPATIBILITY.md) separates format support from accepted scientific evidence. Reproducible HYG astrometry and original upstream photograph/survey capture recipes, plus the retained historical-case inventory, are maintained in the simulator's [test-data guide](https://github.com/DustFinch/space-tangent/blob/main/docs/TEST_COVERAGE.md). Supplementary STC recovery needs a separate source-only baseline without `stars.dat` and a separately pinned original binary table. Do not remove files from an original installation to create that baseline.
+
+Keep `SPACETANGENT_SKY_CULTURES` on the original 128-image installation. The separate `SPACETANGENT_RECOVERED_SKY_CULTURES` test checks the same 33 definitions with all 299 artwork files available in the pinned upstream subset, including all three anchor directions per image. Six referenced images remain absent upstream. This new optional-input test supplements the original contract; it is not another restored historical skip.
+
 ## Pin an installed corpus
 
 Check the source version, published checksum and distribution terms first. Record the files actually used by a test variable. A directory binding pins all its files, including their relative names. Keep mutable outputs outside bound input directories.
@@ -33,6 +37,12 @@ python scripts/testing/coverage_report.py core.cobertura.xml application.cobertu
 ```
 
 The report merges a source line with logical OR across runs and classes. It excludes generated sources, third-party assemblies and test code, while retaining unexecuted lines in production sources. Required modules must have a nonempty denominator and recorded hits; an empty XML cannot produce a successful 100% report. Only listed modules are measured. Report Native, CLI and engine bindings separately until they are included by explicit runs. Shader execution is outside managed C# coverage and needs GPU checks.
+
+Use the same build configuration when comparing executable-line denominators. Debug and Release can emit different sequence points even for identical source files; a higher ratio with fewer emitted lines is not additional testing. Keep their counts and accepted reports separate.
+
+The pack CLI suite covers strict/non-strict diagnostics, bounded manifests, current portable round trips and optional real planetary, atmosphere, science-satellite and stellar-correction installations. Build the tool in Debug, set `ST_PACK_TOOL_DLL` to its DLL and run `python -m unittest discover -s scripts/testing -p 'test_pack_cli.py'` through a verified data profile. Data-free CI skips the four real-input contracts. `ST_CLI_COVERLET` and a fresh `ST_CLI_COVERAGE_DIRECTORY` collect each invocation separately while `cli_test_support.py` preserves the tool's actual exit status and stderr. An expected CLI rejection is accepted only when the outer test checks that status and diagnostic.
+
+The CLI's planetary-model adapter deliberately does not provide the host's Earth rotation model for `iau-earth`; a catalogue requiring that callback receives an explicit unsupported-feature diagnostic. Mixed science packs can contain frame-helper bodies that are not modeled Earth satellites: ordinary satellite checks retain the valid spacecraft and report the helpers, while strict checks fail on those notices. These diagnostic contracts must remain visible rather than being suppressed to obtain a green check.
 
 The Godot runner and its explicit tracker flush are documented in the simulator's `docs/TEST_COVERAGE.md`. Headless and rendered input-smoke reports can be combined; hitting renderer C# lines does not establish image correctness.
 
