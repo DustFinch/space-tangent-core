@@ -9,6 +9,8 @@ dotnet publish src/SpaceTangent.Native/SpaceTangent.Native.csproj --no-restore -
 
 Use `include/space_tangent.h` with the published `SpaceTangentNative.dll`. The ABI uses C calling conventions, fixed-width integers and six contiguous doubles per state. Pass the DE440 file as an absolute UTF-8 path without a NUL terminator. The caller owns each nonzero handle and closes it once. Queries can run concurrently. Closing a handle leaves an in-flight query valid and rejects later queries. Retain the DLL for the lifetime of the host process.
 
+The internal state is a plain sequential wire struct, matching the C header and Unity binding; it has no record equality or generated property API. Directory paths are unavailable kernel files and clear the output handle just like other file-open failures. The ABI version and 48-byte layout remain unchanged.
+
 Use the exact TDB day and nanosecond offset. Position and velocity are geometric ICRF3 coordinates in kilometres and kilometres per second. NAIF IDs 0, 10, 301 and 399 identify the solar-system barycenter, Sun, Moon and Earth. Status values come from the header.
 
 The C regression in `tests/native/smoke.c` builds with `cl /std:c17 /Iinclude tests\native\smoke.c` in a Win64 Visual C++ command prompt. Pass it the absolute DLL and DE440 paths.

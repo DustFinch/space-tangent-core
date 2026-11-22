@@ -70,7 +70,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native ABI acceptance failed.' }
           python scripts/testing/coverage_report.py .ci/native-coverage/coverage.xml `
             --require SpaceTangent.Native --require SpaceTangent.UnityBinding `
-            --minimum SpaceTangent.UnityBinding=95 --output .ci/native-coverage/summary.json
+            --minimum SpaceTangent.Native=95 --minimum SpaceTangent.UnityBinding=95 `
+            --output .ci/native-coverage/summary.json --markdown-output $env:GITHUB_STEP_SUMMARY
           if ($LASTEXITCODE -ne 0) { throw 'Native managed coverage incomplete.' }
       - uses: actions/upload-artifact@v4
         if: always()

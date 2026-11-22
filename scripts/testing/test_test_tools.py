@@ -87,6 +87,35 @@ class DataProfileTests(unittest.TestCase):
 
 
 class CoverageReportTests(unittest.TestCase):
+    def test_ci_summary_appends_real_counts_and_retains_a_failed_threshold_report(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            source, output, summary = root/'coverage.xml', root/'summary.json', root/'job.md'
+            source.write_text('''<coverage><packages><package name="SpaceTangent.Core"><classes>
+                <class filename="src/SpaceTangent.Core/A.cs"><lines>
+                <line number="1" hits="1"/><line number="2" hits="0"/>
+                </lines></class></classes></package></packages></coverage>''')
+            summary.write_text('Existing job notes.\n')
+            arguments = [str(source), '--require', 'SpaceTangent.Core', '--output', str(output),
+                         '--markdown-output', str(summary)]
+            self.assertEqual(1, coverage_report.main(arguments+['--minimum','SpaceTangent.Core=95']))
+            self.assertEqual(50., json.loads(output.read_text())['modules']['SpaceTangent.Core']['percent'])
+            text = summary.read_text()
+            self.assertTrue(text.startswith('Existing job notes.\n'))
+            self.assertIn('| SpaceTangent.Core | 1 / 2 | 50.000% |', text)
+            self.assertIn('Skipped optional-data tests', text)
+            self.assertNotIn(str(root), text)
+            self.assertEqual(0, coverage_report.main(arguments+['--minimum','SpaceTangent.Core=50']))
+
+    def test_invalid_report_cannot_publish_a_successful_ci_summary(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            source, summary = root/'empty.xml', root/'job.md'
+            source.write_text('<coverage><packages /></coverage>')
+            self.assertEqual(1, coverage_report.main([str(source), '--require','SpaceTangent.Core',
+                '--output',str(root/'summary.json'),'--markdown-output',str(summary)]))
+            self.assertFalse(summary.exists())
+
     def test_linked_unity_binding_keeps_its_own_denominator(self):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / "binding.xml"

@@ -119,6 +119,18 @@ public sealed unsafe class AbiContractTests
         AssertZero(closed);
     }
 
+    [Fact]
+    public void ADirectoryIsUnavailableAsAKernelAndClearsTheOutputHandle()
+    {
+        var directory = Directory.CreateTempSubdirectory("st-native-directory-");
+        try
+        {
+            Assert.Equal(3, OpenFile(directory.FullName, out nuint handle));
+            Assert.Equal((nuint)0, handle);
+        }
+        finally { directory.Delete(); }
+    }
+
     [ModelFact]
     public void ModelRejectsUnsupportedObjectsAndEpochsAndClearsTheCallerState()
     {

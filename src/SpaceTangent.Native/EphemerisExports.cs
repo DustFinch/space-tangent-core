@@ -14,7 +14,11 @@ internal enum Status
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly record struct NativeState(double X, double Y, double Z, double Vx, double Vy, double Vz);
+internal struct NativeState
+{
+    public double X, Y, Z;
+    public double Vx, Vy, Vz;
+}
 
 internal static unsafe class EphemerisExports
 {
@@ -80,7 +84,7 @@ internal static unsafe class EphemerisExports
             CartesianState state = model.Sample(tdb).RelativeState(targetId, centerId);
             var p = state.PositionKilometers;
             var v = state.VelocityKilometersPerSecond;
-            *output = new(p.X, p.Y, p.Z, v.X, v.Y, v.Z);
+            *output = new() { X = p.X, Y = p.Y, Z = p.Z, Vx = v.X, Vy = v.Y, Vz = v.Z };
             return Status.Ok;
         }
         catch (ArgumentOutOfRangeException) { return Status.OutsideCoverage; }

@@ -78,22 +78,37 @@ def enforce_minimum(result, thresholds):
             raise ValueError(f"Coverage minimum not met: {name} requires {minimum:g}%.")
 
 
+def markdown(result):
+    lines = ["## Measured line coverage", "", "| Module | Covered / executable | Coverage |",
+             "| --- | ---: | ---: |"]
+    for module, item in sorted(result['modules'].items()):
+        label = module.replace('|', '\\|').replace('\r', ' ').replace('\n', ' ')
+        lines.append(f"| {label} | {item['covered']} / {item['executable']} | {item['percent']:.3f}% |")
+    lines += ["", "Only the listed managed modules and inputs are measured. "
+              "Skipped optional-data tests, shader execution and image quality are separate evidence.", ""]
+    return '\n'.join(lines)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reports", nargs="+")
     parser.add_argument("--require", action="append", default=[])
     parser.add_argument("--minimum", action="append", default=[], metavar="MODULE=PERCENT")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--markdown-output", help="Append the measured table to a file, such as GITHUB_STEP_SUMMARY.")
     args = parser.parse_args(argv)
     try:
         result = summarize(collect(args.reports), args.require)
-        enforce_minimum(result, args.minimum)
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        if args.markdown_output:
+            with Path(args.markdown_output).open('a', encoding='utf-8') as summary:
+                summary.write('\n' + markdown(result))
         for module, item in result["modules"].items():
             print(f"{module}: {item['covered']}/{item['executable']} lines ({item['percent']:.2f}%)")
         print("Only the listed modules are measured; shader execution is outside C# line coverage.")
+        enforce_minimum(result, args.minimum)
         return 0
     except (OSError, ValueError, KeyError, ET.ParseError) as error:
         print(f"Coverage report rejected: {error}", file=sys.stderr)

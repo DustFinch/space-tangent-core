@@ -65,7 +65,8 @@ jobs:
             --format cobertura --output .ci/coverage/coverage.xml
           python scripts/testing/coverage_report.py .ci/coverage/coverage.xml \
             --require SpaceTangent.Core --require SpaceTangent.Contracts \
-            --minimum SpaceTangent.Contracts=95 --output .ci/coverage/summary.json
+            --minimum SpaceTangent.Contracts=95 --output .ci/coverage/summary.json \
+            --markdown-output "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
