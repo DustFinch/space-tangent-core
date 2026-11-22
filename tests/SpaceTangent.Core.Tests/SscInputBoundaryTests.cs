@@ -85,5 +85,48 @@ public sealed class SscInputBoundaryTests : IDisposable
         Assert.Throws<ArgumentNullException>(() => SscBodyCatalogue.LoadWithMpc(_root.FullName, null!));
     }
 
+    [Theory]
+    [InlineData("png")] [InlineData("jpg")] [InlineData("dds")]
+    public void WildcardTexturesUseTheAvailableLocalFormatAndFallbackDirectory(string extension)
+    {
+        string models = Directory.CreateDirectory(Path.Combine(_root.FullName, "models")).FullName;
+        string textures = Directory.CreateDirectory(Path.Combine(_root.FullName, "textures", "lores")).FullName;
+        string file = Path.Combine(textures, "witness." + extension); File.WriteAllText(file, "resolution-only fixture");
+        Assert.Equal(file, SscBodyCatalogue.ResolveTexture(_root.FullName, Path.Combine(models, "witness.obj"), "witness.*"));
+        Assert.Throws<FileNotFoundException>(() => SscBodyCatalogue.ResolveTexture(_root.FullName, Path.Combine(models, "witness.obj"), "absent.*"));
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("nested")]
+    [InlineData("exists")]
+    [InlineData("manifest")]
+    [InlineData("empty")]
+    [InlineData("large-catalogue")]
+    [InlineData("many-catalogues")]
+    [InlineData("cancelled")]
+    public void RejectedBodyPackBuildsDoNotLeavePartialOutput(string fault)
+    {
+        string source = Path.Combine(_root.FullName, "source"); Directory.CreateDirectory(source);
+        string file = Path.Combine(source, "body.ssc"); File.WriteAllText(file, "\"Witness\" \"Sol\" { FixedPosition [1 0 0] }");
+        string target = Path.Combine(_root.FullName, "packed");
+        switch (fault)
+        {
+            case "missing": source = Path.Combine(source, "absent"); break;
+            case "nested": target = Path.Combine(source, "nested"); break;
+            case "exists": Directory.CreateDirectory(target); break;
+            case "manifest": File.WriteAllText(Path.Combine(source, "pack.json"), "{}"); break;
+            case "empty": File.Delete(file); break;
+            case "large-catalogue": using (var stream = File.Create(file)) stream.SetLength(1024 * 1024 + 1); break;
+            case "many-catalogues": for (int i = 0; i < 64; i++) File.WriteAllText(Path.Combine(source, "extra" + i + ".ssc"), ""); break;
+        }
+        if (fault == "missing") Assert.Throws<DirectoryNotFoundException>(() => SscBodyCatalogue.BuildPack(source, target, _ => { }));
+        else if (fault == "exists") Assert.Throws<IOException>(() => SscBodyCatalogue.BuildPack(source, target, _ => { }));
+        else if (fault == "cancelled") Assert.Throws<OperationCanceledException>(() => SscBodyCatalogue.BuildPack(source, target, _ => { }, new CancellationToken(true)));
+        else Assert.Throws<InvalidDataException>(() => SscBodyCatalogue.BuildPack(source, target, _ => { }));
+        Assert.Empty(Directory.GetDirectories(_root.FullName, ".body-pack-*"));
+        if (fault != "exists") Assert.False(Directory.Exists(target));
+    }
+
     public void Dispose() => _root.Delete(recursive: true);
 }
