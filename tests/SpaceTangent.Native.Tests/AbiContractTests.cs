@@ -156,7 +156,8 @@ public sealed unsafe class AbiContractTests
     private static int OpenFile(string path, out nuint handle)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(path);
-        nuint value = 0;
+        // A failed open must overwrite caller-owned memory, not merely leave a zero intact.
+        nuint value = 0xDEADBEEF;
         int status;
         fixed(byte* pointer = bytes) status = Open(pointer, bytes.Length, &value);
         handle = value;
