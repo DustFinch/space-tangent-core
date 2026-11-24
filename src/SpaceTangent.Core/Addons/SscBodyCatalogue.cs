@@ -92,41 +92,9 @@ public static partial class SscBodyCatalogue
             throw new InvalidDataException("A body catalogue source contains more than 512 objects.");
         var spice = ReadSpiceResources(definitions, declarations, root, resolve, cancellation, roots, kernels, missionLoads, kernelOrder, custom);
         resources = spice.Pool;
-        var byPath = definitions.ToDictionary(item => item.Parent + "/" + item.Name, StringComparer.OrdinalIgnoreCase);
-        var result = new List<SscBodyDefinition>();
-        var visited = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        var reading = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in definitions)
-            Read(item);
-        return result.AsReadOnly();
-
-        bool Read(SscDefinition item)
-        {
-            cancellation.ThrowIfCancellationRequested();
-            string path = item.Parent + "/" + item.Name;
-            if (visited.TryGetValue(path, out bool installed))
-                return installed;
-            if (!reading.Add(path))
-                throw new InvalidDataException($"SSC parent cycle at {path}.");
-            if (!byPath.TryGetValue(item.Parent, out var parent) || Read(parent))
-            {
-                try
-                {
-                    var body = AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile,
-                        () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation, custom));
-                    installed = body is not null;
-                    if (body is not null)
-                        result.Add(body);
-                }
-                catch (RejectedSampleTable error)
-                {
-                    warning?.Invoke($"{path}: {error.Message}");
-                }
-            }
-            reading.Remove(path);
-            visited[path] = installed;
-            return installed;
-        }
+        return new SscRuntimeBinding(definitions,
+            item => AddonDiagnostics.Read(AddonStage.Catalog, item.SourceFile,
+                () => ReadBody(item, root, scripts, warning, resolve, spice, cancellation, custom)), warning, cancellation).Bind();
     }
 
     /// <summary>Reads a local body pack and its optional fixed-column MPC selections.</summary>

@@ -78,34 +78,9 @@ public static partial class SscBodyCatalogue
             resources = null!; // The standalone caller does not consume the pool.
             return LoadWithMpc(roots[0], warning, cancellation, scripts, custom);
         }
-        var documents = new List<SscDocument>();
-        var kernels = new List<PackedKernel>();
-        var kernelOrder = new Dictionary<string, int>(StringComparer.Ordinal);
-        var owners = new Dictionary<string, (string Root, SscResource Resolve)>(StringComparer.OrdinalIgnoreCase);
-        foreach (string root in roots)
-        {
-            cancellation.ThrowIfCancellationRequested();
-            if (!AddonDependencies.DirectoryExists(root))
-                continue;
-            string manifest = Path.Combine(root, "pack.json");
-            var source = AddonDependencies.FileExists(manifest)
-                ? AddonDiagnostics.Read(AddonStage.Catalog, manifest, () => ReadPackedDocuments(root, manifest, cancellation))
-                : ReadLooseDocuments(root);
-            kernels.AddRange(source.Kernels);
-            if (source.KernelOrder is { } positions)
-                foreach (var position in positions)
-                    kernelOrder[position.Key] = position.Value;
-            foreach (var document in source.Documents)
-            {
-                documents.Add(document);
-                owners[Path.GetDirectoryName(document.File)!] = (root, source.Resolve);
-            }
-        }
-        var declarations = new List<SscDefinition>();
-        var definitions = SscDefinitions.Load(documents, cancellation, declarations);
-        var bodies = ReadBodyDefinitions(definitions, declarations, directory => owners[directory].Root, scripts, warning,
-            (body, field, stage, name, fallbacks) => owners[body.DirectoryFor(field)].Resolve(body, field, stage, name, fallbacks),
-            cancellation, roots, kernels, out resources, missionLoads, kernelOrder, custom).ToList();
+        var input = SscInstallationInputs.Read(roots, cancellation);
+        var bodies = ReadBodyDefinitions(input.Definitions, input.Declarations, input.Resources.RootFor, scripts, warning,
+            input.Resources.Resolve, cancellation, roots, input.Kernels, out resources, missionLoads, input.KernelOrder, custom).ToList();
         foreach (string root in roots)
             AppendMpc(root, bodies, warning, cancellation);
         return bodies.AsReadOnly();

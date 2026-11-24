@@ -40,3 +40,5 @@ dotnet run --project tools/SpaceTangent.PackTool -- check ./cassini-pack/pack.js
 ```
 
 Install the resulting folder directly inside the simulator's sampled mission directory. The loader resolves mission resources inside the pack and uses the installed world for named body references. For CLI validation of a mission that references additional installed bodies, pass `--body <name>` for each such body. The archive's compiled mission formats are read separately.
+
+Body installation separates source collection, resource ownership and parent-first runtime binding. `SscInstallationInputs` composes enabled source documents and ordered declarations; `SscResourceContext` resolves each inherited field through its owning source. `SscRuntimeBinding` owns parent traversal, rejection propagation and cycle detection. The existing grammar and numerical model factories retain source order, kernel prefixes and diagnostics.
