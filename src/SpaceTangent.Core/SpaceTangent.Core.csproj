@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SpaceTangent.Contracts/SpaceTangent.Contracts.csproj" />
+    <InternalsVisibleTo Include="SpaceTangent.Core.Tests" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Data/blackholes.txt" />
